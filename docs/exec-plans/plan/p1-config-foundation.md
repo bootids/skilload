@@ -1,7 +1,7 @@
 ---
 plan_id: PLAN-0002
 branch: codex/p1-config-foundation
-pull_request: pending
+pull_request: https://github.com/bootids/skilload/pull/2
 status: plan
 depends_on: [PLAN-0001]
 ---
@@ -62,7 +62,7 @@ The deliberately narrow development command surface is important. Building all 5
 
 - [x] (2026-08-18 12:22Z) Established a clean, up-to-date `main` baseline, verified mise and GitHub authentication, audited all Plan states and the documentation-only implementation, selected `PLAN-0002`, and created `codex/p1-config-foundation`.
 - [x] (2026-08-18 12:22Z) Verified current Rust, crate, standard-library locking, and CI action inputs against primary sources; recorded them in `docs/references/rust-foundation-versions.md` and authored this self-contained `plan`-status delivery.
-- [ ] Commit and push the planning baseline, open the one Draft Pull Request, write its canonical URL into frontmatter, then commit and push the publication evidence.
+- [x] (2026-08-18 13:09Z) Committed and pushed the initial planning baseline as `c21211b0d1aa55e2c422d6d5929bf65457fb5a91`, opened Draft PR https://github.com/bootids/skilload/pull/2, wrote its canonical URL into frontmatter, and published this metadata evidence; awaiting a later explicit execution trigger.
 - [ ] After a later human execution prompt, enter `active` through `execute-exec-plan` and implement the milestones below.
 - [ ] After implementation, acceptance, synchronized documentation, and retrospective are committed and pushed, mark the PR ready, verify its exact head, then automatically enter `review` and push the lifecycle commit.
 - [ ] After a later explicit human merge prompt, use `merge-exec-plan` to pass preflight, complete and push the Plan, merge, update local `main`, and delete the local delivery branch.
@@ -102,7 +102,7 @@ The deliberately narrow development command surface is important. Building all 5
 
 ## Outcomes & Retrospective
 
-Planning outcome only: the delivery scope, exact product revisions, architecture boundaries, dependency inputs, interfaces, tests, documentation synchronization, and lifecycle recovery are specified. No Rust implementation or product command has been added yet. The Plan must remain in `plan` and the associated Pull Request must remain Draft until a later explicit execution prompt.
+Planning outcome only: the delivery scope, exact product revisions, architecture boundaries, dependency inputs, interfaces, tests, documentation synchronization, and lifecycle recovery are specified in Draft PR https://github.com/bootids/skilload/pull/2. No Rust implementation or product command has been added yet. The Plan must remain in `plan` and the associated Pull Request must remain Draft until a later explicit execution prompt.
 
 ## Review Conversation Log
 
@@ -378,4 +378,4 @@ The public `Application` facade provides:
 
 At the workspace root, declare compatible direct requirements using the exact starting versions in the Rust reference, then treat committed `Cargo.lock` as the executable dependency snapshot. `skilload-core` depends on `serde`, `toml`, `thiserror`, and `tempfile`. `skilload-cli` depends on `skilload-core`, `clap`, `serde`, `serde_json`, and `base64`. CLI integration tests additionally use `assert_cmd`, `predicates`, and `tempfile`. No other direct dependency is authorized by this Plan without a recorded discovery and Decision Log entry.
 
-Plan revision note: created on 2026-08-18 to turn the completed product/architecture baseline into the smallest real implementation slice. It selects the Rust foundation and exact current direct inputs, fully scopes four Revision 1 behaviors, forbids placeholder domain commands, and defines the application, storage, CLI, validation, documentation, and lifecycle evidence needed for an independently reviewable delivery.
+Plan revision note: created on 2026-08-18 to turn the completed product/architecture baseline into the smallest real implementation slice. It selects the Rust foundation and exact current direct inputs, fully scopes four Revision 1 behaviors, forbids placeholder domain commands, and defines the application, storage, CLI, validation, documentation, and lifecycle evidence needed for an independently reviewable delivery. The same day, initial commit `c21211b0d1aa55e2c422d6d5929bf65457fb5a91` was pushed, Draft PR https://github.com/bootids/skilload/pull/2 was opened, and its canonical URL plus publication evidence were recorded before the required metadata push.
