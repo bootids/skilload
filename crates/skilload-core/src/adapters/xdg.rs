@@ -1,9 +1,12 @@
 use crate::domain::configuration::{NativePath, normalize_absolute};
 use crate::error::AppError;
-use crate::ports::configuration::{Environment, ResolvedRoots, RootBinding, StateRootResolver};
+use crate::ports::configuration::{
+    Environment, FilesystemIdentity, ResolvedRoots, RootAnchor, RootBinding, StateRootResolver,
+};
 use std::env;
 use std::ffi::OsString;
 use std::fs;
+use std::os::unix::fs::MetadataExt;
 use std::path::{Component, Path, PathBuf};
 
 pub struct SystemEnvironment;
@@ -16,6 +19,12 @@ impl Environment for SystemEnvironment {
 
 #[derive(Debug, Default)]
 pub struct XdgRootResolver;
+
+#[derive(Debug)]
+struct ResolvedExistingPrefix {
+    effective: PathBuf,
+    existing_directories: Vec<RootAnchor>,
+}
 
 impl StateRootResolver for XdgRootResolver {
     fn resolve(&self, environment: &dyn Environment) -> Result<ResolvedRoots, AppError> {
@@ -34,17 +43,13 @@ impl StateRootResolver for XdgRootResolver {
     }
 
     fn revalidate(&self, roots: &ResolvedRoots) -> Result<(), AppError> {
-        for (variable, binding) in root_bindings(roots) {
-            let effective = resolve_existing_prefix(&binding.logical, variable)?;
-            if effective != binding.effective {
-                return Err(AppError::invalid_environment(
-                    variable,
-                    Some(NativePath::new(binding.logical.clone())),
-                    "the resolved root identity changed",
-                ));
-            }
-        }
-        ensure_disjoint(roots)
+        let refreshed = ResolvedRoots {
+            config: revalidate_binding(&roots.config, "XDG_CONFIG_HOME")?,
+            data: revalidate_binding(&roots.data, "XDG_DATA_HOME")?,
+            state: revalidate_binding(&roots.state, "XDG_STATE_HOME")?,
+            cache: revalidate_binding(&roots.cache, "XDG_CACHE_HOME")?,
+        };
+        ensure_disjoint(&refreshed)
     }
 }
 
@@ -61,8 +66,12 @@ fn resolve_root(
         None => fallback_home(environment, variable, home_suffix)?,
     };
     let logical = normalize_absolute(&base.join("skilload"));
-    let effective = resolve_existing_prefix(&logical, variable)?;
-    Ok(RootBinding { logical, effective })
+    let resolved = resolve_existing_prefix(&logical, variable)?;
+    Ok(RootBinding {
+        logical,
+        effective: resolved.effective,
+        existing_directories: resolved.existing_directories,
+    })
 }
 
 fn valid_absolute(value: OsString) -> Option<PathBuf> {
@@ -96,13 +105,20 @@ fn fallback_home(
     Ok(normalize_absolute(&home.join(home_suffix)))
 }
 
-fn resolve_existing_prefix(path: &Path, variable: &str) -> Result<PathBuf, AppError> {
+fn resolve_existing_prefix(
+    path: &Path,
+    variable: &str,
+) -> Result<ResolvedExistingPrefix, AppError> {
     let components: Vec<_> = path.components().collect();
     let mut current = PathBuf::new();
+    let mut existing_directories = Vec::new();
     for (index, component) in components.iter().enumerate() {
         match component {
             Component::Prefix(prefix) => current.push(prefix.as_os_str()),
-            Component::RootDir => current.push(component.as_os_str()),
+            Component::RootDir => {
+                current.push(component.as_os_str());
+                add_directory_anchor(&mut existing_directories, &current, variable)?;
+            }
             Component::CurDir | Component::ParentDir => {
                 return Err(AppError::invalid_environment(
                     variable,
@@ -121,6 +137,8 @@ fn resolve_existing_prefix(path: &Path, variable: &str) -> Result<PathBuf, AppEr
                                 format!("cannot resolve an existing root prefix: {error}"),
                             )
                         })?;
+                        existing_directories.retain(|anchor| current.starts_with(&anchor.path));
+                        add_directory_anchor(&mut existing_directories, &current, variable)?;
                     }
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                         current.push(part);
@@ -129,7 +147,10 @@ fn resolve_existing_prefix(path: &Path, variable: &str) -> Result<PathBuf, AppEr
                                 current.push(next);
                             }
                         }
-                        return Ok(current);
+                        return Ok(ResolvedExistingPrefix {
+                            effective: current,
+                            existing_directories,
+                        });
                     }
                     Err(error) => {
                         return Err(AppError::invalid_environment(
@@ -142,7 +163,36 @@ fn resolve_existing_prefix(path: &Path, variable: &str) -> Result<PathBuf, AppEr
             }
         }
     }
-    Ok(current)
+    Ok(ResolvedExistingPrefix {
+        effective: current,
+        existing_directories,
+    })
+}
+
+fn revalidate_binding(
+    binding: &RootBinding,
+    variable: &'static str,
+) -> Result<RootBinding, AppError> {
+    let resolved = resolve_existing_prefix(&binding.logical, variable)?;
+    let anchor = binding.existing_directories.last().ok_or_else(|| {
+        AppError::invalid_environment(
+            variable,
+            Some(NativePath::new(binding.logical.clone())),
+            "root has no existing filesystem anchor",
+        )
+    })?;
+    if resolved.effective != binding.effective || !anchor_matches(anchor, variable)? {
+        return Err(AppError::invalid_environment(
+            variable,
+            Some(NativePath::new(binding.logical.clone())),
+            "the resolved root identity changed",
+        ));
+    }
+    Ok(RootBinding {
+        logical: binding.logical.clone(),
+        effective: resolved.effective,
+        existing_directories: resolved.existing_directories,
+    })
 }
 
 fn root_bindings(roots: &ResolvedRoots) -> [(&'static str, &RootBinding); 4] {
@@ -160,12 +210,13 @@ fn ensure_disjoint(roots: &ResolvedRoots) -> Result<(), AppError> {
         for (right_name, right) in bindings.iter().skip(index + 1) {
             if left.effective.starts_with(&right.effective)
                 || right.effective.starts_with(&left.effective)
+                || roots_alias_by_identity(left, right)
             {
                 return Err(AppError::OverlappingStateRoots {
                     variable: (*left_name).to_owned(),
                     path: Some(NativePath::new(left.effective.clone())),
                     reason: format!(
-                        "{} and {} resolve to equal or nested application roots",
+                        "{} and {} resolve to equal, nested, or filesystem-aliased application roots",
                         left_name, right_name
                     ),
                 });
@@ -173,6 +224,67 @@ fn ensure_disjoint(roots: &ResolvedRoots) -> Result<(), AppError> {
         }
     }
     Ok(())
+}
+
+fn add_directory_anchor(
+    existing_directories: &mut Vec<RootAnchor>,
+    path: &Path,
+    variable: &str,
+) -> Result<(), AppError> {
+    let identity = directory_identity(path, variable)?;
+    if existing_directories
+        .last()
+        .is_some_and(|anchor| anchor.path == path && anchor.identity == identity)
+    {
+        return Ok(());
+    }
+    existing_directories.push(RootAnchor {
+        path: path.to_path_buf(),
+        identity,
+    });
+    Ok(())
+}
+
+fn directory_identity(path: &Path, variable: &str) -> Result<FilesystemIdentity, AppError> {
+    let metadata = fs::metadata(path).map_err(|error| {
+        AppError::invalid_environment(
+            variable,
+            Some(NativePath::new(path.to_path_buf())),
+            format!("cannot inspect an existing root prefix: {error}"),
+        )
+    })?;
+    if !metadata.is_dir() {
+        return Err(AppError::invalid_environment(
+            variable,
+            Some(NativePath::new(path.to_path_buf())),
+            "existing root prefix is not a real directory",
+        ));
+    }
+    Ok(FilesystemIdentity {
+        device: metadata.dev(),
+        inode: metadata.ino(),
+    })
+}
+
+fn anchor_matches(anchor: &RootAnchor, variable: &str) -> Result<bool, AppError> {
+    Ok(directory_identity(&anchor.path, variable)? == anchor.identity)
+}
+
+fn roots_alias_by_identity(left: &RootBinding, right: &RootBinding) -> bool {
+    left.existing_directories.iter().any(|left_anchor| {
+        right.existing_directories.iter().any(|right_anchor| {
+            left_anchor.identity == right_anchor.identity
+                && (relative_to_anchor(&left.effective, left_anchor)
+                    .starts_with(relative_to_anchor(&right.effective, right_anchor))
+                    || relative_to_anchor(&right.effective, right_anchor)
+                        .starts_with(relative_to_anchor(&left.effective, left_anchor)))
+        })
+    })
+}
+
+fn relative_to_anchor<'a>(root: &'a Path, anchor: &RootAnchor) -> &'a Path {
+    root.strip_prefix(&anchor.path)
+        .expect("resolution anchors remain prefixes of their effective root")
 }
 
 #[cfg(test)]
@@ -323,6 +435,69 @@ mod tests {
         }
     }
 
+    #[test]
+    fn filesystem_alias_identities_reject_equal_or_nested_application_roots() {
+        let identity = FilesystemIdentity {
+            device: 1,
+            inode: 1,
+        };
+        let left = RootBinding {
+            logical: PathBuf::from("/mount-a/skilload"),
+            effective: PathBuf::from("/mount-a/skilload"),
+            existing_directories: vec![RootAnchor {
+                path: PathBuf::from("/mount-a"),
+                identity,
+            }],
+        };
+        let equal_alias = RootBinding {
+            logical: PathBuf::from("/mount-b/skilload"),
+            effective: PathBuf::from("/mount-b/skilload"),
+            existing_directories: vec![RootAnchor {
+                path: PathBuf::from("/mount-b"),
+                identity,
+            }],
+        };
+        let nested_alias = RootBinding {
+            logical: PathBuf::from("/mount-b/skilload/nested"),
+            effective: PathBuf::from("/mount-b/skilload/nested"),
+            existing_directories: vec![RootAnchor {
+                path: PathBuf::from("/mount-b"),
+                identity,
+            }],
+        };
+        let unrelated = RootBinding {
+            logical: PathBuf::from("/mount-b/other"),
+            effective: PathBuf::from("/mount-b/other"),
+            existing_directories: vec![RootAnchor {
+                path: PathBuf::from("/mount-b"),
+                identity,
+            }],
+        };
+
+        assert!(roots_alias_by_identity(&left, &equal_alias));
+        assert!(roots_alias_by_identity(&left, &nested_alias));
+        assert!(!roots_alias_by_identity(&left, &unrelated));
+    }
+
+    #[test]
+    fn revalidation_detects_a_recreated_root_identity() {
+        let temporary = tempdir().unwrap();
+        for name in ["config", "data", "state", "cache"] {
+            fs::create_dir_all(temporary.path().join(name).join("skilload")).unwrap();
+        }
+        let environment = TestEnvironment::default()
+            .with("XDG_CONFIG_HOME", temporary.path().join("config"))
+            .with("XDG_DATA_HOME", temporary.path().join("data"))
+            .with("XDG_STATE_HOME", temporary.path().join("state"))
+            .with("XDG_CACHE_HOME", temporary.path().join("cache"));
+        let resolver = XdgRootResolver;
+        let roots = resolver.resolve(&environment).unwrap();
+        let config_root = temporary.path().join("config/skilload");
+        fs::remove_dir(&config_root).unwrap();
+        fs::create_dir(&config_root).unwrap();
+
+        assert!(resolver.revalidate(&roots).is_err());
+    }
     #[test]
     fn revalidation_detects_a_root_symlink_swap() {
         let temporary = tempdir().unwrap();

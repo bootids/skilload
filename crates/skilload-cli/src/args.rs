@@ -56,10 +56,6 @@ pub fn top_level_help() -> String {
 }
 
 pub fn rejects_json_meta_invocation(arguments: &[OsString]) -> bool {
-    let has_json = arguments
-        .iter()
-        .skip(1)
-        .any(|argument| argument == OsStr::new("--json"));
     let has_meta = arguments.iter().skip(1).any(|argument| {
         matches!(
             argument.as_os_str(),
@@ -69,7 +65,36 @@ pub fn rejects_json_meta_invocation(arguments: &[OsString]) -> bool {
                 || value == OsStr::new("-V")
         )
     });
-    has_json && has_meta
+    json_requested(arguments) && has_meta
+}
+
+pub fn json_configuration_operation(arguments: &[OsString]) -> Option<&'static str> {
+    if !json_requested(arguments) {
+        return None;
+    }
+    let mut positionals = arguments.iter().skip(1).filter(|argument| {
+        !matches!(
+            argument.as_os_str(),
+            value if value == OsStr::new("--json") || value == OsStr::new("--no-color")
+        )
+    });
+    if positionals.next()?.as_os_str() != OsStr::new("config") {
+        return None;
+    }
+    match positionals.next()?.as_os_str() {
+        value if value == OsStr::new("get") => Some("config.get"),
+        value if value == OsStr::new("set") => Some("config.set"),
+        value if value == OsStr::new("unset") => Some("config.unset"),
+        value if value == OsStr::new("list") => Some("config.list"),
+        _ => None,
+    }
+}
+
+fn json_requested(arguments: &[OsString]) -> bool {
+    arguments
+        .iter()
+        .skip(1)
+        .any(|argument| argument == OsStr::new("--json"))
 }
 
 #[cfg(test)]
@@ -108,5 +133,38 @@ mod tests {
             "list".into(),
             "--json".into()
         ]));
+    }
+
+    #[test]
+    fn json_parser_failures_preserve_identifiable_configuration_operations() {
+        assert_eq!(
+            json_configuration_operation(&[
+                "skilload".into(),
+                "--json".into(),
+                "config".into(),
+                "set".into(),
+                "cache_limit_bytes".into(),
+            ]),
+            Some("config.set")
+        );
+        assert_eq!(
+            json_configuration_operation(&[
+                "skilload".into(),
+                "config".into(),
+                "--no-color".into(),
+                "list".into(),
+                "--json".into(),
+            ]),
+            Some("config.list")
+        );
+        assert_eq!(
+            json_configuration_operation(&[
+                "skilload".into(),
+                "--json".into(),
+                "config".into(),
+                "unknown".into(),
+            ]),
+            None
+        );
     }
 }

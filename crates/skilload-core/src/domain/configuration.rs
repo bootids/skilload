@@ -337,6 +337,12 @@ fn validate_executable_raw(raw_value: OsString) -> Result<NativePath, AppError> 
             Some(NativePath::new(original)),
         ));
     }
+    if value.contains('\0') {
+        return Err(AppError::validation(
+            "executable_path_must_not_contain_nul",
+            Some(NativePath::new(original)),
+        ));
+    }
     let path = Path::new(&value);
     if !path.is_absolute() {
         return Err(AppError::validation(
@@ -417,6 +423,7 @@ mod tests {
         assert_eq!(path.as_path(), Path::new("/opt/bin/claude"));
         assert!(validate_executable_raw("relative/claude".into()).is_err());
         assert!(validate_executable_raw(OsString::from_vec(vec![b'/', 0xff])).is_err());
+        assert!(validate_executable_raw("/opt/\0claude".into()).is_err());
         assert!(validate_executable_raw("/usr/bin/claude --version".into()).is_err());
     }
 
@@ -433,6 +440,7 @@ mod tests {
             "version = 1\ncache_limit_bytes = \"1\"\n",
             "version = 1\n[agents.claude]\nexecutable = 1\n",
             "version = 1\n[agents.claude]\nexecutable = \"relative/claude\"\n",
+            "version = 1\n[agents.claude]\nexecutable = \"/opt/\\u0000claude\"\n",
             "version = 1\ncache_limit_bytes = 0\n",
         ] {
             assert!(ConfigDocument::from_toml(input).is_err(), "{input}");

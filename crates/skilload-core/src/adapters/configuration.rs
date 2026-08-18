@@ -61,7 +61,7 @@ impl FileConfigurationStore {
     }
 
     fn roots_still_match(&self, expected: &ResolvedRoots) -> Result<bool, AppError> {
-        Ok(self.resolve_roots()? == *expected)
+        Ok(self.resolve_roots()?.same_paths(expected))
     }
 
     fn load_from_roots(&self, roots: ResolvedRoots) -> Result<LoadedConfig, AppError> {
@@ -298,37 +298,29 @@ fn config_path(roots: &ResolvedRoots) -> PathBuf {
 }
 
 fn ensure_restrictive_directory(path: &Path, variable: &str) -> Result<(), AppError> {
-    match fs::symlink_metadata(path) {
-        Ok(metadata) => {
-            if metadata.file_type().is_symlink() || !metadata.file_type().is_dir() {
-                return Err(AppError::invalid_environment(
-                    variable,
-                    Some(NativePath::new(path.to_path_buf())),
-                    "expected a real directory",
-                ));
-            }
-            Ok(())
-        }
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             let mut builder = DirBuilder::new();
             builder.recursive(true).mode(0o700);
             builder.create(path).map_err(|error| {
                 environment_io(variable, path, "create restrictive directory", error)
             })?;
-            let metadata = fs::symlink_metadata(path).map_err(|error| {
+            fs::symlink_metadata(path).map_err(|error| {
                 environment_io(variable, path, "inspect created directory", error)
-            })?;
-            if metadata.file_type().is_symlink() || !metadata.file_type().is_dir() {
-                return Err(AppError::invalid_environment(
-                    variable,
-                    Some(NativePath::new(path.to_path_buf())),
-                    "created path is not a real directory",
-                ));
-            }
-            Ok(())
+            })?
         }
-        Err(error) => Err(environment_io(variable, path, "inspect directory", error)),
+        Err(error) => return Err(environment_io(variable, path, "inspect directory", error)),
+    };
+    if metadata.file_type().is_symlink() || !metadata.file_type().is_dir() {
+        return Err(AppError::invalid_environment(
+            variable,
+            Some(NativePath::new(path.to_path_buf())),
+            "expected a real directory",
+        ));
     }
+    fs::set_permissions(path, fs::Permissions::from_mode(0o700))
+        .map_err(|error| environment_io(variable, path, "restrict directory permissions", error))
 }
 
 fn ensure_regular_destination(path: &Path) -> Result<(), AppError> {
@@ -455,6 +447,18 @@ mod tests {
                 & 0o777,
             0o700
         );
+    }
+
+    #[test]
+    fn restrictive_directories_restore_owner_search_permission() {
+        let temporary = tempdir().unwrap();
+        let directory = temporary.path().join("restrictive");
+        fs::create_dir(&directory).unwrap();
+        fs::set_permissions(&directory, fs::Permissions::from_mode(0o600)).unwrap();
+
+        ensure_restrictive_directory(&directory, "XDG_STATE_HOME").unwrap();
+
+        assert_eq!(fs::metadata(&directory).unwrap().mode() & 0o777, 0o700);
     }
 
     #[test]

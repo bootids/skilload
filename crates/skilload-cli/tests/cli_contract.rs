@@ -50,6 +50,16 @@ fn help_and_absent_queries_are_offline_and_filesystem_inert() {
     assert!(String::from_utf8_lossy(&help.stdout).contains("Usage: skilload"));
     assert!(help.stderr.is_empty());
 
+    let explicit_help = execute(temporary.path(), &["--help"]);
+    assert!(explicit_help.status.success());
+    assert!(String::from_utf8_lossy(&explicit_help.stdout).contains("Usage: skilload"));
+    assert!(explicit_help.stderr.is_empty());
+
+    let version = execute(temporary.path(), &["--version"]);
+    assert!(version.status.success());
+    assert_eq!(version.stdout, b"skilload 0.0.1\n");
+    assert!(version.stderr.is_empty());
+
     let list = json(&execute(temporary.path(), &["config", "list", "--json"]));
     let entries = list["result"]["data"]["entries"].as_array().unwrap();
     assert_eq!(entries.len(), 3);
@@ -234,6 +244,37 @@ fn json_meta_and_invalid_native_path_errors_are_safe() {
     assert!(!config_file(temporary.path()).exists());
 }
 
+#[test]
+fn parser_failures_are_terminal_safe_and_preserve_json_configuration_operations() {
+    let temporary = tempdir().unwrap();
+    let hostile = execute(temporary.path(), &["\u{001b}]0;owned\u{0007}\nunknown"]);
+    assert_eq!(hostile.status.code(), Some(2));
+    assert!(hostile.stdout.is_empty());
+    assert_eq!(
+        hostile.stderr,
+        b"error [usage_error]: invalid command line; use --help for usage\n"
+    );
+
+    let malformed_json = execute(
+        temporary.path(),
+        &["--json", "config", "set", "cache_limit_bytes"],
+    );
+    assert_eq!(malformed_json.status.code(), Some(2));
+    assert!(malformed_json.stderr.is_empty());
+    let document: Value = serde_json::from_slice(&malformed_json.stdout).unwrap();
+    assert_eq!(document["api_version"], 1);
+    assert_eq!(document["operation"], "config.set");
+    assert_eq!(document["ok"], false);
+    assert_eq!(document["error"]["code"], "usage_error");
+    assert!(document["error"]["details"]["argument"].is_null());
+    assert!(document["error"]["details"]["value"].is_null());
+    assert_eq!(
+        document["error"]["details"]["expected"],
+        serde_json::json!([])
+    );
+    assert!(!temporary.path().join("config").exists());
+    assert!(!temporary.path().join("state").exists());
+}
 #[test]
 fn concurrent_distinct_setters_merge_their_configuration_changes() {
     let temporary = tempdir().unwrap();

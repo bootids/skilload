@@ -5,7 +5,7 @@ mod human;
 mod json;
 
 use args::{Cli, Command, ConfigCommand};
-use clap::Parser;
+use clap::{Parser, error::ErrorKind};
 use skilload_core::adapters::configuration::FileConfigurationStore;
 use skilload_core::{AppError, Application, ConfigEntries, ConfigEntry, ConfigKey};
 use std::env;
@@ -38,12 +38,14 @@ fn run(arguments: Vec<OsString>) -> Result<(), u8> {
         eprintln!("error: --json cannot be combined with --help or --version");
         return Err(2);
     }
+    let json_operation = args::json_configuration_operation(&arguments);
     let cli = match Cli::try_parse_from(&arguments) {
         Ok(cli) => cli,
         Err(error) => {
-            let code = error.exit_code() as u8;
-            let _ = error.print();
-            return Err(code);
+            if let Some(operation) = json_operation {
+                return render_error(true, operation, &parser_usage_error());
+            }
+            return render_parse_error(error);
         }
     };
     let _ = cli.no_color;
@@ -61,6 +63,29 @@ fn run(arguments: Vec<OsString>) -> Result<(), u8> {
         Ok(projection) => render_success(cli.json, projection),
         Err((operation, error)) => render_error(cli.json, operation, &error),
     }
+}
+
+fn parser_usage_error() -> AppError {
+    AppError::Usage {
+        argument: None,
+        value: None,
+        path: None,
+        expected: Vec::new(),
+    }
+}
+
+fn render_parse_error(error: clap::Error) -> Result<(), u8> {
+    let code = error.exit_code() as u8;
+    if matches!(
+        error.kind(),
+        ErrorKind::DisplayHelp | ErrorKind::DisplayVersion
+    ) {
+        let output = error.render().to_string();
+        write_stdout(output.as_bytes()).map_err(report_stdout_error)?;
+    } else {
+        eprintln!("error [usage_error]: invalid command line; use --help for usage");
+    }
+    Err(code)
 }
 
 fn dispatch(
