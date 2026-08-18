@@ -1,7 +1,7 @@
 ---
 plan_id: PLAN-0001
 branch: codex/p0-product-architecture-baseline
-pull_request: pending
+pull_request: https://github.com/bootids/skilload/pull/1
 status: plan
 depends_on: []
 ---
@@ -14,7 +14,7 @@ This ExecPlan is a living document. As work proceeds, the `Progress`, `Surprises
 
 ## Delivery Metadata
 
-This is the repository's first ExecPlan and has no prerequisite delivery. It is a documentation-only P0 baseline: it records product intent and implementation constraints but does not create a Rust workspace, expose commands, or claim that any specified behavior is implemented. After the first push and creation of the Draft PR, replace `pull_request: pending` with the canonical PR URL, update `Progress`, then commit and push again.
+This is the repository's first ExecPlan and has no prerequisite delivery. It is a documentation-only P0 baseline: it records product intent and implementation constraints but does not create a Rust workspace, expose commands, or claim that any specified behavior is implemented. The delivery is associated with Draft PR https://github.com/bootids/skilload/pull/1.
 
 ## Product Baseline
 
@@ -49,7 +49,7 @@ The repository currently has governance documents but no product specification, 
 ## Progress
 
 - [x] (2026-08-18 03:25Z) Confirmed a clean, up-to-date `main`, installed the repository mise environment, verified GitHub authentication, inspected the empty documentation baseline, and created `codex/p0-product-architecture-baseline`.
-- [ ] Commit and push this `plan`-status ExecPlan, open its Draft PR, write back the canonical URL, and push the metadata update.
+- [x] (2026-08-18 03:29Z) Committed and pushed this `plan`-status ExecPlan, opened Draft PR https://github.com/bootids/skilload/pull/1, and recorded its canonical URL; awaiting a later explicit execution trigger.
 - [ ] After a later explicit human execution prompt, move the Plan to `active` and author the product specifications, architecture, design documents, and supporting references described here.
 - [ ] Validate behavior-ID uniqueness, decision coverage, command-surface consistency, links, whitespace, and the complete diff; then commit and push all documentation.
 - [ ] After implementation of this documentation delivery, acceptance, synchronization, and retrospective are committed and pushed, run `gh pr ready`, verify `isDraft: false` and the expected head SHA, then automatically enter `review` and push the status commit.
@@ -259,4 +259,4 @@ The stable external interface planned for 0.1 is the canonical command tree and 
 
 Research uses only primary vendor documentation and inspected source code. No new package or service is required to complete this documentation delivery.
 
-Plan revision note: initial planning baseline created on 2026-08-18 to translate the completed product interview into authoritative repository documentation without beginning implementation.
+Plan revision note: initial planning baseline created on 2026-08-18 to translate the completed product interview into authoritative repository documentation without beginning implementation. The same day, the Draft PR URL and publication evidence were recorded after the initial push.
