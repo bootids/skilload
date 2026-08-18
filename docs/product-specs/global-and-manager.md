@@ -66,7 +66,7 @@ A **global deployment** makes a selected external Library Skill visible in every
 
 ## SKL-GLB-011 - Conflicts and independent lifecycle (Revision 1)
 
-**Behavior.** A semantic same-name conflict outside the exact target MAY proceed only after confirmation and then MUST report `degraded_name_conflict`; internal duplicates, exact target conflicts, disabled Skills, and `skilload-manager` remain hard failures. Library removal MUST NOT change global state. Trust revoke MUST preserve current links but block update/sync/restore. Cache clear MUST remove verified managed external links while preserving desired records for a later trusted sync.
+**Behavior.** A semantic same-name conflict outside the exact target MAY proceed only after confirmation and then MUST report `degraded_name_conflict`; internal duplicates, exact target conflicts, disabled Skills, and `skilload-manager` remain hard failures. Library removal MUST NOT change global state. Trust revoke MUST preserve current links but block update plus every sync/restore action that treats the external content as valid; explicit exact-owned uninstall/cleanup remains available under `SKL-TRUST-006`. Cache clear MUST remove verified managed external links while preserving desired records for a later trusted sync.
 
 **Acceptance.** Each lifecycle action affects only its owned domain. A confirmed semantic conflict is deployed and remains visibly degraded, while a revoked source remains linked but cannot be restored after cache clear until Trust is re-established.
 

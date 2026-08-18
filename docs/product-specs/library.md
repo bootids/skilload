@@ -30,9 +30,9 @@ The **Library** is the user's durable, searchable collection of source metadata.
 
 ## SKL-LIB-005 - Offline reads (Revision 1)
 
-**Behavior.** `library list`, `library search`, and `library get` MUST read only local durable metadata and MUST NOT perform refreshes, update checks, or any other network request. Their ordering and pagination MUST be deterministic for unchanged data.
+**Behavior.** `library list`, `library search`, and `library get` MUST read only local durable metadata and MUST NOT perform refreshes, update checks, or any other network request. List and search MUST sort their complete matching set by the API-v1 source order before paging. Only those two commands accept `--limit <COUNT>` and `--offset <COUNT>`: limit is an unsigned decimal integer from 1 through 1,000 and defaults to 100; offset is an unsigned 64-bit decimal integer and defaults to 0. Paging skips the first offset matches and returns at most limit entries. An offset at or beyond the complete matching count succeeds with an empty page. JSON MUST return the active offset/limit, returned count, and complete pre-page total defined by `LibraryEntriesData` or `LibrarySearchData`.
 
-**Acceptance.** These commands return the same results with networking disabled and do not mutate timestamps, cache state, or derived metadata.
+**Acceptance.** These commands return the same results with networking disabled and do not mutate timestamps, cache state, or derived metadata. Against unchanged data, omitted arguments equal `--limit 100 --offset 0`, adjacent pages do not overlap, an offset equal to total is empty, and limit 0, limit 1,001, a negative value, or an offset beyond unsigned 64-bit range is a usage error before the query runs.
 
 ## SKL-LIB-006 - Explicit refresh (Revision 1)
 

@@ -8,9 +8,9 @@ This catalog is part of the product specification. It fixes the initial API-v1 f
 
 The notation `field: Type` means the field is required. `field?: Type` means a producer may omit it. `T | null` means the field is required and may contain JSON `null`. Objects are closed for the initial 0.1.0 producer schema, but version-1 consumers MUST ignore unknown fields so later 0.1.x releases can add optional fields under `SKL-CLI-012`. A producer MUST NOT omit a required empty array, replace a required nullable field with omission, or emit an undocumented enum value under API version 1.
 
-`String` is a valid Unicode JSON string. `Bool` is a JSON boolean. `UInt` is a JSON integer from 0 through 9,007,199,254,740,991 so common IEEE-754 consumers preserve it exactly. A larger internal unsigned value uses `DecimalU64`, a string matching `0|[1-9][0-9]*`. `Timestamp` is an RFC 3339 UTC string with a trailing `Z`. `Sha` matches `[0-9a-f]{40}`. `Integrity` matches `sha256:[0-9a-f]{64}`. `OpaqueId` and confirmation tokens are nonempty strings whose internal format clients MUST NOT parse.
+`String` is a valid Unicode JSON string. `Bool` is a JSON boolean. `UInt` is a JSON integer from 0 through 9,007,199,254,740,991 so common IEEE-754 consumers preserve it exactly. An unsigned 64-bit domain value uses `DecimalU64`, a string matching `0|[1-9][0-9]*` whose numeric value is at most 18,446,744,073,709,551,615. `Timestamp` is an RFC 3339 UTC string with a trailing `Z`. `Sha` matches `[0-9a-f]{40}`. `Integrity` matches `sha256:[0-9a-f]{64}`. `OpaqueId` and confirmation tokens are nonempty strings whose internal format clients MUST NOT parse.
 
-All arrays are deterministically ordered. Sources sort by `source.canonical` bytes; native paths sort by decoded `bytes_base64` bytes; Agents sort `claude` before `codex`; profiles sort by Agent then root bytes then `profile_id`; Library tags sort by their `SKL-LIB-008` comparison key; findings sort by severity (`error`, `warning`, `info`), code, then stable identity; actions sort by scope, target path bytes, source canonical bytes, and kind.
+All arrays are deterministically ordered. Sources sort by `source.canonical` bytes; native paths sort by decoded `bytes_base64` bytes; Agents sort `claude` before `codex`; profiles sort by Agent then root bytes then `profile_id`; Library tags sort by their `SKL-LIB-008` comparison key; findings sort by severity (`error`, `warning`, `info`), code, then stable identity; actions sort by scope, target path bytes, source canonical bytes, and kind. Network attempts sort by source canonical bytes and then their contiguous per-source `attempt_index`. Candidate locators sort by kind (`repository`, `ref`, `source`), then owner, repository, ref kind/value, and path bytes with null before a value.
 
 ## Envelopes and Outcomes
 
@@ -62,9 +62,22 @@ Every JSON command writes exactly one of these objects:
 
 `owner` and `repository` are canonical lowercase identity components. `repository_display` is fresh GitHub metadata spelling. `path` is the normalized repository-relative Skill path and is `""` for a root Skill. `ref_value` is fully qualified for a branch/tag and a full lowercase SHA for a commit.
 
+    SourceLocator {
+      kind: "repository" | "ref" | "source",
+      canonical: String | null,
+      owner: String,
+      repository: String,
+      repository_display: String | null,
+      path: String | null,
+      ref_kind: "branch" | "tag" | "commit" | null,
+      ref_value: String | null
+    }
+
+`SourceLocator` represents identity before every component needed by `SourceIdentity` is known. `path: null` means candidate discovery has not selected a Skill path; `path: ""` means the selected Skill is the actual repository root. The ref fields are both null or both non-null. A `repository` locator has null path/ref/canonical fields, a `ref` locator has a selected ref but a null path/canonical, and a `source` locator has a selected path and ref plus the exact non-null canonical string. `repository_display` remains null until metadata supplied it. A malformed input that cannot establish normalized owner/repository belongs in `UsageDetails`, not a fabricated locator.
+
     SourceLimits {
-      max_files: UInt,
-      max_bytes: UInt
+      max_files: DecimalU64,
+      max_bytes: DecimalU64
     }
 
     FetchBudget {
@@ -79,24 +92,31 @@ Every JSON command writes exactly one of these objects:
 `FetchBudget` reports the fixed `SKL-SRC-016` ceilings, not remaining counters: `268435456`, `250000`, `120`, `1073741824`, `1000000`, and `600` in field order.
 
     CacheQuota {
-      configured_limit_bytes: UInt,
-      effective_limit_bytes: UInt,
-      projected_bytes: UInt,
-      stable_quarantine_bytes: UInt,
-      repair_headroom_bytes: UInt,
+      configured_limit_bytes: DecimalU64,
+      effective_limit_bytes: DecimalU64,
+      projected_bytes: DecimalU64,
+      stable_quarantine_bytes: DecimalU64,
+      repair_headroom_bytes: DecimalU64,
       override_applied: Bool
     }
 
 `stable_quarantine_bytes` is the retained quarantine allocation in the post-recovery stable projection. `repair_headroom_bytes` is zero when no serialized corrupt-object repair is planned; otherwise it is the planned temporary allowance, never more than that object's allocated bytes plus 16,777,216.
 
-    NetworkUse {
-      used: Bool,
-      metadata_credential: "none" | "gh_token" | "github_token" | "gh_cli",
-      transport: "https" | "ssh" | null,
-      transport_credential: "none" | "git_helper" | "ssh_agent" | null
+    NetworkAttempt {
+      source: SourceIdentity,
+      attempt_index: UInt,
+      stage: "metadata" | "content",
+      transport: "api" | "https" | "ssh",
+      credential: "none" | "gh_token" | "github_token" | "gh_cli" | "git_helper" | "ssh_agent",
+      outcome: "succeeded" | "failed"
     }
 
-Offline results require `used: false`, `metadata_credential: "none"`, and both transport fields set to `null`. Metadata-only access has a null transport; content acquisition identifies its transport and actual credential class. Public unauthenticated access uses `"none"`. No field contains credential material.
+    NetworkUse {
+      used: Bool,
+      attempts: NetworkAttempt[]
+    }
+
+Offline results require `used: false` and `attempts: []`; `used` is true exactly when the array is nonempty. For each source, `attempt_index` starts at 1 and is contiguous in actual execution order, so a failed HTTPS attempt followed by successful SSH is preserved rather than collapsed. Metadata attempts require `transport: "api"` and a credential from `none`, `gh_token`, `github_token`, or `gh_cli`; content attempts require `https` or `ssh` and respectively use `none`/`git_helper` or `ssh_agent`. Public unauthenticated access uses `"none"`. No field contains credential material.
 
     ResolvedSkill {
       source: SourceIdentity,
@@ -105,8 +125,8 @@ Offline results require `used: false`, `metadata_credential: "none"`, and both t
       integrity: Integrity,
       name: String,
       description: String,
-      entry_count: UInt,
-      byte_count: UInt
+      entry_count: DecimalU64,
+      byte_count: DecimalU64
     }
 
     Warning {
@@ -177,16 +197,22 @@ For removal, `entry` is the removed pre-mutation record; for every other Library
 
     LibraryEntriesData {
       entries: LibraryEntry[],
-      total: UInt
+      offset: DecimalU64,
+      limit: UInt,
+      returned: UInt,
+      total: DecimalU64
     }
 
     LibrarySearchData {
       query: String,
       entries: LibraryEntry[],
-      total: UInt
+      offset: DecimalU64,
+      limit: UInt,
+      returned: UInt,
+      total: DecimalU64
     }
 
-For list and search, `entries` is the deterministic page selected by the invocation's pagination arguments and `total` is the complete matching count before paging. Repeating the same query and page against unchanged data returns the same ordered entries.
+Only `library.list` and `library.search` accept pagination. `--limit <COUNT>` is an unsigned decimal integer from 1 through 1,000 and defaults to 100. `--offset <COUNT>` is an unsigned 64-bit decimal integer and defaults to 0. The operation first computes its complete deterministic matching order, then skips `offset` entries and returns at most `limit`; an offset at or beyond `total` succeeds with an empty array. `offset` and `limit` echo the active request, `returned` equals the array length, and `total` is the complete matching count before paging. Repeating the same query and page against unchanged data returns the same ordered entries and metadata.
 
     PortableLibraryEntry {
       skill: ResolvedSkill,
@@ -241,16 +267,16 @@ For list and search, `entries` is the deterministic page selected by the invocat
 
     TrustRecordsData {
       records: TrustRecord[],
-      total: UInt
+      total: DecimalU64
     }
 
     SourceMigrationData {
       old_source: SourceIdentity,
       new_source: SourceIdentity,
       repository_id: DecimalU64,
-      library_records_changed: UInt,
-      trust_records_changed: UInt,
-      global_records_changed: UInt,
+      library_records_changed: DecimalU64,
+      trust_records_changed: DecimalU64,
+      global_records_changed: DecimalU64,
       workspace_impacts: PathValue[],
       network: NetworkUse
     }
@@ -283,9 +309,17 @@ For list and search, `entries` is the deterministic page selected by the invocat
       conflicts: Conflict[]
     }
 
+    WorkspaceRelocation {
+      old_workspace: PathValue,
+      current_workspace: PathValue,
+      workspace_instance_id: OpaqueId,
+      required_agents: ("claude" | "codex")[]
+    }
+
     WorkspaceData {
       workspace: WorkspaceSummary,
       targets: WorkspaceTarget[],
+      relocation: WorkspaceRelocation | null,
       actions: Action[],
       network: NetworkUse,
       source_limits: SourceLimits | null,
@@ -293,7 +327,7 @@ For list and search, `entries` is the deterministic page selected by the invocat
       cache_quota: CacheQuota | null
     }
 
-Read operations require `actions: []`, offline `network`, and null limit/quota fields. A completed delete returns the pre-deletion `workspace` record as evidence. Mutation results return the complete selected action set, including `keep` actions, so atomic batches are inspectable.
+Read operations require `actions: []`, offline `network`, and null limit/quota fields. `relocation` is non-null only when local manifest plus durable evidence prove one `SKL-WSP-023` relocation candidate; it then reports the old canonical path, exact current path, matched instance, and complete recorded Agent set needed by `workspace sync --rebind-from`. A relocation-required target without that complete proof is an invalid producer state rather than a partial relocation object. Every non-relocation result requires null. A completed delete returns the pre-deletion `workspace` record as evidence. Mutation results return the complete selected action set, including `keep` actions, so atomic batches are inspectable.
 
 `workspace.add`, `workspace.lock`, `workspace.update`, `workspace.pin`, and `workspace.sync` require non-null `source_limits`, `fetch_budget`, and `cache_quota` even when verified cache makes `network.used: false`; every other workspace operation requires those three fields to be null.
 
@@ -351,14 +385,14 @@ Manager status requires `actions: []`. Manager operations are offline and need n
 
     CacheInfoData {
       quota: CacheQuota,
-      verified_entry_count: UInt,
-      verified_bytes: UInt,
-      protected_bytes: UInt,
-      reclaimable_bytes: UInt,
-      quarantine_entry_count: UInt,
-      quarantine_bytes: UInt,
-      staging_bytes: UInt,
-      corruption_count: UInt,
+      verified_entry_count: DecimalU64,
+      verified_bytes: DecimalU64,
+      protected_bytes: DecimalU64,
+      reclaimable_bytes: DecimalU64,
+      quarantine_entry_count: DecimalU64,
+      quarantine_bytes: DecimalU64,
+      staging_bytes: DecimalU64,
+      corruption_count: DecimalU64,
       index_consistent: Bool
     }
 
@@ -372,8 +406,8 @@ Manager status requires `actions: []`. Manager operations are offline and need n
     ConfigEntry {
       key: "cache_limit_bytes" | "agents.claude.executable" | "agents.codex.executable",
       configured: Bool,
-      value: UInt | PathValue | null,
-      default_value: UInt | null,
+      value: DecimalU64 | PathValue | null,
+      default_value: DecimalU64 | null,
       default_command: "claude" | "codex" | null
     }
 
@@ -499,9 +533,10 @@ Every error code maps to exactly one required details type and exit category. Co
     ConfirmationTokenDetails { reason: "invalid" | "expired" | "stale" | "consumed" }
     TrustDetails { source: SourceIdentity, trust_state: "missing" | "revoked" }
     AuthenticationDetails { source: SourceIdentity | null, stage: "metadata" | "content", transport: "api" | "https" | "ssh", credential: "none" | "gh_token" | "github_token" | "gh_cli" | "git_helper" | "ssh_agent" }
-    SourceAvailabilityDetails { source: SourceIdentity, commit: Sha | null, transports_attempted: ("https" | "ssh")[] }
-    CandidateDetails { input: String, candidates: SourceIdentity[] }
-    LimitDetails { limit_kind: String, measured: UInt, allowed: UInt, source: SourceIdentity | null, source_path: String | null, path: PathValue | null }
+    SourceAvailabilityDetails { location: SourceLocator, commit: Sha | null, transports_attempted: ("https" | "ssh")[] }
+    CandidateDetails { input: String, candidates: SourceLocator[] }
+    LimitDetails { limit_kind: String, measured: DecimalU64, allowed: DecimalU64, source: SourceIdentity | null, source_path: String | null, path: PathValue | null }
+    SourceLimitDetails { source: SourceIdentity, measured_files: DecimalU64, allowed_files: DecimalU64, measured_bytes: DecimalU64, allowed_bytes: DecimalU64 }
     ValidationDetails { constraint: String, source: SourceIdentity | null, source_path: String | null, path: PathValue | null }
     PathCollisionDetails { source: SourceIdentity, first_path: String, second_path: String, collision_key: String | null, target_root: PathValue | null }
     EnvironmentDetails { variable: String, path: PathValue | null, reason: String }
@@ -512,8 +547,8 @@ Every error code maps to exactly one required details type and exit category. Co
     AccessDetails { domain: String, target: TargetRef, reason: String }
     BusyDetails { lock_domain: String, waited_ms: UInt }
     BaselineDetails { domain: String, expected_revision: DecimalU64, actual_revision: DecimalU64 }
-    QuotaDetails { quota: CacheQuota, required_bytes: UInt }
-    RepairSpaceDetails { object_path: PathValue, required_available_bytes: UInt, observed_available_bytes: UInt }
+    QuotaDetails { quota: CacheQuota, required_bytes: DecimalU64 }
+    RepairSpaceDetails { object_path: PathValue, required_available_bytes: DecimalU64, observed_available_bytes: DecimalU64 }
     IntegrityDetails { source: SourceIdentity | null, path: PathValue | null, expected: Integrity | null, actual: Integrity | null }
     SchemaDetails { domain: String, found_version: UInt, supported_version: UInt }
     DatabaseCorruptDetails { database: PathValue, backups: PathValue[], recoverable_exports: String[], recovery_procedure: "database-corruption-v1" }
@@ -521,7 +556,7 @@ Every error code maps to exactly one required details type and exit category. Co
     InvalidStateDetails { domain: String, state: String, expected: String[] }
     InternalDetails { incident_id: OpaqueId }
 
-`UsageDetails` uses `value` for a logical UTF-8 argument and `path` for a native path argument; at most one is non-null. `LookupDetails` requires exactly one of `selector` or `path` to be non-null: logical selectors remain strings and native filesystem targets use `PathValue`. In `LimitDetails` and `ValidationDetails`, a repository-relative Git path uses `source_path` while a host path uses `path`; a producer MUST NOT place either in the other field. `portable_path_collision` requires a non-null `collision_key` and null `target_root`; `filesystem_path_collision` requires the materialization `target_root` and may use null `collision_key` when the host alias rule has no portable textual key.
+`UsageDetails` uses `value` for a logical UTF-8 argument and `path` for a native path argument; at most one is non-null. `LookupDetails` requires exactly one of `selector` or `path` to be non-null: logical selectors remain strings and native filesystem targets use `PathValue`. In `LimitDetails` and `ValidationDetails`, a repository-relative Git path uses `source_path` while a host path uses `path`; a producer MUST NOT place either in the other field. `source_limit_exceeded` always uses `SourceLimitDetails` so both independently active dimensions are present even when only one was exceeded; generic fixed one-dimension limits use `LimitDetails`. `portable_path_collision` requires a non-null `collision_key` and null `target_root`; `filesystem_path_collision` requires the materialization `target_root` and may use null `collision_key` when the host alias rule has no portable textual key.
 
 | Error code | Required details type | Exit |
 | --- | --- | --- |
@@ -540,7 +575,7 @@ Every error code maps to exactly one required details type and exit category. Co
 | `ambiguous_source_url` | `CandidateDetails` | 4 |
 | `source_selection_required` | `CandidateDetails` | 4 |
 | `discovery_limit_exceeded` | `LimitDetails` | 4 |
-| `source_limit_exceeded` | `LimitDetails` | 4 |
+| `source_limit_exceeded` | `SourceLimitDetails` | 4 |
 | `fetch_limit_exceeded` | `LimitDetails` | 5 |
 | `agent_input_limit_exceeded` | `LimitDetails` | 4 |
 | `invalid_root_skill_name` | `ValidationDetails` | 4 |
@@ -577,4 +612,4 @@ Exit 0 is reserved for success. Exit 2 is syntax/usage, 3 confirmation, 4 domain
 
 ## Contract Acceptance
 
-The implementation must generate machine-readable schemas or equivalent validator fixtures from one typed source and compare them with this catalog. Coverage tests extract all 50 non-meta command leaves from the parser, require the exact 50 operation identifiers above, validate at least one success document for every allowed outcome/type pair used by a leaf, validate confirmation documents for every `Confirm: yes` leaf, and validate one document per error code. Manager-asset workflows must validate against the same fixtures. Compatibility tests retain the released 0.1.0 corpus and require every later 0.1.x producer to preserve all required fields, enum meanings, ordering, discriminators, and numeric/string encodings while consumers tolerate newly added optional fields.
+The implementation must generate machine-readable schemas or equivalent validator fixtures from one typed source and compare them with this catalog. Coverage tests extract all 50 non-meta command leaves from the parser, require the exact 50 operation identifiers above, validate at least one success document for every allowed outcome/type pair used by a leaf, validate confirmation documents for every `Confirm: yes` leaf, and validate one document per error code. Focused fixtures cover `DecimalU64` at 9,007,199,254,740,992 and 18,446,744,073,709,551,615 plus overflow rejection; both `SourceLimitDetails` dimensions; repository/ref/source locators with null versus empty path; mixed per-source HTTPS/SSH attempt sequences; null and complete relocation evidence; and default, adjacent, and beyond-total Library pages. Manager-asset workflows must validate against the same fixtures. Compatibility tests retain the released 0.1.0 corpus and require every later 0.1.x producer to preserve all required fields, enum meanings, ordering, discriminators, and numeric/string encodings while consumers tolerate newly added optional fields.

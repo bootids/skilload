@@ -28,7 +28,9 @@ The CLI is both the human interface and the stable machine interface used by the
 
 `source migrate` covers Library, Trust, and global database source spelling; workspace source migration remains separate.
 
-**Acceptance.** Generated help and parser tests enumerate every path above and no additional product command. Every accepted path dispatches to a real application operation.
+`library list` and `library search` alone accept `--limit <COUNT>` from 1 through 1,000 (default 100) and unsigned-64-bit `--offset <COUNT>` (default 0), with the deterministic offset semantics in `SKL-LIB-005`. These options do not add command leaves or operation identifiers.
+
+**Acceptance.** Generated help and parser tests enumerate every path above and no additional product command. Every accepted path dispatches to a real application operation. Leaf help exposes pagination only for Library list/search and rejects out-of-range or misplaced pagination arguments before dispatch.
 
 ## SKL-CLI-002 - No-argument help (Revision 1)
 
