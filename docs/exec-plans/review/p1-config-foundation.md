@@ -68,7 +68,7 @@ The deliberately narrow development command surface is important. Building all 5
 - [x] (2026-08-18 13:54Z) Pushed implementation commit `05ad0c9ae39f244d4287194249b09e29bb56ecff`; [CI run 32144984316](https://github.com/bootids/skilload/actions/runs/32144984316) passed its `ubuntu-24.04` and `macos-15` jobs, including locked format, Clippy, and test checks.
 - [x] (2026-08-18 13:56Z) With the active implementation at `5faf8ff8a5f06087e572e0c8c20e63ebc0f85b36`, ran `gh pr ready https://github.com/bootids/skilload/pull/2` and observed `isDraft: false` plus the same `headRefOid`; CI run 32145189606 also passed both required jobs for that exact head.
 - [x] (2026-08-18 13:56Z) Created the review-state change that moves this sole Plan copy to `docs/exec-plans/review/` and sets `status: review`.
-- [x] (2026-08-18) Classified all six inline review concerns in the Review Conversation Log. R1 preserves the documented literal-native-path interpretation; R2 through R6 are ordinary in-scope remediations. Focused core and CLI regressions, locked workspace tests, format, Clippy, build, and diff checks pass before the preliminary remediation commit.
+- [x] (2026-08-18) Classified all six inline review concerns in the Review Conversation Log. R1 preserves the documented literal-native-path interpretation; R2 through R6 are ordinary in-scope remediations. Focused core and CLI regressions, locked workspace tests, format, Clippy, build, and diff checks passed; remediation commit `3417b8a2c914b0ed9c16259f969fbc2ba9546031` is pushed before reviewer replies.
 - [ ] After a later explicit human merge prompt, use `merge-exec-plan` to pass preflight, complete and push the Plan, merge, update local `main`, and delete the local delivery branch.
 
 ## Surprises & Discoveries
@@ -129,7 +129,7 @@ Local acceptance on 2026-08-18 passed `mise exec -- cargo fmt --all --check`, `m
 
 Review outcome: PR [#2](https://github.com/bootids/skilload/pull/2) is ready for human review. The ready transaction used implementation head `5faf8ff8a5f06087e572e0c8c20e63ebc0f85b36`, which [CI run 32145189606](https://github.com/bootids/skilload/actions/runs/32145189606) passed on both required runners. The Product Baseline remains Revision 1 of `SKL-CLI-002`, `SKL-CLI-003`, `SKL-OPS-006`, and `SKL-CLI-011`. This review-state commit records lifecycle metadata only; a later explicit merge authorization must complete the review-conversation preflight and final archive transition.
 
-Review remediation on 2026-08-18 closes five valid in-scope defects before reviewer replies: newly used app directories explicitly regain mode `0700`; embedded NUL is rejected from both raw and TOML executable inputs; parser diagnostics never echo malformed user input; known malformed JSON configuration leaves emit one API-v1 `usage_error` envelope; and XDG separation compares existing-directory device/inode identities as well as path ancestry. The full locked workspace suite now passes 31 tests (18 core, six CLI unit, seven CLI integration); the final review-conversation outcome remains pending the preliminary remediation commit, GitHub replies, and inline thread resolution.
+Review remediation on 2026-08-18 closes five valid in-scope defects before reviewer replies: newly used app directories explicitly regain mode `0700`; embedded NUL is rejected from both raw and TOML executable inputs; parser diagnostics never echo malformed user input; known malformed JSON configuration leaves emit one API-v1 `usage_error` envelope; and XDG separation compares existing-directory device/inode identities as well as path ancestry. The full locked workspace suite now passes 31 tests (18 core, six CLI unit, seven CLI integration). Remediation commit `3417b8a2c914b0ed9c16259f969fbc2ba9546031` is pushed; the final review-conversation outcome remains pending GitHub replies and inline thread resolution.
 
 ## Review Conversation Log
 
@@ -145,7 +145,7 @@ Status: open.
 
 Resolution: The current validator rejects the unambiguous trailing-option command form, such as `/usr/bin/claude --version`, but retains a valid absolute UTF-8 native path whose filename contains spaces or shell-metacharacter bytes. `SKL-OPS-006` requires a lexical filesystem path without probing or requiring it to exist, and the configuration value is not passed to a shell. At this boundary, a quoted command spelling and a legitimate absent pathname with spaces are indistinguishable; rejecting the latter would narrow the required native-path domain. The existing Plan Decision Log records this choice.
 
-Evidence: `SKL-OPS-006` Revision 1 in `docs/product-specs/cache-and-operations.md` requires a nonempty valid-UTF-8 absolute filesystem path, while `crates/skilload-core/src/domain/configuration.rs` rejects trailing option-shaped arguments without executing or probing the path. The existing `executable_values_are_utf8_absolute_paths_without_probing` regression covers the unambiguous option form; `mise exec -- cargo test --workspace --all-features --locked` passed 31 tests.
+Evidence: `SKL-OPS-006` Revision 1 in `docs/product-specs/cache-and-operations.md` requires a nonempty valid-UTF-8 absolute filesystem path, while `crates/skilload-core/src/domain/configuration.rs` rejects trailing option-shaped arguments without executing or probing the path. The existing `executable_values_are_utf8_absolute_paths_without_probing` regression covers the unambiguous option form; `mise exec -- cargo test --workspace --all-features --locked` passed 31 tests. The no-fix disposition is recorded in pushed commit `3417b8a2c914b0ed9c16259f969fbc2ba9546031`.
 
 GitHub outcome: Pending reply; thread remains unresolved until the no-fix rationale is posted.
 
@@ -161,9 +161,9 @@ Status: open.
 
 Resolution: `ensure_restrictive_directory` now applies `set_permissions(0o700)` after validating either an existing or newly created real application directory, before nested locks or staging files are opened. `restrictive_directories_restore_owner_search_permission` creates a mode-`0600` directory and proves the helper restores `0700`.
 
-Evidence: `mise exec -- cargo test -p skilload-core --lib --locked` passed 18 tests, including the new permission regression; `mise exec -- cargo clippy --workspace --all-targets --all-features -- -D warnings`, `mise exec -- cargo fmt --all --check`, `mise exec -- cargo test --workspace --all-features --locked`, and `mise exec -- cargo build --workspace --all-features --locked` passed. Remediation commit pending.
+Evidence: `mise exec -- cargo test -p skilload-core --lib --locked` passed 18 tests, including the new permission regression; `mise exec -- cargo clippy --workspace --all-targets --all-features -- -D warnings`, `mise exec -- cargo fmt --all --check`, `mise exec -- cargo test --workspace --all-features --locked`, and `mise exec -- cargo build --workspace --all-features --locked` passed. Remediation commit `3417b8a2c914b0ed9c16259f969fbc2ba9546031`.
 
-GitHub outcome: Pending fix commit, reply, and thread resolution.
+GitHub outcome: Remediation commit `3417b8a2c914b0ed9c16259f969fbc2ba9546031` is pushed; reply and thread resolution pending.
 
 ### R3 — NUL-containing executable paths are accepted
 
@@ -177,9 +177,9 @@ Status: open.
 
 Resolution: Shared `validate_executable_raw` now rejects an embedded NUL before constructing the normalized native path, so the rule applies to both application-set `OsString` values and TOML-loaded strings.
 
-Evidence: `executable_values_are_utf8_absolute_paths_without_probing` covers raw NUL input and `strict_toml_rejects_wrong_types_and_invalid_configured_paths` covers TOML `\u0000`; the focused core suite passed 18 tests and the full locked workspace suite passed 31. Remediation commit pending.
+Evidence: `executable_values_are_utf8_absolute_paths_without_probing` covers raw NUL input and `strict_toml_rejects_wrong_types_and_invalid_configured_paths` covers TOML `\u0000`; the focused core suite passed 18 tests and the full locked workspace suite passed 31. Remediation commit `3417b8a2c914b0ed9c16259f969fbc2ba9546031`.
 
-GitHub outcome: Pending fix commit, reply, and thread resolution.
+GitHub outcome: Remediation commit `3417b8a2c914b0ed9c16259f969fbc2ba9546031` is pushed; reply and thread resolution pending.
 
 ### R4 — Raw clap diagnostics can render hostile parser input
 
@@ -193,9 +193,9 @@ Status: open.
 
 Resolution: `main.rs` now renders generated help/version through stdout but replaces every non-meta clap parse failure with a fixed `usage_error` diagnostic that contains no parser-provided field.
 
-Evidence: `parser_failures_are_terminal_safe_and_preserve_json_configuration_operations` passes a combined ESC/OSC/BEL/newline unknown command and asserts the exact fixed stderr line; `help_and_absent_queries_are_offline_and_filesystem_inert` exercises explicit `--help` and `--version` through the same parse branch. The focused CLI package and full locked workspace suite passed. Remediation commit pending.
+Evidence: `parser_failures_are_terminal_safe_and_preserve_json_configuration_operations` passes a combined ESC/OSC/BEL/newline unknown command and asserts the exact fixed stderr line; `help_and_absent_queries_are_offline_and_filesystem_inert` exercises explicit `--help` and `--version` through the same parse branch. The focused CLI package and full locked workspace suite passed. Remediation commit `3417b8a2c914b0ed9c16259f969fbc2ba9546031`.
 
-GitHub outcome: Pending fix commit, reply, and thread resolution.
+GitHub outcome: Remediation commit `3417b8a2c914b0ed9c16259f969fbc2ba9546031` is pushed; reply and thread resolution pending.
 
 ### R5 — Known malformed JSON leaves lack an API-v1 error envelope
 
@@ -209,9 +209,9 @@ Status: open.
 
 Resolution: `args::json_configuration_operation` recognizes only an attempted supported configuration leaf after stripping known presentation flags. On parse failure, `main.rs` emits the normal API-v1 `usage_error` envelope for that operation; unidentifiable invocations retain the fixed human usage diagnostic.
 
-Evidence: The args unit regression covers global flag placement and unknown leaves; `parser_failures_are_terminal_safe_and_preserve_json_configuration_operations` asserts `config.set`, exit 2, one JSON stdout value, and no state creation. The full locked workspace suite passed 31 tests. Remediation commit pending.
+Evidence: The args unit regression covers global flag placement and unknown leaves; `parser_failures_are_terminal_safe_and_preserve_json_configuration_operations` asserts `config.set`, exit 2, one JSON stdout value, and no state creation. The full locked workspace suite passed 31 tests. Remediation commit `3417b8a2c914b0ed9c16259f969fbc2ba9546031`.
 
-GitHub outcome: Pending fix commit, reply, and thread resolution.
+GitHub outcome: Remediation commit `3417b8a2c914b0ed9c16259f969fbc2ba9546031` is pushed; reply and thread resolution pending.
 
 ### R6 — Filesystem aliases beyond symlinks can overlap XDG roots
 
@@ -225,9 +225,9 @@ Status: open.
 
 Resolution: XDG resolution records device/inode identities for every existing canonical directory prefix. `ensure_disjoint` rejects a shared identity whose remaining suffixes are equal or nested, and revalidation compares the original anchor identity before freshly checking all alias pairs.
 
-Evidence: `filesystem_alias_identities_reject_equal_or_nested_application_roots` exercises distinct aliases with the same identity; `revalidation_detects_a_recreated_root_identity` proves same-spelling replacement is rejected. The focused core suite passed 18 tests and the full locked workspace suite passed 31. Remediation commit pending.
+Evidence: `filesystem_alias_identities_reject_equal_or_nested_application_roots` exercises distinct aliases with the same identity; `revalidation_detects_a_recreated_root_identity` proves same-spelling replacement is rejected. The focused core suite passed 18 tests and the full locked workspace suite passed 31. Remediation commit `3417b8a2c914b0ed9c16259f969fbc2ba9546031`.
 
-GitHub outcome: Pending fix commit, reply, and thread resolution.
+GitHub outcome: Remediation commit `3417b8a2c914b0ed9c16259f969fbc2ba9546031` is pushed; reply and thread resolution pending.
 
 ## Context and Orientation
 
