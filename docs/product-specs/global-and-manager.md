@@ -12,7 +12,7 @@ A **global deployment** makes a selected external Library Skill visible in every
 
 ## SKL-GLB-002 - Target profile identity (Revision 1)
 
-**Behavior.** A global deployment target MUST be identified only by Agent plus canonical resolved global Skill root. skilload MUST expose an opaque local `profile_id` together with the resolved path. Effective `HOME`, executable path, Agent-specific configuration, compatibility/conflict roots, and their environment fingerprint MAY be retained as current observations, but they MUST NOT create a second profile when Agent and canonical global root are unchanged. Equal Agent names with different canonical global roots are distinct targets.
+**Behavior.** A global deployment target MUST be identified only by Agent plus canonical resolved global Skill root. skilload MUST expose an opaque local `profile_id` together with the resolved path. Effective `HOME`, Agent-root environment values, optional executable path for a removal-only plan, Agent-specific configuration, compatibility/conflict roots, and their environment fingerprint MAY be retained as current observations, but they MUST first satisfy `SKL-WSP-022`'s absolute environment-path rules and MUST NOT create a second profile when Agent and canonical global root are unchanged. Equal Agent names with different canonical global roots are distinct targets.
 
 **Acceptance.** Two Claude configurations with different resolved global roots receive different profile IDs and independent target records even when they run under the same user account. With fixed `HOME`, changing only `CODEX_HOME` keeps the same Codex profile ID and `$HOME/.agents/skills` target while refreshing compatibility/conflict observations.
 
@@ -30,9 +30,9 @@ A **global deployment** makes a selected external Library Skill visible in every
 
 ## SKL-GLB-005 - Install and uninstall commit desired state with links (Revision 1)
 
-**Behavior.** `global install` and normal `global uninstall` MUST atomically change durable desired state and verified managed links for every requested target. Multi-Skill or multi-Agent normal completion MUST be all-or-nothing. Uninstall MUST remain available after Trust revocation. The inaccessible-profile detach exception is defined by `SKL-GLB-009`; it changes desired state without claiming a target filesystem change.
+**Behavior.** `global install` and normal `global uninstall` MUST atomically change durable desired state and verified managed links for every requested target. Multi-Skill or multi-Agent normal completion MUST be all-or-nothing. Uninstall MUST remain available after Trust revocation and, under the removal-only rule in `SKL-WSP-022`, after the selected Agent executable is removed when every selected root remains accessible and every removed link is exactly owned. The inaccessible-profile detach exception is defined by `SKL-GLB-009`; it changes desired state without claiming a target filesystem change.
 
-**Acceptance.** A failed target preflight leaves database and every requested root unchanged. Successful uninstall removes only proven owned links and its selected desired associations.
+**Acceptance.** A failed target preflight leaves database and every requested root unchanged. Successful uninstall removes only proven owned links and its selected desired associations; a missing Agent executable alone does not block that exact removal, while an inaccessible, foreign, or drifted link still blocks normal uninstall.
 
 ## SKL-GLB-006 - Sync restores without advancing (Revision 1)
 
@@ -102,9 +102,9 @@ A **global deployment** makes a selected external Library Skill visible in every
 
 ## SKL-MGR-004 - Multi-Agent and profile transaction (Revision 1)
 
-**Behavior.** Manager install, uninstall, and status MUST require one or more explicit Agents and use the same resolved profile identity rules as global deployment. For install/uninstall, every selected Agent executable and target MUST pass preflight and the normal command MUST apply to all selected targets or none. Status remains read-only and reports each selected target independently.
+**Behavior.** Manager install, uninstall, and status MUST require one or more explicit Agents and use the same resolved profile identity rules as global deployment. Install MUST pass executable, `skilload` PATH, functional, and target preflight for every selected Agent. Uninstall MAY omit executable and functional probes only under `SKL-WSP-022`'s removal-only rule, while still requiring an accessible root and an exact marker plus payload digest for every selected manager copy. Install and uninstall MUST apply to all selected targets or none. Status remains read-only and reports each selected target independently.
 
-**Acceptance.** A missing Codex executable prevents a requested Claude-plus-Codex install from modifying Claude's manager target. A single-Agent request remains independently valid, while multi-Agent status reports one result per requested Agent without mutation.
+**Acceptance.** A missing Codex executable prevents a requested Claude-plus-Codex install from modifying Claude's manager target, but does not block a Claude-plus-Codex uninstall when both copied targets are accessible and exactly owned. A foreign, modified, or inaccessible manager target leaves that multi-Agent uninstall unchanged. A single-Agent request remains independently valid, while multi-Agent status reports one result per requested Agent without mutation.
 
 ## SKL-MGR-005 - Explicit upgrade and drift status (Revision 1)
 

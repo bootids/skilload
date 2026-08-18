@@ -148,14 +148,16 @@ Default tests are offline and deterministic:
 
 * unit tests for domain validation, source normalization, integrity encoding, conflict policy, command schema, JSON rendering, and exit mapping;
 * repository/adapter contract tests against fakes and SQLite/filesystem implementations;
-* temporary bare Git repositories with same-name/different-commit branches and tags, ambiguous slash-bearing refs/URL paths, SHA pins, submodules, LFS pointers, symlinks, executable bits, hostile names, and deleted/unavailable commits;
+* temporary bare Git repositories with same-name/different-commit branches and tags, ambiguous slash-bearing refs/URL paths, SHA pins, submodules, LFS pointers, symlinks, executable bits, exact valid/invalid Skill-name and bounded-frontmatter fixtures, hostile names, and deleted/unavailable commits;
 * local HTTP fixtures for GitHub metadata, redirects, auth/rate errors, default branches, repository ID changes, and candidate trees;
-* isolated HOME/XDG/Claude/Codex roots and fake Agent/Git/gh/skilload executables/configuration, including empty/relative/project/cache PATH entries, outside symlinks back into a worktree, and execution-marker assertions;
+* isolated HOME/XDG/Claude/Codex roots and fake Agent/Git/gh/ssh/skilload executables/configuration, including empty/relative/project/cache PATH entries, inherited Git SSH overrides, relative Agent-root environments, outside symlinks back into a worktree, and execution-marker assertions;
 * transaction failpoint tests at every journal/filesystem/database phase;
 * workspace relocation fixtures for proved rebind, duplicate/copy refusal, old-path accessibility, complete Agent selection, link/exclude transfer, and crash recovery;
+* bounded workspace YAML and tracked-manifest fixtures covering exact limits, non-expanding feature rejection, literal Git pathspecs, blocked recovery, and retry after untracking;
 * golden JSON/help/human snapshots with secret-redaction assertions and hostile ANSI/OSC/CR/bidirectional/invalid-byte fields in previews, errors, lists, and diagnostics, plus `PathValue` round trips for valid UTF-8, invalid bytes, padding boundaries, and every path-bearing field;
 * cache-quota fixtures for the 536,870,912-byte default, persistent set/unset, accepted and rejected per-invocation overrides, complete-batch accounting, confirmation drift, and non-persistence;
 * profile fixtures proving that auxiliary Codex observations do not split one `(Agent, global root)` identity, plus inaccessible detach/orphan/cleanup fixtures that never claim an unobserved link deletion;
+* removal-only fixtures proving absent Agent executables do not block empty workspace sync, exact global uninstall, or exact manager uninstall while additive, inaccessible, drifted, foreign, and mixed plans remain failures;
 * post-deployment cache-modification fixtures proving the direct-read limitation, read-only detection, and quarantine/refetch behavior on the next mutating use;
 * scale fixtures for 10,000 Library entries, 200 workspace Skills, and 100 global targets.
 
@@ -167,7 +169,7 @@ Real GitHub and real Claude/Codex smoke tests are explicit, credential-aware job
 
 The later P1 foundation adds a root Cargo workspace, committed `Cargo.lock`, `rust-toolchain.toml`, and `mise.toml`. mise pins Rust and any Node/npm/pnpm used only for repository tooling; the released product has no Node runtime dependency.
 
-The binary links SQLite with FTS5 and an HTTPS client suitable for GitHub. Its required external runtime executables are system `git` and only the selected Agent CLI. `gh` remains optional. Build metadata exposes product version, Git commit, target triple, and manager asset version without embedding build-machine paths or timestamps that prevent reproducibility.
+The binary links SQLite with FTS5 and an HTTPS client suitable for GitHub. Its required external runtime executables are system `git`, system `ssh` only for SSH Git transport, and the selected Agent CLI only for additive/repair/functional Agent operations. Exact-owned removal-only operations need no Agent executable. `gh` remains optional. Build metadata exposes product version, Git commit, target triple, and manager asset version without embedding build-machine paths or timestamps that prevent reproducibility.
 
 ## Release Matrix and Provenance
 

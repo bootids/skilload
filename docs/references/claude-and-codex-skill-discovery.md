@@ -30,6 +30,10 @@ Workspace sync targets `.claude/skills/<name>` for Claude and `.agents/skills/<n
 
 Directory symlinks are an appropriate deployment mechanism for both Agents. Native support does not relax skilload's ownership rule: an exact existing user path is never adopted, replaced, or deleted merely because an Agent can read it.
 
+Both vendor documents point to the open Agent Skills format. Its current specification requires `name` and `description`; defines name as 1-64 lowercase ASCII letters, digits, and hyphens with no leading, trailing, or consecutive hyphen; requires equality with the parent directory; and caps description at 1,024 characters. skilload adopts that common strict name grammar and exact byte comparison for both Agents rather than depending on either host's lenient behavior. It verifies equality with the logical Git source directory and deploys the same bytes as the native target entry, so `Review_Skill` is rejected rather than case-normalized.
+
+Environment variables are integration inputs, not inherently absolute paths. The vendor root descriptions do not authorize resolving `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, or `HOME` against skilload's current directory. skilload's product rule is therefore stricter and CWD-independent: every present Agent-root override and every required `HOME` must be nonempty and absolute before root inspection. This is a local safety/determinism decision derived from the documented root formulas, not a claim that the Agents themselves reject every relative value.
+
 ## Cautions
 
 Agent discovery is version-sensitive. In particular, Codex changed its preferred personal root while retaining a compatibility root, and Claude's reload behavior varies by directory creation and content type. End-to-end adapter tests should use fresh Agent processes and assert the roots observed by the installed version rather than relying only on these notes.
@@ -41,5 +45,6 @@ Agent discovery is version-sensitive. In particular, Codex changed its preferred
 * [OpenAI: Build skills](https://developers.openai.com/codex/skills)
 * [Codex source: host Skill roots at commit 5ee6baee](https://github.com/openai/codex/blob/5ee6baee2fcc0b6ffd413d9611f5538dad40d0f2/codex-rs/ext/skills/src/host_roots.rs)
 * [Codex source: symlink-following discovery at commit 5ee6baee](https://github.com/openai/codex/blob/5ee6baee2fcc0b6ffd413d9611f5538dad40d0f2/codex-rs/ext/skills/src/loader/discovery.rs)
+* [Agent Skills format specification](https://agentskills.io/specification)
 
 Last updated: 2026-08-18.

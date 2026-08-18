@@ -1,6 +1,6 @@
 # GitHub Repository Identity and Metadata Authentication
 
-Scope: GitHub.com REST/GraphQL and repository rename/transfer behavior verified on 2026-08-18. This reference explains why skilload binds a path-based source to an API repository ID.
+Scope: GitHub.com REST/GraphQL, repository rename/transfer behavior, and Git SSH-command selection verified on 2026-08-18. This reference explains why skilload binds a path-based source to an API repository ID and must secure Git's transport child process separately from Git itself.
 
 ## Why It Matters
 
@@ -14,12 +14,20 @@ Scope: GitHub.com REST/GraphQL and repository rename/transfer behavior verified 
 * `Get a repository` may return `301 Moved Permanently`, and following it yields the current repository metadata. skilload compares fresh proposed-name metadata with stored identity before proposing a migration; an old-path response is discovery/warning evidence only because that path may have been reused.
 * Public repository metadata can be requested without authentication. Private repository metadata requires an authenticated token with repository Metadata read access (or equivalent classic-token access).
 * An unauthenticated or insufficiently authorized REST request can return `403` or deliberately indistinguishable `404` responses.
+* Git uses `GIT_SSH` or `GIT_SSH_COMMAND` instead of the default `ssh`; `GIT_SSH_COMMAND` takes precedence over `GIT_SSH` and is interpreted by a shell.
+* Git's `core.sshCommand` can also choose the SSH command, but the official config documentation says an environment `GIT_SSH_COMMAND` overrides it. `GIT_SSH_VARIANT` overrides command-variant detection and can select the fixed OpenSSH argument contract.
 
 ## Authentication Consequence
 
 Git over SSH can prove that GitHub allowed a clone, but the Git transport does not return REST repository `id`. It follows that SSH credentials alone cannot establish skilload's first Trust for a private source. Private validation needs `GH_TOKEN`, `GITHUB_TOKEN`, or a token obtained from an already authenticated `gh` CLI, in addition to whichever Git credentials retrieve content. This is an implementation inference from the separate Git and API interfaces, not a statement that GitHub rejects SSH cloning.
 
 skilload does not persist these credentials. API error handling must not interpret private-resource `404` as proof that the repository does not exist.
+
+## Git SSH Child-Process Consequence
+
+Resolving and invoking a trusted absolute `git` binary does not constrain the program Git later starts for an SSH remote. Caller environment, Git configuration, and PATH can independently select that child. On Git 2.50.1, a local fixture with a trusted Git path and `PATH=<worktree>:/usr/bin` executed `<worktree>/ssh` during `git ls-remote` before any remote connection, which confirms that safe Git discovery alone is insufficient.
+
+For an SSH attempt, skilload therefore resolves fixed basename `ssh` through the same absolute-directory, final-target, and file-identity checks as Git; removes caller-provided `GIT_SSH`, `GIT_SSH_COMMAND`, and `GIT_SSH_VARIANT`; then supplies its own shell-quoted canonical path through `GIT_SSH_COMMAND` and fixes `GIT_SSH_VARIANT=ssh`. The owned environment value overrides `core.sshCommand`, avoids Git's variant probe, and contains only fixed noninteractive options. This is an implementation conclusion from Git's documented precedence plus the local fixture, not a GitHub authentication requirement. User SSH configuration outside the identified untrusted roots remains inside skilload's same-account trust boundary.
 
 ## Rename and Transfer Cautions
 
@@ -32,5 +40,7 @@ A transfer preserves repository content and many associated objects, and GitHub 
 * [GraphQL guide: Using global node IDs](https://docs.github.com/en/graphql/guides/using-global-node-ids)
 * [GitHub: Renaming a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/renaming-a-repository)
 * [GitHub: Transferring a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/transferring-a-repository)
+* [Git environment: `GIT_SSH`, `GIT_SSH_COMMAND`, and `GIT_SSH_VARIANT`](https://git-scm.com/docs/git#Documentation/git.txt-codeGITSSHcode)
+* [Git config: `core.sshCommand` and `ssh.variant`](https://git-scm.com/docs/git-config#Documentation/git-config.txt-coresshCommand)
 
 Last updated: 2026-08-18.
