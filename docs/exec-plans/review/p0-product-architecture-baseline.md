@@ -2,7 +2,7 @@
 plan_id: PLAN-0001
 branch: codex/p0-product-architecture-baseline
 pull_request: https://github.com/bootids/skilload/pull/1
-status: active
+status: review
 depends_on: []
 ---
 
@@ -54,7 +54,7 @@ The repository currently has governance documents but no product specification, 
 - [x] (2026-08-18 03:50Z) Verified current Claude/Codex discovery, GitHub identity/authentication, and `skills` 1.5.22 implementation facts against primary sources; captured three dated reference documents.
 - [x] (2026-08-18 03:50Z) Authored the initial 119 revision-1 behaviors across seven product specifications plus the index, populated `ARCHITECTURE.md`, and authored all five planned technical designs; the traceability pass then identified license continuity and three unspecified read-command projections, expanding the final inventory to 123.
 - [x] (2026-08-18 04:15Z) Completed the traceability and validation pass: 123 unique revision-1 behaviors each have one behavior and acceptance block; all expected ranges, relative links, command trees, ASCII checks, removed-command checks, and whitespace checks pass; the complete authored document set was manually reviewed.
-- [ ] After implementation of this documentation delivery, acceptance, synchronization, and retrospective are committed and pushed, run `gh pr ready`, verify `isDraft: false` and the expected head SHA, then automatically enter `review` and push the status commit.
+- [x] (2026-08-18 04:17Z) Committed and pushed the complete documentation delivery as `a159812431fb6d175e459244d0df9ac1a7094b8f`, marked PR #1 ready, verified `isDraft: false` with that exact implementation head, and moved this Plan to `review` for the required lifecycle commit.
 - [ ] After a later explicit human merge prompt, pass preflight, complete and push the Plan, merge the PR, return to updated `main`, and delete the local delivery branch.
 
 ## Surprises & Discoveries
@@ -143,11 +143,11 @@ The repository currently has governance documents but no product specification, 
 
 ## Outcomes & Retrospective
 
-The documentation delivery is complete on the active branch. It establishes 123 planned revision-1 product behaviors across seven domain specifications plus their index, a populated `ARCHITECTURE.md`, five focused technical designs, and three dated external-fact references. The final behavior counts are `CACHE=10`, `CLI=12`, `GLB=13`, `LIB=11`, `MGR=9`, `OPS=10`, `PROD=7`, `SRC=16`, `TRUST=8`, and `WSP=27`. The baseline deliberately adds no Rust workspace or executable behavior and makes no implementation claim.
+The documentation delivery is complete. It establishes 123 planned revision-1 product behaviors across seven domain specifications plus their index, a populated `ARCHITECTURE.md`, five focused technical designs, and three dated external-fact references. The final behavior counts are `CACHE=10`, `CLI=12`, `GLB=13`, `LIB=11`, `MGR=9`, `OPS=10`, `PROD=7`, `SRC=16`, `TRUST=8`, and `WSP=27`. The baseline deliberately adds no Rust workspace or executable behavior and makes no implementation claim.
 
 Validation on 2026-08-18 confirmed that every expected ID is defined exactly once at Revision 1 with one normative Behavior and one Acceptance block; product, design, and Plan copies of the 17-line command tree are identical; all relative Markdown link targets exist; the 18 authored/active-Plan documents are ASCII and contain no unresolved decision markers; removed commands appear only in explicit non-goal or rejection context; and `git diff --check` produces no output. A manual traceability review added explicit behavior maps to every technical design, promoted the previously design-only Apache-2.0 promise to `SKL-PROD-007`, specified the three previously unnamed read projections, and reconciled cross-domain network, profile, Trust, cache, source-migration, confirmation, serialization, and ownership details without adding a command surface.
 
-No Cargo, Agent, model, or runtime test was run because this delivery is intentionally documentation-only and the repository has no implementation or test runner. The reusable integration claims are instead backed by the three dated primary-source references. The associated PR is https://github.com/bootids/skilload/pull/1; the remaining work in this execution is only the required commit/push and ready-to-review lifecycle transaction.
+No Cargo, Agent, model, or runtime test was run because this delivery is intentionally documentation-only and the repository has no implementation or test runner. The reusable integration claims are instead backed by the three dated primary-source references. The associated PR is https://github.com/bootids/skilload/pull/1. Ready-for-review verification on 2026-08-18 observed `isDraft: false` and implementation head `a159812431fb6d175e459244d0df9ac1a7094b8f`; no scoped implementation work remains.
 
 ## Review Conversation Log
 
@@ -327,4 +327,4 @@ The stable external interface planned for 0.1 is the canonical command tree and 
 
 Research uses only primary vendor documentation and inspected source code. No new package or service is required to complete this documentation delivery.
 
-Plan revision note: initial planning baseline created on 2026-08-18 to translate the completed product interview into authoritative repository documentation without beginning implementation. The same day, the Draft PR URL and publication evidence were recorded after the initial push, then explicit human authorization moved the Plan to `active` after a successful delivery preflight. During authoring, Trust received its own behavior-ID family so each authorization rule can be specified atomically. The final traceability pass added stable behaviors for the confirmed Apache-2.0 promise and three previously unspecified read-command projections, then recorded the low-risk technical decisions needed to keep network, profile, Trust, cache, source, confirmation, serialization, and ownership mechanisms internally consistent.
+Plan revision note: initial planning baseline created on 2026-08-18 to translate the completed product interview into authoritative repository documentation without beginning implementation. The same day, the Draft PR URL and publication evidence were recorded after the initial push, then explicit human authorization moved the Plan to `active` after a successful delivery preflight. During authoring, Trust received its own behavior-ID family so each authorization rule can be specified atomically. The final traceability pass added stable behaviors for the confirmed Apache-2.0 promise and three previously unspecified read-command projections, then recorded the low-risk technical decisions needed to keep network, profile, Trust, cache, source, confirmation, serialization, and ownership mechanisms internally consistent. After validation and the implementation commit were pushed, PR #1 was verified ready at that exact head and this Plan entered `review`.
