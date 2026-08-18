@@ -1,0 +1,137 @@
+# Global Deployment and Manager Skill
+
+Status: planned baseline for the skilload CLI MVP.
+
+A **global deployment** makes a selected external Library Skill visible in every local session for one Agent profile. The built-in **manager Skill** is a separate skilload-owned asset that teaches an Agent to invoke skilload's JSON CLI; it is not an external source or Library entry.
+
+## SKL-GLB-001 - Library and Trust eligibility (Revision 1)
+
+**Behavior.** A new global external deployment MUST select a source already in Library and MUST require active exact Trust. Users MAY select one or several Library entries in an invocation. A direct non-Library GitHub source is not eligible for `global install`.
+
+**Acceptance.** Installing a trusted Library entry succeeds; an untrusted entry stops for the normal approval requirement, and an absent Library source returns an eligibility error without adding it implicitly.
+
+## SKL-GLB-002 - Target profile identity (Revision 1)
+
+**Behavior.** A global deployment target MUST be identified by Agent plus resolved global Skill root. skilload MUST expose an opaque local `profile_id` together with the resolved path. The current environment profile is derived from effective `HOME` and Agent-specific configuration roots; equal Agent names with different roots are distinct targets.
+
+**Acceptance.** Two Claude configurations with different resolved roots receive different profile IDs and independent target records even when they run under the same user account.
+
+## SKL-GLB-003 - Durable desired state (Revision 1)
+
+**Behavior.** Global desired state MUST be stored in the local durable database, separate from Library membership, workspace files, cache, and export. It records source, shared pin, target profiles, status, and ownership needed to reconcile links.
+
+**Acceptance.** Library export and workspace files contain no global target. Removing a Library entry or clearing cache leaves the global desired record queryable.
+
+## SKL-GLB-004 - One shared source pin (Revision 1)
+
+**Behavior.** One global source MUST have one resolved commit and integrity shared across all of its target Agent profiles. Installing that source to another profile reuses the existing pin. It MUST NOT independently drift by profile.
+
+**Acceptance.** Listing a source deployed to Claude and Codex shows one commit/integrity plus two targets. A version change either switches both targets or neither.
+
+## SKL-GLB-005 - Install and uninstall commit desired state with links (Revision 1)
+
+**Behavior.** `global install` and `global uninstall` MUST atomically change durable desired state and verified managed links for every requested target. Multi-Skill or multi-Agent normal completion MUST be all-or-nothing. Uninstall MUST remain available after Trust revocation.
+
+**Acceptance.** A failed target preflight leaves database and every requested root unchanged. Successful uninstall removes only proven owned links and its selected desired associations.
+
+## SKL-GLB-006 - Sync restores without advancing (Revision 1)
+
+**Behavior.** `global sync` MUST reconcile desired target links to the existing shared pin and MUST NOT advance a mutable ref. Cache-miss restoration requires active Trust and exact commit verification. Under `SKL-GLB-008`, each explicit Agent resolves its current profile unless stored profile selection is used.
+
+**Acceptance.** After deleting a verified managed link, sync restores it at the same commit. If upstream moved, the commit remains unchanged.
+
+## SKL-GLB-007 - Atomic update and historical pin (Revision 1)
+
+**Behavior.** `global update [selector]` MUST advance mutable refs. With no selector it MUST update all mutable global sources as one atomic batch. `global pin` MUST support a historical commit while retaining mutable source intent. Updating or pinning one source MUST switch all target profiles for that source atomically; SHA sources return `already_immutable` for update.
+
+**Acceptance.** Failure in any selected source/target leaves all pins and links unchanged. A successful historical pin changes every target for that source, and a later update may advance it again.
+
+## SKL-GLB-008 - Profile selection semantics (Revision 1)
+
+**Behavior.** When `global install`, `uninstall`, `sync`, or `status` targets the current environment, it MUST require one or more explicit `--agent` values and resolve the current profile for each selected Agent. These operations MUST also support stored `--profile` and `--all-profiles` selection where applicable; they MUST NOT guess an Agent. `global update` and `global pin` operate on all targets of each selected source because the version is shared.
+
+**Acceptance.** An uninstall with `--agent claude` changes only Claude's current-environment target association, while one invocation may select both Agents. Omitting Agent/profile selection fails before mutation. A source update cannot be constrained to one of its profiles and reports every target it will switch.
+
+## SKL-GLB-009 - Inaccessible target blocks version changes (Revision 1)
+
+**Behavior.** If any target profile required by an install, update, pin, uninstall, or selected sync is inaccessible, the operation MUST fail before commit. skilload MUST NOT create a pending version or desired-state divergence for later application.
+
+**Acceptance.** Making one of three target roots inaccessible causes a source update to leave the shared pin and all three links unchanged, with a structured target-specific diagnostic.
+
+## SKL-GLB-010 - Exact target ownership protection (Revision 1)
+
+**Behavior.** A global target path occupied by an unowned file, directory, or foreign symlink is a hard failure. skilload MUST never replace or delete it, including during install, sync, update, uninstall, cache clear, or doctor fix.
+
+**Acceptance.** A user-owned target remains untouched after each operation and the diagnostic names the exact path and ownership mismatch.
+
+## SKL-GLB-011 - Conflicts and independent lifecycle (Revision 1)
+
+**Behavior.** A semantic same-name conflict outside the exact target MAY proceed only after confirmation and then MUST report `degraded_name_conflict`; internal duplicates, exact target conflicts, disabled Skills, and `skilload-manager` remain hard failures. Library removal MUST NOT change global state. Trust revoke MUST preserve current links but block update/sync/restore. Cache clear MUST remove verified managed external links while preserving desired records for a later trusted sync.
+
+**Acceptance.** Each lifecycle action affects only its owned domain. A confirmed semantic conflict is deployed and remains visibly degraded, while a revoked source remains linked but cannot be restored after cache clear until Trust is re-established.
+
+## SKL-GLB-012 - Global deployment scale (Revision 1)
+
+**Behavior.** Global list, status, planning, sync, update, and ownership checks MUST support at least 100 Agent/profile deployment targets without changing atomicity or conflict semantics.
+
+**Acceptance.** A 100-target fixture produces deterministic status and transaction plans within an implementation-defined performance budget and never partially applies a failed batch.
+
+## SKL-GLB-013 - Offline global reads (Revision 1)
+
+**Behavior.** `global list` MUST deterministically report every durable global source's canonical identity, shared pin, and target-profile associations without inspecting Agent roots. `global status` MUST remain offline and read-only while joining selected target profiles with observed link, cache, Trust, conflict, and accessibility state under `SKL-GLB-008` selection rules. Neither command MAY restore content or repair drift.
+
+**Acceptance.** With networking denied, list returns the same source/pin/target projection from any directory. Status for explicitly selected profiles distinguishes healthy, missing, degraded, foreign, inaccessible, cache-missing, and Trust-blocked state without changing database, cache, or links.
+
+## SKL-MGR-001 - Separate built-in manager domain (Revision 1)
+
+**Behavior.** `manager install`, `manager status`, and `manager uninstall` MUST manage a built-in `skilload-manager` Skill. It MUST NOT be represented as a Library entry, Trust record, GitHub source, external cache entry, workspace source, or global external desired record.
+
+**Acceptance.** Manager installation works with an empty Library and offline; Library export, Trust list, and cache info contain no manager source or content.
+
+## SKL-MGR-002 - Embedded Agent-specific assets (Revision 1)
+
+**Behavior.** The repository MUST contain separate Claude and Codex manager Skill assets, and the release build MUST embed them in the skilload binary. Agent-specific frontmatter MAY differ, but the supported skilload command and JSON behavior described by both assets MUST agree.
+
+**Acceptance.** Automated parsing accepts both embedded `SKILL.md` variants and a contract test proves they reference only commands present in `SKL-CLI-001`.
+
+## SKL-MGR-003 - Owned copy and marker (Revision 1)
+
+**Behavior.** Manager installation MUST atomically copy the embedded asset into the selected Agent's global Skill root rather than linking to external cache. It MUST write a skilload ownership/version marker sufficient to distinguish an exact owned install from user content.
+
+**Acceptance.** The installed manager remains after external cache clear. Uninstall removes an exact matching owned copy and refuses a modified or foreign target.
+
+## SKL-MGR-004 - Multi-Agent and profile transaction (Revision 1)
+
+**Behavior.** Manager install, uninstall, and status MUST require one or more explicit Agents and use the same resolved profile identity rules as global deployment. For install/uninstall, every selected Agent executable and target MUST pass preflight and the normal command MUST apply to all selected targets or none. Status remains read-only and reports each selected target independently.
+
+**Acceptance.** A missing Codex executable prevents a requested Claude-plus-Codex install from modifying Claude's manager target. A single-Agent request remains independently valid, while multi-Agent status reports one result per requested Agent without mutation.
+
+## SKL-MGR-005 - Explicit upgrade and drift status (Revision 1)
+
+**Behavior.** Installing a newer embedded manager version over an owned older version MUST require the explicit manager install/upgrade action. Unrelated skilload commands MUST NOT mutate it. `manager status` and doctor MUST report missing, current, older, newer/unknown, modified, or foreign state.
+
+**Acceptance.** Upgrading the skilload binary alone changes no installed manager files; status reports version drift until explicit install completes.
+
+## SKL-MGR-006 - Agent-visible PATH requirement (Revision 1)
+
+**Behavior.** Manager installation MUST verify that the selected Agent can resolve both its own executable and `skilload` through the applicable PATH. The manager asset MUST invoke `skilload` by command name and MUST NOT embed the install-time absolute binary path.
+
+**Acceptance.** A PATH without skilload causes preflight failure and no target changes. Moving/upgrading the binary while preserving PATH resolution does not require rewriting the manager asset.
+
+## SKL-MGR-007 - On-demand JSON management (Revision 1)
+
+**Behavior.** The manager Skill MUST instruct the Agent to use stable `--json` CLI operations and MUST NOT directly edit SQLite, workspace files, ownership state, or configuration. skilload MUST NOT inject the user's Library, workspace, or other dynamic context into the manager asset; the Agent queries current state on demand. The skilload binary MUST NOT implement a natural-language interpreter: the installed Agent and manager Skill translate user language into explicit CLI calls.
+
+**Acceptance.** The installed asset contains no serialized user data or local path. Its management scenarios resolve through documented JSON commands and confirmation tokens.
+
+## SKL-MGR-008 - Reserved install name (Revision 1)
+
+**Behavior.** `skilload-manager` MUST be reserved across workspace and global external deployment. An external source with that verified name MAY be stored in Library for reference but MUST NOT be deployed by skilload.
+
+**Acceptance.** Library add succeeds after normal approval, while workspace add/sync and global install reject deployment with a structured reserved-name error.
+
+## SKL-MGR-009 - Automated acceptance, optional model smoke (Revision 1)
+
+**Behavior.** Release acceptance MUST test manager asset parsing, embedded versioning, install/upgrade/uninstall ownership, Agent variants, and every referenced command/JSON contract. A real Agent/model conversation MAY run as a nonblocking smoke test but MUST NOT be a release gate.
+
+**Acceptance.** The release suite passes with no network or model access and fails if an asset references a nonexistent command or invalid JSON workflow. Optional live smoke results are reported separately.

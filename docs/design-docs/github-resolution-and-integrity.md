@@ -1,0 +1,131 @@
+# GitHub Resolution and Integrity Design
+
+Status: planned design for the 0.1 CLI MVP. It implements `SKL-SRC-*` and `SKL-TRUST-*` while treating repositories as hostile data.
+
+## Behavior Traceability
+
+* Parsing, repository/ref resolution, candidate discovery, tree validation, and canonical hashing implement `SKL-SRC-001` through `SKL-SRC-014` and `SKL-SRC-016`.
+* Same-ID source migration implements `SKL-SRC-015` and `SKL-TRUST-008`.
+* Approval previews, local Trust records, and bound confirmation tokens implement `SKL-TRUST-001` through `SKL-TRUST-007`.
+* Cache promotion, resource limits, exact refetch, credentials, network classification, and hostile-input defenses support `SKL-CACHE-001`, `SKL-CACHE-003`, `SKL-CACHE-005`, `SKL-CACHE-009`, and `SKL-OPS-007` through `SKL-OPS-010`.
+
+## Resolution Pipeline
+
+Use one application pipeline for Library add, direct workspace add, Trust add, lock, update, pin, refresh, and cache-miss restoration. Each caller supplies an operation policy describing whether it may resolve a mutable ref, establish Trust, promote cache, or mutate desired state.
+
+The pipeline is:
+
+1. Parse supported input and reject non-`github.com` hosts or ambiguous URL shapes.
+2. Query GitHub repository metadata to obtain canonical current `owner/repo`, numeric repository ID, optional node ID, visibility, and default branch.
+3. Normalize an omitted ref to the explicit default-branch name.
+4. Resolve the requested branch/tag/SHA to a full commit SHA without mutating state.
+5. Retrieve the exact commit's Git objects into a temporary, bare staging repository.
+6. Inspect the Git tree to find/validate candidates and extract one complete Skill directory without checking out repository-controlled content.
+7. Parse required `SKILL.md` frontmatter, validate every entry, compute canonical integrity, measure limits, and build a preview.
+8. Verify Trust or return a confirmation requirement. On accepted unchanged state, promote the immutable materialization and let the caller commit its domain mutation.
+
+All outputs carry a `ResolutionEvidence` value with canonical source, repository ID, commit, verified name/description, integrity, counts, warnings, credential mode, and staged cache key.
+
+## Source Parsing and Canonicalization
+
+Parse URLs structurally rather than with ad hoc replacement. Supported examples normalize as follows:
+
+    openai/skills
+    https://github.com/openai/skills
+    git@github.com:openai/skills.git
+    https://github.com/openai/skills/tree/main/skills/example
+
+The first three omit Skill path and ref; metadata supplies the explicit default ref and candidate discovery supplies a selected path. A tree URL contributes its candidate directory. A blob URL is accepted only when the resolved blob basename is exactly `SKILL.md`, and contributes its parent directory. Parse either form only after verifying the URL belongs to the repository and separating ref from path through GitHub resolution, because both can contain slashes.
+
+The canonical textual form is:
+
+    github:<lowercase-owner>/<lowercase-repo>#<normalized-path>@<explicit-ref>
+
+GitHub owner/repository matching is case-insensitive; preserve current display spelling separately. Normalize path separators to `/`, remove `.` segments, reject `..`, absolute paths, NUL/control bytes, empty selected paths except repository root, and `.git`. A full commit SHA is lowercase hexadecimal. Branch/tag text remains exact after validation and is always passed to Git/GitHub as data, never shell syntax.
+
+## Repository Metadata and Credentials
+
+Use GitHub REST `GET /repos/{owner}/{repo}` through an embedded HTTPS client. Prefer credentials in this order: `GH_TOKEN`, `GITHUB_TOKEN`, then `gh auth token` when `gh` is installed and authenticated for `github.com`. Never prompt. Never persist or log a token.
+
+Try public metadata unauthenticated when no credential exists. A private repository must return authenticated metadata before first Trust; a successful SSH clone alone has no numeric repository ID evidence. Treat 403/404 carefully because GitHub may hide private-resource existence. Follow repository redirects only to retrieve current metadata, then require same-ID migration for existing state.
+
+Git content transport is acquisition policy, not source identity, and is not persisted as source state. During first resolution, an explicit SSH or HTTPS repository input makes that transport the first attempt. If it fails for authentication or availability, the resolver may try the other GitHub transport noninteractively using only existing credential helpers or SSH keys. A later resolution with no original transport hint uses deterministic HTTPS-then-SSH attempts. Report attempted transport classes without credential details; never convert a transport failure into a different repository identity.
+
+Record the API-returned numeric repository ID as `RepositoryId(u64)`. Store node ID only as nonauthoritative supplementary evidence. Details and source cautions are in [`../references/github-repository-identity-and-auth.md`](../references/github-repository-identity-and-auth.md).
+
+## Safe Git Object Retrieval
+
+Use system `git` because it is an explicit runtime dependency, but avoid a normal working-tree checkout. For each acquisition:
+
+1. Create a new private temporary directory and bare repository.
+2. Invoke Git directly as an argv array, never through a shell.
+3. Construct the GitHub remote URL from validated owner/repository, not arbitrary transport input.
+4. Set `GIT_TERMINAL_PROMPT=0`, a dedicated empty hooks directory, restricted protocols, no optional locks outside the staging repo, and fixed config that prevents user/repository filters from materializing content.
+5. Fetch only the required ref/commit and objects with no tags and bounded depth/bytes/time. If an older pinned commit cannot be obtained shallowly, perform a bounded targeted fetch without executing checkout.
+6. Use `git rev-parse`, `git ls-tree -rz`, and `git cat-file --batch` with fixed arguments to read object metadata and blob bytes.
+
+No checkout means `.gitattributes` smudge/clean filters and Git LFS do not execute. Tree mode `160000` identifies a submodule and is rejected. Mode `120000` identifies a symlink whose blob bytes are its target. Regular modes provide the executable bit. Tree and blob size accounting occurs before materialization.
+
+Git command failures are captured as redacted structured diagnostics. Never pass a token in a command-line URL. HTTPS Git may use existing credential helpers; SSH may use the user's existing key for content only after API identity is independently known. Both attempts set terminal prompting off and remain bounded.
+
+## Candidate Discovery and Frontmatter
+
+List the exact commit tree and locate regular blobs named `SKILL.md` within the documented scan limit. Ignore `.git` by construction. A root `SKILL.md` yields the repository root candidate. An explicit Skill path must contain its own `SKILL.md`; it does not search siblings.
+
+For every candidate, parse YAML frontmatter with a real parser and require a legal Agent Skills `name` and description as required by the supported Agent contract. The verified name becomes the deployment directory name. Do not execute dynamic content, referenced scripts, or frontmatter extensions. Candidate preview includes validation warnings for Agent-specific fields but skilload does not translate them.
+
+If repository-only input yields more than one valid candidate, return all candidates sorted by path. A human caller selects explicitly; JSON returns typed candidates and no confirmation token until one source identity is exact.
+
+## Tree Validation
+
+Walk only entries under the selected root. Enforce configurable default file-count and total-byte limits while reading metadata, before allocating all content. The explicit override is part of the request and confirmation binding.
+
+Accepted entries are directories, regular files, and safe symlinks. Reject gitlinks, special modes, duplicate normalized paths, case-fold collisions that would be ambiguous on supported filesystems, and any path that cannot be represented safely. For a symlink, parse its blob as a relative path, normalize it relative to the link parent, follow the in-tree link graph, and reject absolute, escaping, missing, or cyclic resolution. Preserve the original relative target text after validation.
+
+Detect a Git LFS pointer by its standard header and pointer structure; reject it rather than hashing the pointer as content. Do not run `git lfs` or initialize submodules. The comparative `npx skills` behavior is documented in [`../references/npx-skills-installation-model.md`](../references/npx-skills-installation-model.md).
+
+## Canonical Integrity
+
+Define a versioned byte encoding, `skilload-tree-v1`, independent of filesystem enumeration and metadata. Hash with SHA-256:
+
+    magic "skilload-tree-v1\0"
+    for each entry sorted by raw normalized relative path bytes:
+      entry type byte: regular or symlink
+      unsigned big-endian path length, then path bytes
+      for regular:
+        executable byte (0 or 1)
+        unsigned big-endian content length, then exact blob bytes
+      for symlink:
+        unsigned big-endian target length, then original relative target bytes
+
+Directories are represented implicitly by child paths; empty directories are not Git tree content relevant to a Skill. The resolved record stores `sha256:<lowercase-hex>` plus repository ID, commit, selected path, verified name, and format version. Tests use cross-platform golden fixtures covering ordering, executable bits, symlinks, empty files, Unicode path bytes, and collision rejection.
+
+## Immutable Cache Promotion
+
+The logical cache key is repository ID, full commit, and normalized Skill path. Its physical directory uses safe components such as decimal repository ID, hexadecimal commit, and a hash/encoding of the Skill path; it never appends the untrusted path directly. One object has this conceptual layout:
+
+    objects/<repository-id>/<commit>/<path-key>/
+      manifest.json
+      payload/                    # exact Agent-visible Skill directory
+
+The manifest records the original normalized path, key/digest format versions, integrity, verified name, entry metadata, and size. It is outside `payload/`, is excluded from the Skill integrity tree, and cannot collide with or become visible as source content. Deployment links point to `payload/`.
+
+Stage the whole object under a random directory, fsync files/directories needed for durability, verify the complete payload digest again, write the immutable manifest, then atomically rename into the cache object's parent.
+
+If the destination already exists, verify its manifest and tree. Reuse only an exact match. Quarantine a mismatch and perform the one allowed exact refetch from `SKL-CACHE-005`. Cache objects are made read-only to discourage accidental edits, but integrity verification rather than permissions is the security boundary.
+
+## Trust Preview and Token
+
+An `ApprovalPreview` contains operation, canonical source, repository ID/current display name, commit, verified Skill name/description, file/byte counts, integrity, ref mutability, warnings, and requested limit override. Human mode renders it and asks for consent only when interactive behavior is allowed.
+
+JSON mode returns a signed-or-random opaque token backed by a short-lived local database record. Store only a cryptographic token hash plus a canonical digest of the complete preview plan (action, all sources/repository IDs/commits, selected targets, overrides, and warnings), semantic `state_revision`, workspace digest when applicable, expiry, and consumed flag. Token bookkeeping does not advance `state_revision`. The second call hashes the presented token, reconstructs and compares the complete plan, acquires final locks, and atomically marks it consumed with the requested operation; any product-state change in that commit advances the revision. It fails on any bound-field drift. This token prevents accidental stale or broadened approval; it is not authentication against the same-account attacker excluded by the threat model.
+
+## Source Migration
+
+Migration resolves the proposed name through fresh GitHub metadata and requires its numeric repository ID to equal the immutable ID stored with the old source. It may resolve the old path for redirect discovery and warnings, but a reused old path is not the identity comparator. Build one impact plan listing Library, Trust, global, and known reference records. `source migrate` commits those database changes atomically. `workspace migrate-source` separately stages deterministic config/lock rewrites under the deployment journal.
+
+Neither command changes path, ref, commit, integrity, verified name, Trust state, or deployment target. A path/ref change goes through normal new-source approval.
+
+## Testing
+
+Default tests use local bare Git repositories and an HTTP fixture server that models GitHub responses, redirects, authentication failures, mutable refs, deleted commits, and rate/error conditions. Fixtures cover hostile paths/modes, filters/hooks that must never execute, submodules, LFS pointers, symlink graphs, resource limits, candidate ambiguity, repository path reuse, confirmation replay/drift, and golden integrity digests. Real GitHub smoke tests are explicit or scheduled and never required for the default suite.
