@@ -23,7 +23,7 @@ Agent-specific filesystem and configuration knowledge belongs behind an `AgentAd
 
 The adapter resolves roots and reports facts. The application layer decides hard failure, confirmation, degraded status, and transaction membership. Filesystem writes go through the transaction/ownership adapter, not arbitrary Agent adapter code.
 
-`AgentProfile` contains Agent kind, executable path, effective `HOME`, relevant config overrides, project root when applicable, canonical global Skill root, compatibility/conflict roots, and a deterministic environment fingerprint. The database maps this fingerprint to an opaque `profile_id`; paths remain visible for diagnostics.
+`AgentProfile` contains Agent kind, executable path, effective `HOME`, relevant config overrides, project root when applicable, canonical global Skill root, compatibility/conflict roots, and a deterministic environment fingerprint. For global and manager scope, the database maps only `(Agent kind, canonical global Skill root)` to the opaque `profile_id`. Executable, HOME, config, compatibility roots, and the fingerprint are replaceable observations used for current preflight and diagnostics; changing them without changing the identity tuple refreshes the same profile instead of creating a second owner for one target.
 
 ## Claude Code Adapter
 
@@ -50,7 +50,7 @@ For new global/manager scope, target the current canonical user root:
 
     $HOME/.agents/skills/<verified-name>
 
-Current Codex also reads deprecated `$CODEX_HOME/skills`. Include that root, system/admin roots where readable, and other repository roots from current directory to repository root in semantic conflict inspection. Do not deploy new content to the deprecated root. The profile fingerprint still includes effective `CODEX_HOME` because it changes compatibility/system/config observations.
+Current Codex also reads deprecated `$CODEX_HOME/skills`. Include that root, system/admin roots where readable, and other repository roots from current directory to repository root in semantic conflict inspection. Do not deploy new content to the deprecated root. The observation fingerprint includes effective `CODEX_HOME` because it changes compatibility/system/config observations, but a `CODEX_HOME`-only change under fixed `HOME` retains the same Codex profile identity and `$HOME/.agents/skills` deployment root.
 
 Codex may expose two same-name Skills instead of deterministic shadowing. Internal skilload duplicates remain a hard failure; an external duplicate can proceed only with the explicit degraded-conflict contract. Symlinked Skill directories are natively supported, but next-launch remains the product guarantee.
 
@@ -77,6 +77,8 @@ Workspace and global external targets are directory symlinks to immutable cache-
 
 The transaction engine creates a temporary link, verifies `lstat` type and `readlink` target, then renames it. Ownership requires target path, exact link text/resolved cache object, source/pin/integrity, profile, and transaction ID to match. A link that merely points somewhere under the cache is not automatically owned.
 
+Promotion applies non-writable permissions where supported, and link creation/replacement plus every later mutating use verifies the object manifest and canonical payload integrity. These checks cannot make native Agent reads pass through skilload: after a verified symlink is installed, the Agent dereferences it directly. A same-account edit or disk fault can therefore expose changed bytes until status, doctor, cache info, or a mutating operation next verifies the object. Read-only observers report that mismatch; a mutating use quarantines and performs the one exact refetch flow before it may reuse or relink the object.
+
 Directory name comes from validated `SKILL.md` frontmatter. Alias is display/search metadata only. skilload never rewrites frontmatter for compatibility; Agent-specific unsupported fields may produce warnings.
 
 ## Semantic Conflict Inventory
@@ -92,9 +94,9 @@ The confirmation token binds the entire conflict set and target baseline. Adding
 
 ## Global Profile Behavior
 
-For current-environment global operations, each explicit `--agent` resolves that Agent's current profile; one invocation may select both. With no Agent/profile selection, the command fails rather than inferring an Agent from installed executables. `--profile` resolves a stored opaque profile and confirms its current roots still match; `--all-profiles` enumerates every selected stored target. An inaccessible profile blocks operations that include it.
+For current-environment global operations, each explicit `--agent` resolves that Agent's current profile; one invocation may select both. With no Agent/profile selection, the command fails rather than inferring an Agent from installed executables. `--profile` resolves a stored opaque profile and confirms its current roots still match; `--all-profiles` enumerates every selected stored target. An inaccessible profile blocks operations that include it except the explicit one-profile external-deployment detach, which records that no successful link inspection or deletion occurred. Manager operations have no detach exception.
 
-One `GlobalSourcePin` is referenced by every target association. Update/pin planning always inventories all associated profiles even if invoked from one Agent environment. There is no pending per-profile version. Install to a new profile reuses the shared pin and verified cache object.
+One `GlobalSourcePin` is referenced by every active target association. Update/pin planning always inventories all active associated profiles even if invoked from one Agent environment; detached-orphan observations are reported but excluded. There is no pending per-profile version. Install to a new profile reuses the shared pin and verified cache object.
 
 ## Manager Asset Layout
 

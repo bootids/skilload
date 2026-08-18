@@ -120,7 +120,7 @@ A **source** identifies one Skill location and one intended Git ref on GitHub. *
 
 ## SKL-TRUST-004 - Noninteractive confirmation token (Revision 1)
 
-**Behavior.** JSON mode MUST never prompt. A confirmation-required response MUST return a short-lived, single-use token bound to the action and complete preview plan: every canonical source, repository ID, commit, selected target/profile, active source-limit ceiling, warning/conflict, durable database revision, and applicable workspace digest. Relevant state drift, expiry, action or plan mismatch, or reuse MUST invalidate the token.
+**Behavior.** JSON mode MUST never prompt. A confirmation-required response MUST return a short-lived, single-use token bound to the action and complete preview plan: every canonical source, repository ID, commit, selected target/profile, active source-limit ceiling, configured/effective cache limit and any per-invocation override, warning/conflict, durable database revision, and applicable workspace digest. Relevant state drift, expiry, action or plan mismatch, or reuse MUST invalidate the token.
 
 **Acceptance.** Replaying a consumed token, applying it after workspace/database/target drift, or reusing a one-source token for a larger batch fails with a structured stale-or-invalid-confirmation error. A fresh token for unchanged state completes only its exact bound action and plan.
 

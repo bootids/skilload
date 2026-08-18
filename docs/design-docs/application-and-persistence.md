@@ -89,15 +89,16 @@ Use SQLite compiled into the binary with FTS5 enabled. The exact SQL is a P1 del
 * `library_fts`: derived FTS5 index over the fields required by `SKL-LIB-004`.
 * `trust_records`: exact source, repository ID, state, approval evidence revision, and revocation state. No credential or Skill bytes.
 * `global_sources`: source intent and one shared commit/integrity/name pin.
-* `global_targets`: source-to-profile desired associations and status.
-* `profiles`: opaque profile ID, Agent, resolved roots, and environment fingerprint.
+* `global_targets`: active source-to-profile desired associations and status.
+* `detached_global_targets`: non-active orphan warnings with the prior source, profile, exact path/link, pin, integrity, ownership evidence, and detach reason; these rows do not participate in update/pin or cache protection.
+* `profiles`: opaque profile ID whose unique identity is `(Agent, canonical global Skill root)`, plus replaceable executable, HOME, Agent-configuration, compatibility-root, and environment-fingerprint observations.
 * `manager_installs`: Agent/profile, embedded asset version/digest, target, marker, and observed ownership status.
 * `known_workspaces`: canonical workspace path, environment/profile observations, manifest location, and last committed lock digest.
 * `owned_links`: exact target, expected link target, owner domain, source/pin, and transaction revision.
 * `confirmation_tokens`: token hash, canonical preview-plan digest, semantic state revision, optional workspace digest, expiry, and consumed state.
 * `committed_transactions`: transaction IDs that act as recovery anchors after SQLite commit.
 
-Use foreign keys and uniqueness constraints for exact source, alias, profile identity, target ownership, and one pin per global source. FTS is derived: triggers or an explicit transaction-maintained index keep it synchronized, and doctor may rebuild it from base rows.
+Use foreign keys and uniqueness constraints for exact source, alias, the `(Agent, canonical global Skill root)` profile identity, active target ownership, and one pin per global source. Updating environment observations for an existing profile never allocates a second owner for the same target. FTS is derived: triggers or an explicit transaction-maintained index keep it synchronized, and doctor may rebuild it from base rows.
 
 SQLite transactions cover all database changes for one application mutation. Filesystem changes remain journaled separately; the database's committed transaction ID determines whether recovery rolls external work forward or back.
 
@@ -130,7 +131,7 @@ FTS-only corruption can be repaired by dropping/recreating derived index structu
     [agents.codex]
     executable = "codex"
 
-Agent executable overrides and a cache limit are permitted; credentials, Trust, desired deployments, and dynamic roots are not. Parsing uses a structured TOML decoder with unknown-field denial and validated types/ranges. Read commands operate on defaults when the file is absent. `config set` stages a complete canonical document and atomically renames it; it does not preserve comments.
+Agent executable overrides and `cache_limit_bytes` are permitted; credentials, Trust, desired deployments, and dynamic roots are not. The absent/unset cache value resolves to 536,870,912 bytes. `config set cache_limit_bytes <BYTES>` accepts a positive finite integer and `config unset cache_limit_bytes` returns to that default. Parsing uses a structured TOML decoder with unknown-field denial and validated types/ranges. Read commands operate on defaults when the file is absent. `config set` stages a complete canonical document and atomically renames it; it does not preserve comments.
 
 No automatic config migration exists in 0.1. An unsupported version is an error until a future product behavior and explicit migration command are approved.
 

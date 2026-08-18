@@ -44,9 +44,10 @@ Common presentation arguments are accepted at a documented consistent position:
 * `--json` selects JSON mode and disables all prompts, spinners, color, and progress on stdout.
 * `--confirm-token <opaque>` supplies the token returned by a prior JSON confirmation requirement.
 * `--no-color` disables ANSI styling in human mode; non-TTY output defaults to no styling.
-* Source-validation operations accept `--max-source-files <COUNT>` and `--max-source-bytes <BYTES>` only as explicit per-request ceilings. JSON previews/results carry both active ceilings as `source_limits.max_files` and `source_limits.max_bytes`; they are confirmation-bound and never stored as durable policy. Cache-quota overrides remain separate operation-specific input.
+* Source-validation operations accept `--max-source-files <COUNT>` and `--max-source-bytes <BYTES>` only as explicit per-request ceilings. JSON previews/results carry both active ceilings as `source_limits.max_files` and `source_limits.max_bytes`; they are confirmation-bound and never stored as durable policy.
+* `--cache-limit-bytes <BYTES>` is a separate per-invocation effective quota accepted only by the cache-promoting operations enumerated in `SKL-CACHE-003`. It must be positive, finite, and no smaller than the configured limit; it covers the complete preview batch, is confirmation-bound, and is not written to configuration or domain state.
 
-Workspace sync and manager operations accept repeated or multi-value `--agent` and require at least one value. Global install/uninstall/sync/status require one or more `--agent` values when resolving current-environment profiles, or use stored `--profile <id>`/`--all-profiles` selection where specified. Avoid global flags whose presence silently changes product-domain scope.
+Workspace sync and manager operations accept repeated or multi-value `--agent` and require at least one value. Global install/uninstall/sync/status require one or more `--agent` values when resolving current-environment profiles, or use stored `--profile <id>`/`--all-profiles` selection where specified. `global uninstall --profile <id> --detach-inaccessible` is the only detach form; reject the flag with `--agent`, `--all-profiles`, an accessible profile, or any operation other than uninstall. Avoid global flags whose presence silently changes product-domain scope.
 
 Human interactive confirmation reads the terminal only after the application returns a complete approval preview. A noninteractive human stream that requires confirmation fails with clear guidance to use JSON preview/token or an explicit documented confirmation mechanism; it never assumes yes.
 
@@ -82,6 +83,8 @@ Version-1 error/confirmation shape:
     }
 
 `result.outcome` is one of `changed`, `unchanged`, `already_exists`, or `already_immutable` where appropriate. Domain data uses explicit typed fields, canonical source strings, lowercase full commit SHA, `sha256:` integrity, opaque profile IDs, and paths encoded as display-safe strings plus a lossless representation when required. Although `RepositoryId` is a `u64` internally, portable JSON/YAML serializes it as a decimal string to avoid IEEE-754 precision loss in common consumers. Lists have documented stable ordering.
+
+A preview or result for an operation that can promote external content includes `cache_quota.configured_limit_bytes`, `cache_quota.effective_limit_bytes`, `cache_quota.projected_bytes`, and `cache_quota.override_applied`. A detached uninstall result includes the affected profile/source/path, `link_removed: false`, and `orphan_recorded: true`; list/status represent the orphan separately from active target associations.
 
 Progress and diagnostics go to stderr. In JSON mode, stderr remains optional operational diagnostics and never carries data required to complete the workflow. Secrets and confirmation tokens are redacted from debug output; the token appears only in its JSON response and is stored hashed.
 
@@ -135,6 +138,9 @@ Default tests are offline and deterministic:
 * isolated HOME/XDG/Claude/Codex roots and fake Agent executables/configuration;
 * transaction failpoint tests at every journal/filesystem/database phase;
 * golden JSON/help/human snapshots with secret-redaction assertions;
+* cache-quota fixtures for the 536,870,912-byte default, persistent set/unset, accepted and rejected per-invocation overrides, complete-batch accounting, confirmation drift, and non-persistence;
+* profile fixtures proving that auxiliary Codex observations do not split one `(Agent, global root)` identity, plus inaccessible detach/orphan/cleanup fixtures that never claim an unobserved link deletion;
+* post-deployment cache-modification fixtures proving the direct-read limitation, read-only detection, and quarantine/refetch behavior on the next mutating use;
 * scale fixtures for 10,000 Library entries, 200 workspace Skills, and 100 global targets.
 
 Performance budgets are recorded by the implementation Plan before acceptance, then enforced in nonflaky benchmark/integration thresholds. Tests must measure representative search, status, lock planning, and deployment planning rather than only database insertion.

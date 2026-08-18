@@ -12,9 +12,9 @@ A **global deployment** makes a selected external Library Skill visible in every
 
 ## SKL-GLB-002 - Target profile identity (Revision 1)
 
-**Behavior.** A global deployment target MUST be identified by Agent plus resolved global Skill root. skilload MUST expose an opaque local `profile_id` together with the resolved path. The current environment profile is derived from effective `HOME` and Agent-specific configuration roots; equal Agent names with different roots are distinct targets.
+**Behavior.** A global deployment target MUST be identified only by Agent plus canonical resolved global Skill root. skilload MUST expose an opaque local `profile_id` together with the resolved path. Effective `HOME`, executable path, Agent-specific configuration, compatibility/conflict roots, and their environment fingerprint MAY be retained as current observations, but they MUST NOT create a second profile when Agent and canonical global root are unchanged. Equal Agent names with different canonical global roots are distinct targets.
 
-**Acceptance.** Two Claude configurations with different resolved roots receive different profile IDs and independent target records even when they run under the same user account.
+**Acceptance.** Two Claude configurations with different resolved global roots receive different profile IDs and independent target records even when they run under the same user account. With fixed `HOME`, changing only `CODEX_HOME` keeps the same Codex profile ID and `$HOME/.agents/skills` target while refreshing compatibility/conflict observations.
 
 ## SKL-GLB-003 - Durable desired state (Revision 1)
 
@@ -24,13 +24,13 @@ A **global deployment** makes a selected external Library Skill visible in every
 
 ## SKL-GLB-004 - One shared source pin (Revision 1)
 
-**Behavior.** One global source MUST have one resolved commit and integrity shared across all of its target Agent profiles. Installing that source to another profile reuses the existing pin. It MUST NOT independently drift by profile.
+**Behavior.** One global source MUST have one resolved commit and integrity shared across all of its active target Agent profiles. Installing that source to another profile reuses the existing pin. It MUST NOT independently drift by profile.
 
 **Acceptance.** Listing a source deployed to Claude and Codex shows one commit/integrity plus two targets. A version change either switches both targets or neither.
 
 ## SKL-GLB-005 - Install and uninstall commit desired state with links (Revision 1)
 
-**Behavior.** `global install` and `global uninstall` MUST atomically change durable desired state and verified managed links for every requested target. Multi-Skill or multi-Agent normal completion MUST be all-or-nothing. Uninstall MUST remain available after Trust revocation.
+**Behavior.** `global install` and normal `global uninstall` MUST atomically change durable desired state and verified managed links for every requested target. Multi-Skill or multi-Agent normal completion MUST be all-or-nothing. Uninstall MUST remain available after Trust revocation. The inaccessible-profile detach exception is defined by `SKL-GLB-009`; it changes desired state without claiming a target filesystem change.
 
 **Acceptance.** A failed target preflight leaves database and every requested root unchanged. Successful uninstall removes only proven owned links and its selected desired associations.
 
@@ -42,21 +42,21 @@ A **global deployment** makes a selected external Library Skill visible in every
 
 ## SKL-GLB-007 - Atomic update and historical pin (Revision 1)
 
-**Behavior.** `global update [selector]` MUST advance mutable refs. With no selector it MUST update all mutable global sources as one atomic batch. `global pin` MUST support a historical commit while retaining mutable source intent. Updating or pinning one source MUST switch all target profiles for that source atomically; SHA sources return `already_immutable` for update.
+**Behavior.** `global update [selector]` MUST advance mutable refs. With no selector it MUST update all mutable global sources as one atomic batch. `global pin` MUST support a historical commit while retaining mutable source intent. Updating or pinning one source MUST switch all active target profiles for that source atomically; SHA sources return `already_immutable` for update.
 
 **Acceptance.** Failure in any selected source/target leaves all pins and links unchanged. A successful historical pin changes every target for that source, and a later update may advance it again.
 
 ## SKL-GLB-008 - Profile selection semantics (Revision 1)
 
-**Behavior.** When `global install`, `uninstall`, `sync`, or `status` targets the current environment, it MUST require one or more explicit `--agent` values and resolve the current profile for each selected Agent. These operations MUST also support stored `--profile` and `--all-profiles` selection where applicable; they MUST NOT guess an Agent. `global update` and `global pin` operate on all targets of each selected source because the version is shared.
+**Behavior.** When `global install`, `uninstall`, `sync`, or `status` targets the current environment, it MUST require one or more explicit `--agent` values and resolve the current profile for each selected Agent. These operations MUST also support stored `--profile` and `--all-profiles` selection where applicable; they MUST NOT guess an Agent. `global update` and `global pin` operate on all active targets of each selected source because the version is shared. `--detach-inaccessible` MUST be valid only for `global uninstall` with exactly one stored `--profile <id>` selection, never with current-environment `--agent` or broad `--all-profiles` selection.
 
 **Acceptance.** An uninstall with `--agent claude` changes only Claude's current-environment target association, while one invocation may select both Agents. Omitting Agent/profile selection fails before mutation. A source update cannot be constrained to one of its profiles and reports every target it will switch.
 
-## SKL-GLB-009 - Inaccessible target blocks version changes (Revision 1)
+## SKL-GLB-009 - Inaccessible targets and explicit detach (Revision 1)
 
-**Behavior.** If any target profile required by an install, update, pin, uninstall, or selected sync is inaccessible, the operation MUST fail before commit. skilload MUST NOT create a pending version or desired-state divergence for later application.
+**Behavior.** If any active target profile required by an install, update, pin, normal uninstall, or selected sync is inaccessible, the operation MUST fail before commit. skilload MUST NOT create a pending version or desired-state divergence for later application. As the only exception, `global uninstall --profile <id> --detach-inaccessible` MAY detach the selected source associations only after standard preflight classifies that one stored profile as inaccessible. The detach MUST perform no target-root write or deletion and MUST NOT claim that the link was successfully inspected; it MUST atomically remove the associations from active desired state, move their exact path/link/source/pin/integrity ownership evidence into durable detached-orphan records, and report that no link was removed. Detached orphans MUST NOT participate in update/pin batches or cache-prune protection, and global reads MUST continue to expose them as warnings. If the profile becomes accessible later, normal uninstall MAY prove and remove the exact orphaned link and clear its detached record; it MUST still refuse a foreign or drifted path.
 
-**Acceptance.** Making one of three target roots inaccessible causes a source update to leave the shared pin and all three links unchanged, with a structured target-specific diagnostic.
+**Acceptance.** Making one of three active target roots inaccessible causes a source update and normal uninstall to leave the shared pin, associations, and all three links unchanged, with a structured target-specific diagnostic. Explicitly detaching that stored profile removes only its selected active associations, reports `link_removed: false` plus the orphan path, and allows a later update of the two remaining active targets; using the flag on an accessible, current-environment, or all-profiles selection changes nothing.
 
 ## SKL-GLB-010 - Exact target ownership protection (Revision 1)
 
@@ -78,9 +78,9 @@ A **global deployment** makes a selected external Library Skill visible in every
 
 ## SKL-GLB-013 - Offline global reads (Revision 1)
 
-**Behavior.** `global list` MUST deterministically report every durable global source's canonical identity, shared pin, and target-profile associations without inspecting Agent roots. `global status` MUST remain offline and read-only while joining selected target profiles with observed link, cache, Trust, conflict, and accessibility state under `SKL-GLB-008` selection rules. Neither command MAY restore content or repair drift.
+**Behavior.** `global list` MUST deterministically report every durable global source's canonical identity, shared pin, active target-profile associations, and detached-orphan warnings without inspecting Agent roots. `global status` MUST remain offline and read-only while joining selected target profiles with observed link, cache, Trust, conflict, accessibility, and detached-orphan state under `SKL-GLB-008` selection rules. A detached orphan MUST be labelled as non-active desired state rather than an installation that will receive updates. Neither command MAY restore content or repair drift.
 
-**Acceptance.** With networking denied, list returns the same source/pin/target projection from any directory. Status for explicitly selected profiles distinguishes healthy, missing, degraded, foreign, inaccessible, cache-missing, and Trust-blocked state without changing database, cache, or links.
+**Acceptance.** With networking denied, list returns the same source/pin/active-target/detached-orphan projection from any directory. Status for explicitly selected profiles distinguishes healthy, missing, degraded, foreign, inaccessible, detached orphan, cache-missing, and Trust-blocked state without changing database, cache, or links.
 
 ## SKL-MGR-001 - Separate built-in manager domain (Revision 1)
 

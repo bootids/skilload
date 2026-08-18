@@ -64,10 +64,10 @@ Each Agent adapter returns observations; the application layer assigns policy:
 * `reserved_name`: external deployment uses `skilload-manager`; hard failure.
 * `agent_disabled`: effective Agent configuration disables the name; hard failure.
 * `semantic_name_conflict`: same name is discoverable elsewhere but exact target is free; confirmation may produce `degraded_name_conflict`.
-* `inaccessible`: target/profile cannot be inspected or written; hard failure for the whole selected operation.
+* `inaccessible`: target/profile cannot be inspected or written; hard failure for the whole selected operation except the stored-profile detach transition below, which plans no target filesystem action.
 * `drifted_owned`: a previously owned target no longer matches expected type/target/marker; report and refuse destructive action until a verifiable recovery path exists.
 
-Confirmation never converts a hard failure into permission to overwrite. A plan contains every conflict for all selected Agents so the user never approves one name only to encounter a hidden later target.
+Confirmation never converts a hard failure into permission to overwrite. Detach is not such an override: it is valid only for one explicitly selected inaccessible stored profile, removes active desire without touching the target, and preserves orphan evidence. A plan contains every conflict for all selected Agents so the user never approves one name only to encounter a hidden later target.
 
 ## Journal Format
 
@@ -105,27 +105,27 @@ Cross-device renames are avoided by staging final filesystem entries in their de
 
 `workspace sync` reads a complete valid lock, requires explicit Agents, and plans the entire locked set for each selected Agent. It removes obsolete exact owned links for those Agent profiles and creates/restores required cache links. Agent selection is not written to portable config.
 
-`global install` adds desired target associations and links. `global uninstall` removes selected associations and owned links. `global sync` restores the existing shared pin. `global update` and `global pin` plan every target of each source because one source has one global pin. The no-selector update batches all mutable sources.
+`global install` adds desired target associations and links. Normal `global uninstall` removes selected associations and exact owned links. When exactly one stored `--profile` is inaccessible, `global uninstall --profile <id> --detach-inaccessible` instead commits a database-only transition: selected associations leave the active target set and their source/profile/path/link/pin/integrity evidence moves to detached-orphan rows. The result says the link was not removed. Detached rows do not join later update/pin plans or protect cache objects, but list/status continue warning about them. If that profile later becomes accessible, normal uninstall may remove an exact matching orphaned link and delete the orphan row; foreign or drifted content remains untouched. `global sync` restores the existing shared pin. `global update` and `global pin` plan every active target of each source because one source has one global pin. The no-selector update batches all mutable sources.
 
 Manager install/uninstall uses the same transaction engine but stages embedded copied assets and version markers rather than external cache links.
 
 ## Cache Prune and Clear
 
-Build the protected-cache set from exact verified managed links in durable ownership plus accessible workspace manifests. A lockfile, Trust record, or desired record without a link is not protected. `cache prune` locks the cache index, verifies candidates are not protected, then renames each selected object to a transaction quarantine before final deletion. Least-recently-used data is operational metadata and does not affect object integrity. Its monotonic recency advances only when a successful mutation promotes an object or creates/restores a managed link; read-only commands and already-satisfied no-op mutations do not rewrite recency, preserving `SKL-CLI-007` idempotence.
+Build the protected-cache set from exact verified active managed links in durable ownership plus accessible workspace manifests. A lockfile, Trust record, desired record without a link, or detached-orphan record is not protected. `cache prune` locks the cache index, verifies candidates are not protected, then renames each selected object to a transaction quarantine before final deletion. Least-recently-used data is operational metadata and does not affect object integrity. Its monotonic recency advances only when a successful mutation promotes an object or creates/restores a managed link; read-only commands and already-satisfied no-op mutations do not rewrite recency, preserving `SKL-CLI-007` idempotence.
 
 `cache clear` first discovers all known managed external links. Normal mode requires every relevant known workspace/profile to be accessible and every removable link to match ownership; any mismatch aborts before changes. It then transactionally removes links, preserves desired/lock/Trust/Library state, and deletes external cache objects. `--force` may skip inaccessible/mismatched links but records each orphan/broken risk in the result and durable status. Manager copies are outside the external cache set.
 
-Before any mutation promotes a new object, quota planning calculates current bytes, protected bytes, reclaimable LRU bytes, and requested bytes. It prunes before committing domain state. An explicit quota override is bound into confirmation and result.
+Before any mutation promotes a new object, quota planning calculates current bytes, protected bytes, reclaimable LRU bytes, requested bytes, and projected post-operation bytes for the whole batch. The absent configuration default is 536,870,912 bytes. A valid `--cache-limit-bytes` value replaces the configured limit only for that invocation and must be at least the configured value; planning rejects the flag on non-promoting operations. The plan prunes before committing domain state and binds configured/effective/projected/override values into confirmation and human/JSON results. Nothing writes the override back to configuration or later domain state.
 
 ## Corruption and Cache Miss
 
-Every mutating use verifies the cache manifest and expected integrity before exposing a target. On mismatch, atomically move the object under `cache/quarantine/<uuid>`, record why, and fetch the same repository ID/commit/path once. Promote only the expected digest. Read-only status, info, and doctor observers report a mismatch without moving or refetching the object. Never change a workspace/global pin because remote bytes differ.
+Every promotion, link creation/replacement, and mutating use verifies the cache manifest and expected integrity before exposing or reusing a target. On mismatch, atomically move the object under `cache/quarantine/<uuid>`, record why, and fetch the same repository ID/commit/path once. Promote only the expected digest. Read-only status, info, and doctor observers report a mismatch without moving or refetching the object. Never change a workspace/global pin because remote bytes differ. A deployed native symlink is read directly by the Agent, so skilload cannot prevent a same-account edit or disk fault from being consumed between the modification and the next integrity observation; the guarantee begins again once skilload detects the mismatch and refuses to reuse it as valid.
 
 A cache miss is restored only by network-capable sync/pin/update/add flows with active Trust. Status and doctor report the miss but remain offline. A lock whose commit is unavailable and has no verified cache entry is an explicit unrecoverable-at-present state, not an invitation to use the ref head.
 
 ## Status and Doctor
 
-Status joins desired/pinned, ownership, and observed state into typed findings: healthy, missing, stale, degraded name conflict, foreign exact, drifted owned, disabled, inaccessible, cache missing/corrupt, Trust blocked, and recovery pending. Default workspace status reports every registered deployment for that exact workspace. An explicit option may rerun current Agent preflight.
+Status joins desired/pinned, ownership, and observed state into typed findings: healthy, missing, stale, degraded name conflict, foreign exact, drifted owned, disabled, inaccessible, detached orphan, cache missing/corrupt, Trust blocked, and recovery pending. Detached orphan rows are warnings, not active desired targets. Default workspace status reports every registered deployment for that exact workspace. An explicit option may rerun current Agent preflight.
 
 Doctor uses the same observers across global database, cache, manager, profiles, journals, and known workspaces. `--fix` invokes only repair actions with complete local proof: finish/rollback a journal, rebuild FTS, recreate an exact link from a verified cache object when exact Trust is active, or reconstruct a workspace manifest when all fields match. It never fetches or adopts, and revoked Trust turns a missing external link into a reported blocker rather than a repair action.
 

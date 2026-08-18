@@ -6,9 +6,9 @@ The **cache** contains removable external Skill bytes. Durable metadata and desi
 
 ## SKL-CACHE-001 - Immutable external-content cache (Revision 1)
 
-**Behavior.** External Skill materializations MUST be immutable and content-addressed by numeric repository identity, commit, and normalized Skill path, with canonical integrity verification. The cache MUST contain no built-in manager copy and MUST NOT be the authoritative store for Library, Trust, workspace, or global desired state.
+**Behavior.** skilload MUST manage external Skill materializations as immutable, content-addressed objects keyed by numeric repository identity, commit, and normalized Skill path, with canonical integrity verification. It MUST never edit a promoted object in place and MUST apply non-writable object permissions where the host supports them, while treating those permissions as defense in depth rather than protection from the same operating-system account. The cache MUST contain no built-in manager copy and MUST NOT be the authoritative store for Library, Trust, workspace, or global desired state.
 
-**Acceptance.** Two sources for the same repository/commit/path reuse one verified entry. Attempts to mutate an existing entry are detected as corruption rather than accepted in place.
+**Acceptance.** Two sources for the same repository/commit/path reuse one verified entry. A local byte, mode, path, or symlink-target change is detected at the next skilload integrity verification and is treated as corruption rather than a new valid form of the object.
 
 ## SKL-CACHE-002 - Prune protection follows active managed links (Revision 1)
 
@@ -18,9 +18,9 @@ The **cache** contains removable external Skill bytes. Durable metadata and desi
 
 ## SKL-CACHE-003 - Quota enforcement before state commit (Revision 1)
 
-**Behavior.** Before a mutation formally commits state requiring new cache content, skilload MUST enforce the configured cache limit, pruning unprotected least-recently-used entries first. If capacity remains insufficient, the mutation MUST fail without persistent state unless the caller supplies an explicit supported override.
+**Behavior.** The Revision 1 cache limit MUST default to 536,870,912 bytes (512 MiB) when `config.toml` is absent or `cache_limit_bytes` is unset. `config set cache_limit_bytes <BYTES>` MUST persist a positive finite byte limit, and `config unset cache_limit_bytes` MUST restore the default. Before a mutation commits state requiring new cache content, skilload MUST enforce that configured limit after first planning removal of unprotected least-recently-used entries. If capacity remains insufficient, the mutation MUST fail without persistent product state unless the same invocation supplies `--cache-limit-bytes <BYTES>`, a positive finite effective limit no smaller than the configured value. The flag MUST be accepted only by `library add`, `library refresh`, `trust add`, `workspace add`, `workspace lock`, `workspace update`, `workspace pin`, `workspace sync`, `global install`, `global sync`, `global update`, and `global pin`, because these are the 0.1 operations that may promote external cache content. It applies to the complete invocation and all objects in its preview, is bound into confirmation, and MUST NOT persist in configuration, Trust, Library, workspace, lock, global desired state, or a later invocation. Human and JSON previews/results MUST expose configured, effective, projected post-operation, and override-applied values.
 
-**Acceptance.** An over-capacity add cannot leave Trust/Library/workspace/global state referring to an unpromoted entry. The override and resulting size are visible in human and JSON results.
+**Acceptance.** With no configuration file, a projected total of 536,870,913 bytes fails without an override and leaves no Trust/Library/workspace/global state referring to an unpromoted entry. Repeating the operation with a sufficient `--cache-limit-bytes` value may succeed after confirmation and reports `cache_quota.configured_limit_bytes`, `effective_limit_bytes`, `projected_bytes`, and `override_applied` in JSON; the next invocation uses 536,870,912 again unless configuration was explicitly changed.
 
 ## SKL-CACHE-004 - Clear preserves durable intent (Revision 1)
 
@@ -30,9 +30,9 @@ The **cache** contains removable external Skill bytes. Durable metadata and desi
 
 ## SKL-CACHE-005 - Corruption quarantine and one exact retry (Revision 1)
 
-**Behavior.** When a mutating operation would use cached content and its integrity fails, skilload MUST quarantine the entry, attempt at most one refetch of the same repository ID, commit, and path, and verify the expected digest. A second mismatch or unavailable commit MUST fail without rewriting any lock or pin and without substituting current ref content. Read-only commands MUST report the mismatch without quarantining or refetching it.
+**Behavior.** When a mutating operation would use cached content and its integrity fails, skilload MUST quarantine the entry, attempt at most one refetch of the same repository ID, commit, and path, and verify the expected digest. A second mismatch or unavailable commit MUST fail without rewriting any lock or pin and without substituting current ref content. Read-only commands MUST report the mismatch without quarantining or refetching it. skilload MUST verify before promotion, link creation/replacement, or another mutating use, but it does not wrap an Agent or mediate reads through an already deployed native link; a post-deployment local modification can therefore be read by the Agent until the next skilload integrity observation.
 
-**Acceptance.** A locally modified entry is never served. A correct mutating-path refetch restores the expected digest; a persistent mismatch leaves the original pin unchanged and reports quarantine/refetch evidence. Doctor/status detect the same mismatch while leaving cache paths unchanged.
+**Acceptance.** Once skilload detects a locally modified entry, it never promotes, links, or reuses that entry as valid content. A correct mutating-path refetch restores the expected digest; a persistent mismatch leaves the original pin unchanged and reports quarantine/refetch evidence. Doctor/status detect the same mismatch while leaving cache paths unchanged. A test that modifies content after link deployment demonstrates the explicit limitation: a direct Agent filesystem read can see the change before detection, and the next skilload check reports it.
 
 ## SKL-CACHE-006 - Read-only doctor coverage (Revision 1)
 
@@ -96,9 +96,9 @@ The **cache** contains removable external Skill bytes. Durable metadata and desi
 
 ## SKL-OPS-006 - Explicit versioned configuration (Revision 1)
 
-**Behavior.** `config.toml` MUST have an explicit schema version and MAY store only nonsecret operational settings such as Agent path overrides and cache limit. Unknown fields and unsupported schema versions MUST be errors. `config get|set|unset|list` are the only configuration mutation surface; no command silently migrates its schema.
+**Behavior.** `config.toml` MUST have an explicit schema version and MAY store only nonsecret operational settings such as Agent executable overrides and the `cache_limit_bytes` key defined by `SKL-CACHE-003`. Unknown fields and unsupported schema versions MUST be errors. `config get|set|unset|list` are the only configuration mutation surface; no command silently migrates its schema.
 
-**Acceptance.** An unknown field prevents dependent mutation without rewriting the file. Setting/unsetting a supported key is deterministic and never echoes or stores a credential.
+**Acceptance.** An unknown field prevents dependent mutation without rewriting the file. Setting `cache_limit_bytes` changes the persistent effective quota, unsetting it restores 536,870,912 bytes, and neither operation echoes or stores a credential.
 
 ## SKL-OPS-007 - Credential handling (Revision 1)
 

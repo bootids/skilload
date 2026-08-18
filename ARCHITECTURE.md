@@ -101,7 +101,7 @@ No secondary store may silently become authoritative. In particular, a cache ent
 1. External repository content is always untrusted inert data. Source-controlled code, hooks, filters, submodules, and LFS downloads are never executed (`SKL-SRC-008` through `SKL-SRC-016`, `SKL-OPS-010`).
 2. Trust is exact, local, explicit, and separate from Library/workspace/export state (`SKL-TRUST-001` through `SKL-TRUST-008`).
 3. A successful pin names one repository ID, commit, Skill path, verified name, and canonical integrity. Sync never substitutes another commit (`SKL-SRC-012` through `SKL-SRC-015`).
-4. External cache entries are immutable. Corrupt entries are quarantined and never served (`SKL-CACHE-001`, `SKL-CACHE-005`).
+4. External cache entries are managed as immutable: skilload never edits a promoted object in place and never promotes, links, or reuses an object after detecting failed integrity. Native Agents read deployed symlinks without passing through skilload, so a post-deployment same-account modification or disk fault can be consumed until the next skilload integrity observation; that observation reports or quarantines the object according to command mutability (`SKL-CACHE-001`, `SKL-CACHE-005`).
 5. skilload creates, replaces, or removes only paths it can prove it owns. An exact foreign target is never overridden, including with force (`SKL-WSP-019`, `SKL-GLB-010`).
 6. Product mutations are planned and committed through application services. Normal success means every participating resource committed; crash recovery converges journaled work to a coherent old or new state (`SKL-CACHE-008`, `SKL-CACHE-009`).
 7. Read-only commands do not create state or perform network access (`SKL-OPS-005`, `SKL-OPS-008`, `SKL-CLI-012`).
