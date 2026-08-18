@@ -2,7 +2,7 @@
 plan_id: PLAN-0001
 branch: codex/p0-product-architecture-baseline
 pull_request: https://github.com/bootids/skilload/pull/1
-status: plan
+status: active
 depends_on: []
 ---
 
@@ -50,7 +50,7 @@ The repository currently has governance documents but no product specification, 
 
 - [x] (2026-08-18 03:25Z) Confirmed a clean, up-to-date `main`, installed the repository mise environment, verified GitHub authentication, inspected the empty documentation baseline, and created `codex/p0-product-architecture-baseline`.
 - [x] (2026-08-18 03:29Z) Committed and pushed this `plan`-status ExecPlan, opened Draft PR https://github.com/bootids/skilload/pull/1, and recorded its canonical URL; awaiting a later explicit execution trigger.
-- [ ] After a later explicit human execution prompt, move the Plan to `active` and author the product specifications, architecture, design documents, and supporting references described here.
+- [x] (2026-08-18 03:32Z) Received explicit execution authorization, passed branch/Plan/dependency/Draft-PR preflight, and moved the Plan to `active`; next is external-fact verification and document authoring.
 - [ ] Validate behavior-ID uniqueness, decision coverage, command-surface consistency, links, whitespace, and the complete diff; then commit and push all documentation.
 - [ ] After implementation of this documentation delivery, acceptance, synchronization, and retrospective are committed and pushed, run `gh pr ready`, verify `isDraft: false` and the expected head SHA, then automatically enter `review` and push the status commit.
 - [ ] After a later explicit human merge prompt, pass preflight, complete and push the Plan, merge the PR, return to updated `main`, and delete the local delivery branch.
@@ -259,4 +259,4 @@ The stable external interface planned for 0.1 is the canonical command tree and 
 
 Research uses only primary vendor documentation and inspected source code. No new package or service is required to complete this documentation delivery.
 
-Plan revision note: initial planning baseline created on 2026-08-18 to translate the completed product interview into authoritative repository documentation without beginning implementation. The same day, the Draft PR URL and publication evidence were recorded after the initial push.
+Plan revision note: initial planning baseline created on 2026-08-18 to translate the completed product interview into authoritative repository documentation without beginning implementation. The same day, the Draft PR URL and publication evidence were recorded after the initial push, then explicit human authorization moved the Plan to `active` after a successful delivery preflight.
