@@ -2,7 +2,7 @@
 plan_id: PLAN-0002
 branch: codex/p1-config-foundation
 pull_request: https://github.com/bootids/skilload/pull/2
-status: plan
+status: active
 depends_on: [PLAN-0001]
 ---
 
@@ -63,7 +63,8 @@ The deliberately narrow development command surface is important. Building all 5
 - [x] (2026-08-18 12:22Z) Established a clean, up-to-date `main` baseline, verified mise and GitHub authentication, audited all Plan states and the documentation-only implementation, selected `PLAN-0002`, and created `codex/p1-config-foundation`.
 - [x] (2026-08-18 12:22Z) Verified current Rust, crate, standard-library locking, and CI action inputs against primary sources; recorded them in `docs/references/rust-foundation-versions.md` and authored this self-contained `plan`-status delivery.
 - [x] (2026-08-18 13:09Z) Committed and pushed the initial planning baseline as `c21211b0d1aa55e2c422d6d5929bf65457fb5a91`, opened Draft PR https://github.com/bootids/skilload/pull/2, wrote its canonical URL into frontmatter, and published this metadata evidence; awaiting a later explicit execution trigger.
-- [ ] After a later human execution prompt, enter `active` through `execute-exec-plan` and implement the milestones below.
+- [x] (2026-08-18 13:26Z) Received explicit execution authorization, reran `mise install` and GitHub/Draft-PR preflight, confirmed `PLAN-0001` is completed on `origin/main`, and entered `active` before implementation.
+- [ ] Implement the locked Rust workspace, configuration domain/application/filesystem adapter, CLI projections, and required focused tests.
 - [ ] After implementation, acceptance, synchronized documentation, and retrospective are committed and pushed, mark the PR ready, verify its exact head, then automatically enter `review` and push the lifecycle commit.
 - [ ] After a later explicit human merge prompt, use `merge-exec-plan` to pass preflight, complete and push the Plan, merge, update local `main`, and delete the local delivery branch.
 
