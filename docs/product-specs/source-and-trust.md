@@ -12,9 +12,9 @@ A **source** identifies one Skill location and one intended Git ref on GitHub. *
 
 ## SKL-SRC-002 - Canonical source identity (Revision 1)
 
-**Behavior.** Canonical source identity MUST include normalized `owner/repo`, normalized Skill path, and explicit ref: conceptually `github:owner/repo#path@ref`. Two otherwise equal sources with different refs are distinct. Source identity MUST NOT use a machine path or Library database ID.
+**Behavior.** Canonical source identity MUST include normalized `owner/repo`, normalized Skill path, and explicit ref in the textual form `github:<lowercase-owner>/<lowercase-repo>#<encoded-path>@<encoded-ref>`. Path separators and ref slashes remain `/`; within each path segment and the ref, only RFC 3986 unreserved ASCII bytes (`A-Z`, `a-z`, `0-9`, `-`, `.`, `_`, and `~`) remain literal. Every other UTF-8 byte, including `%`, `#`, `@`, and every non-ASCII byte, MUST use uppercase percent encoding `%HH`. Percent decoding occurs exactly once before validation, and canonical serialization MUST contain exactly one literal `#` and one literal `@`; a repository-root Skill has an empty encoded path. Git path spelling MUST NOT receive Unicode normalization because canonically equivalent Unicode spellings can identify different Git entries. Two otherwise equal sources with different refs are distinct. Source identity MUST NOT use a machine path or Library database ID.
 
-**Acceptance.** Adding `main` and `v2` for the same repository path produces two source identities, and exporting either identity contains sufficient GitHub coordinates to resolve it on another machine.
+**Acceptance.** Adding `main` and `v2` for the same repository path produces two source identities, and exporting either identity contains sufficient GitHub coordinates to resolve it on another machine. Path `skills/foo@bar` at ref `main` serializes as `github:owner/repo#skills/foo%40bar@main`, while path `skills/foo` at ref `bar@main` serializes as `github:owner/repo#skills/foo@bar%40main`; parsing, export/import, database keys, and exact Trust keep them distinct.
 
 ## SKL-SRC-003 - Default ref normalization (Revision 1)
 
@@ -72,9 +72,9 @@ A **source** identifies one Skill location and one intended Git ref on GitHub. *
 
 ## SKL-SRC-012 - Canonical integrity digest (Revision 1)
 
-**Behavior.** The integrity value MUST be a canonical SHA-256 tree digest covering sorted normalized paths, entry type, regular-file bytes, executable bit, and allowed symlink target text. A resolved record MUST also carry numeric repository identity, commit, and verified frontmatter name. Host-dependent metadata such as timestamps, owners, and absolute paths MUST NOT affect integrity.
+**Behavior.** The integrity value MUST be a canonical SHA-256 tree digest covering sorted normalized paths, entry type, regular-file bytes, executable bit, and allowed symlink target text. The version-1 encoding MUST represent every path, regular-content, and symlink-target byte length as exactly eight unsigned big-endian bytes; lengths count bytes, not Unicode scalar values. A resolved record MUST also carry numeric repository identity, commit, and verified frontmatter name. Host-dependent metadata such as timestamps, owners, and absolute paths MUST NOT affect integrity.
 
-**Acceptance.** Two materializations of the same Git tree on supported hosts produce the same digest. Changing bytes, executable state, path, or symlink target changes the digest.
+**Acceptance.** Two materializations of the same Git tree on supported hosts and independent implementations produce the same digest. Golden fixtures prove that each length is an eight-byte unsigned big-endian value and that changing bytes, executable state, path, or symlink target changes the digest.
 
 ## SKL-SRC-013 - Conditional reproducibility (Revision 1)
 
@@ -102,7 +102,7 @@ A **source** identifies one Skill location and one intended Git ref on GitHub. *
 
 ## SKL-TRUST-001 - Exact Trust binding (Revision 1)
 
-**Behavior.** A Trust record MUST authorize exactly one canonical `owner/repo/path@ref` plus the verified numeric repository ID. Trust for one ref, path, or repository MUST NOT authorize another.
+**Behavior.** A Trust record MUST authorize exactly one canonical encoded source from `SKL-SRC-002` plus the verified numeric repository ID. Trust for one ref, path, or repository MUST NOT authorize another, even when delimiter characters in one tuple could resemble separators in another before canonical encoding.
 
 **Acceptance.** Trusting `skills/review@main` does not authorize `skills/review@v2`, `skills/test@main`, or a new repository occupying the same path spelling.
 
@@ -114,9 +114,9 @@ A **source** identifies one Skill location and one intended Git ref on GitHub. *
 
 ## SKL-TRUST-003 - First-approval preview (Revision 1)
 
-**Behavior.** Before first Trust is persisted, skilload MUST safely fetch and validate temporary content and present normalized source, numeric repository ID, resolved commit, verified name, description, file count, total bytes, and warnings. Direct GitHub adds to Library or workspace use this same flow. Confirmation is a user-interface consent step, not cryptographic proof of a human.
+**Behavior.** Before first Trust is persisted, skilload MUST safely fetch and validate temporary content and present normalized source, numeric repository ID, resolved commit, verified name, description, file count, total bytes, and warnings. Every repository-controlled or otherwise untrusted field in a human preview MUST use the terminal-safe quoted encoding required by `SKL-CLI-009`; JSON MUST preserve the original logical values through standard JSON string escaping. Direct GitHub adds to Library or workspace use this same flow. Confirmation is a user-interface consent step, not cryptographic proof of a human.
 
-**Acceptance.** Rejecting the preview leaves no Trust, Library/workspace mutation, or promoted cache entry. Approving an unchanged preview creates Trust and allows the requested mutation to continue atomically.
+**Acceptance.** Rejecting the preview leaves no Trust, Library/workspace mutation, or promoted cache entry. Approving an unchanged preview creates Trust and allows the requested mutation to continue atomically. A description containing ESC, OSC, BEL, carriage return, or bidirectional-format controls is displayed only as visible escaped text and cannot clear, rewrite, relabel, or reorder the approval screen.
 
 ## SKL-TRUST-004 - Noninteractive confirmation token (Revision 1)
 

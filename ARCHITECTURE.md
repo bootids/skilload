@@ -72,7 +72,7 @@ The authoritative owner of each state category is singular:
 * Library, Trust, global desired state, manager ownership, profile identities, and known workspace index: the durable SQLite database.
 * Workspace desired sources: `.skilload.yaml` in that exact workspace.
 * Workspace resolved versions and integrity: `.skilload.lock` in that workspace.
-* External Skill bytes: immutable entries under the XDG cache root; these bytes are removable and are never durable metadata.
+* External Skill bytes: immutable entries under the XDG cache root; these bytes are removable and are never durable metadata. Canonically resolved config, data, state, and cache application roots are pairwise non-overlapping, so clearing removable content cannot traverse into durable or operational ownership state.
 * Workspace derived deployment state: the git-excluded workspace manifest plus the durable workspace index.
 * Global and manager derived deployment state: durable ownership records plus the observed Agent roots.
 * Incomplete mutation intent: persistent transaction journals under the XDG state root.
@@ -86,7 +86,7 @@ No secondary store may silently become authoritative. In particular, a cache ent
 
 **Library** owns searchable user metadata keyed by source. It does not own Skill content, Trust, pins, or deployment state. See `SKL-LIB-*`.
 
-**Workspace** owns deterministic portable config/lock files and complete-set project deployment intent. Agent selection is invocation-local. See `SKL-WSP-*`.
+**Workspace** owns deterministic portable config/lock files and complete-set project deployment intent. Agent selection is invocation-local. A deployed workspace target is owned by canonical workspace, Agent, and canonical project Skill root; HOME/configuration fingerprints are observations, not a second ownership identity for the same path. See `SKL-WSP-*`.
 
 **Global deployment** owns local per-profile desired targets with one shared pin per source. It consumes Library and Trust but does not mutate either. See `SKL-GLB-*`.
 
@@ -106,7 +106,7 @@ No secondary store may silently become authoritative. In particular, a cache ent
 6. Product mutations are planned and committed through application services. Normal success means every participating resource committed; crash recovery converges journaled work to a coherent old or new state (`SKL-CACHE-008`, `SKL-CACHE-009`).
 7. Read-only commands do not create state or perform network access (`SKL-OPS-005`, `SKL-OPS-008`, `SKL-CLI-012`).
 8. Schema and source migrations are explicit. Reads and sync never rewrite an unknown/older format (`SKL-SRC-015`, `SKL-WSP-014`, `SKL-OPS-003`, `SKL-OPS-006`).
-9. Human and JSON interfaces represent the same application outcome. JSON stdout is one versioned envelope and never prompts (`SKL-CLI-004` through `SKL-CLI-009`).
+9. Human and JSON interfaces represent the same application outcome. JSON stdout is one versioned envelope and never prompts; human rendering quotes and escapes every untrusted field before it can reach a terminal, while JSON preserves the logical value with standards-compliant escaping (`SKL-CLI-004` through `SKL-CLI-009`).
 10. No runtime subsystem may add a wrapper, daemon, server, TUI, or Web surface to 0.1 (`SKL-PROD-002`, `SKL-PROD-003`).
 
 ## Mutation Model

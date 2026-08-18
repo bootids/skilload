@@ -74,7 +74,7 @@ The expected files/subdirectories are:
     cache/quarantine/
     cache/staging/
 
-The fallback requires a nonempty absolute `HOME`. If an XDG value needs fallback and `HOME` is missing, empty, or relative, return a typed `invalid_environment_path` before inspecting or creating any state path. Resolve each root once from environment input; never join a relative environment value to the current directory. Path resolution is pure and creates nothing. Adapters create the minimum parent only when a successful mutation reaches its staging phase. Tests replace all roots and HOME with temporary directories.
+The fallback requires a nonempty absolute `HOME`. If an XDG value needs fallback and `HOME` is missing, empty, or relative, return a typed `invalid_environment_path` before inspecting or creating any state path. Resolve each root once from environment input; never join a relative environment value to the current directory. Append `skilload`, normalize lexical `.`/`..` components to an absolute path without consulting the current directory, and resolve every existing path prefix through filesystem identity without creating a missing component. Compare the resulting application roots by path-component ancestry and existing-directory identity. All six pairs among config, data, state, and cache must be non-equal and neither ancestor nor descendant; reject equal, nested, or filesystem-aliased roots with `overlapping_state_roots` before opening any skilload-owned file. If an existing prefix is inaccessible, changes identity during resolution, or cannot be resolved without an unsafe symlink traversal, return `invalid_environment_path` instead of guessing. Mutations revalidate root identities with their final baseline so a symlink swap cannot redirect a staged write. Adapters create the minimum parent only when a successful mutation reaches its staging phase. Tests replace all roots and HOME with temporary directories.
 
 The cache index is rebuildable operational metadata rather than durable product truth. It stores object size and a monotonic last-use sequence outside immutable cache objects; losing it affects eviction order only and never source identity, pins, Trust, or integrity.
 
@@ -85,20 +85,21 @@ Use SQLite compiled into the binary with FTS5 enabled. The exact SQL is a P1 del
 * `schema_info`: current schema version and migration metadata.
 * `state_revision`: a monotonic semantic revision incremented by committed product-state mutations, not by confirmation-token bookkeeping or derived-index maintenance.
 * `library_entries`: canonical source key, repository ID, derived metadata, alias/category/note, and metadata revision.
-* `library_tags`: normalized many-to-one tags.
-* `library_fts`: derived FTS5 index over the fields required by `SKL-LIB-004`.
+* `library_tags`: many-to-one tags with the Unicode-15.1 NFC display spelling and unique full-case-folded comparison key required by `SKL-LIB-008`.
+* `library_fts`: derived FTS5 index over the fields required by `SKL-LIB-004`, including each tag's display spelling and comparison key.
 * `trust_records`: exact source, repository ID, state, approval evidence revision, and revocation state. No credential or Skill bytes.
 * `global_sources`: source intent and one shared commit/integrity/name pin.
 * `global_targets`: active source-to-profile desired associations and status.
 * `detached_global_targets`: non-active orphan warnings with the prior source, profile, exact path/link, pin, integrity, ownership evidence, and detach reason; these rows do not participate in update/pin or cache protection.
 * `profiles`: opaque profile ID whose unique identity is `(Agent, canonical global Skill root)`, plus replaceable executable, HOME, Agent-configuration, compatibility-root, and environment-fingerprint observations.
 * `manager_installs`: Agent/profile, embedded asset version/digest, target, marker, and observed ownership status.
-* `known_workspaces`: canonical workspace path, environment/profile observations, manifest location, and last committed lock digest.
-* `owned_links`: exact target, expected link target, owner domain, source/pin, and transaction revision.
+* `known_workspaces`: canonical workspace path, manifest location, and last committed lock digest.
+* `workspace_targets`: unique `(canonical workspace, Agent, canonical project Skill root)` identity plus replaceable executable, HOME, Agent-configuration, compatibility-root, and environment-fingerprint observations.
+* `owned_links`: exact target, expected link target, owner domain and workspace-target/profile identity, source/pin, and transaction revision.
 * `confirmation_tokens`: token hash, canonical preview-plan digest, semantic state revision, optional workspace digest, expiry, and consumed state.
 * `committed_transactions`: transaction IDs that act as recovery anchors after SQLite commit.
 
-Use foreign keys and uniqueness constraints for exact source, alias, the `(Agent, canonical global Skill root)` profile identity, active target ownership, and one pin per global source. Updating environment observations for an existing profile never allocates a second owner for the same target. FTS is derived: triggers or an explicit transaction-maintained index keep it synchronized, and doctor may rebuild it from base rows.
+Use foreign keys and uniqueness constraints for exact source, alias, tag comparison key within one Library entry, the `(Agent, canonical global Skill root)` profile identity, the `(canonical workspace, Agent, canonical project Skill root)` workspace-target identity, active target ownership, and one pin per global source. Updating environment observations for an existing global profile or workspace target never allocates a second owner for the same filesystem target. FTS is derived: triggers or an explicit transaction-maintained index keep it synchronized, and doctor may rebuild it from base rows.
 
 SQLite transactions cover all database changes for one application mutation. Filesystem changes remain journaled separately; the database's committed transaction ID determines whether recovery rolls external work forward or back.
 
@@ -160,11 +161,11 @@ SQLite busy timeout is a second line of defense, not the primary product lock. N
 
 Library export is built from domain records, sorted by canonical source, and serialized as a versioned portable JSON document. It contains no database row IDs or local timestamps needed only for operations.
 
-Import first parses and validates the complete document into an `ImportPlan` containing additions, kept entries, explicit metadata replacements, and conflicts. Dry-run returns that plan. Commit revalidates the database revision and applies the entire plan in one SQLite transaction.
+Import first parses and validates the complete document into an `ImportPlan` containing additions, kept entries, explicit metadata replacements, and conflicts. Tag parsing uses the pinned Unicode-15.1 normalization domain value documented in [`../references/unicode-15-1-tag-normalization.md`](../references/unicode-15-1-tag-normalization.md) before planning: duplicate keys retain the first document-order display spelling, and committed/exported rows sort by comparison key rather than locale. Dry-run returns that plan. Commit revalidates the database revision and applies the entire plan in one SQLite transaction.
 
 ## Testing Consequences
 
-Default tests use temporary XDG/HOME roots and an in-memory or temporary-file SQLite database compiled with the same FTS5 features as production. Repository contract tests run against both an in-memory fake and SQLite adapter. Path tests cover unset, empty, relative, and absolute values for every XDG variable; prove that relative values fall back identically from different current directories; and prove invalid fallback `HOME` fails before filesystem access. Other tests prove that query construction creates no path, migration backups survive injected failure, FTS rebuild preserves base rows, unknown schema blocks writes, and concurrent mutations return deterministic commit/busy results.
+Default tests use temporary XDG/HOME roots and an in-memory or temporary-file SQLite database compiled with the same FTS5 features as production. Repository contract tests run against both an in-memory fake and SQLite adapter. Tag fixtures cover whitespace trimming, NFC composition, full default case folding, Turkish locale independence, control/size rejection, first-spelling retention, import/export ordering, removal by equivalent spelling, and FTS matches through both display and comparison forms. Path tests cover unset, empty, relative, and absolute values for every XDG variable; prove that relative values fall back identically from different current directories; prove invalid fallback `HOME` fails before filesystem access; and reject equal, nested, or symlink-aliased effective application roots. Other tests prove that query construction creates no path, migration backups survive injected failure, FTS rebuild preserves base rows, unknown schema blocks writes, and concurrent mutations return deterministic commit/busy results.
 
 ## Decisions Deferred to P1
 

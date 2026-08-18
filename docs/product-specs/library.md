@@ -6,7 +6,7 @@ The **Library** is the user's durable, searchable collection of source metadata.
 
 ## SKL-LIB-001 - Stable entry identity and metadata (Revision 1)
 
-**Behavior.** A Library entry MUST be identified by canonical source, not by displayed name. It MAY store one optional globally unique alias, one optional free-text category, normalized deduplicated tags, a free-text note, and derived name, description, and repository metadata. Alias MUST NOT change the verified install name. A derived name MAY be accepted as a convenience selector only when it resolves uniquely; ambiguity MUST return candidates instead of guessing.
+**Behavior.** A Library entry MUST be identified by canonical source, not by displayed name. It MAY store one optional globally unique alias, one optional free-text category, normalized deduplicated tags, a free-text note, and derived name, description, and repository metadata. Alias MUST NOT change the verified install name. A derived name MAY be accepted as a convenience selector only when it resolves uniquely; ambiguity MUST return candidates instead of guessing. Tags use the normalization and display contract in `SKL-LIB-008` everywhere they are stored, compared, imported, exported, or indexed.
 
 **Acceptance.** Two sources whose Skills share a name can coexist, while an alias collision fails. Editing category, tags, note, or alias leaves source identity, Trust, pins, and deployments unchanged.
 
@@ -24,7 +24,7 @@ The **Library** is the user's durable, searchable collection of source metadata.
 
 ## SKL-LIB-004 - Full-text search fields (Revision 1)
 
-**Behavior.** Library search MUST use embedded SQLite FTS5 and index verified name, description, alias, tags, category, note, and repository. Tag normalization and deduplication MUST make equivalent tags search consistently.
+**Behavior.** Library search MUST use embedded SQLite FTS5 and index verified name, description, alias, tags, category, note, and repository. For every tag it MUST index both the stored display spelling and the comparison key from `SKL-LIB-008`, so canonically or case-equivalent tag input searches consistently without changing normalization of unrelated free-text fields.
 
 **Acceptance.** A query can match an entry through each indexed field, including a user note, without reading Skill content or contacting GitHub.
 
@@ -48,9 +48,9 @@ The **Library** is the user's durable, searchable collection of source metadata.
 
 ## SKL-LIB-008 - Explicit metadata mutations (Revision 1)
 
-**Behavior.** Library metadata MUST change only through `alias set|clear`, `category set|clear`, `tag add|remove`, and `note set|clear`. Alias is globally unique. Category and note are free text. Tags are normalized and deduplicated. A missing target returns `not_found`; an already-satisfied mutation succeeds unchanged.
+**Behavior.** Library metadata MUST change only through `alias set|clear`, `category set|clear`, `tag add|remove`, and `note set|clear`. Alias is globally unique. Category and note are free text. Tags MUST use this exact version-1 algorithm based on Unicode 15.1.0 data: require valid UTF-8; trim code points with the Unicode `White_Space` property from both ends; normalize the remaining text to NFC for the stored display spelling; reject an empty result, any C0/C1 control or DEL, U+2028/U+2029, bidirectional-format code point U+061C, U+200E-U+200F, U+202A-U+202E, or U+2066-U+2069, more than 64 Unicode scalar values, or more than 256 UTF-8 bytes; and preserve all permitted internal whitespace and case in that display spelling. The comparison key is the NFC result of applying Unicode 15.1.0 full default case folding (`CaseFolding.txt` statuses `C` and `F`, never locale-specific `T`) to the display spelling. Tags with the same comparison key are equivalent. `tag add` of an equivalent value succeeds unchanged and retains the existing display spelling; `tag remove` resolves by comparison key. Import applies the same algorithm, retains the first display spelling in document order for duplicate keys, and export emits stored display spellings in comparison-key order. A future Unicode data or algorithm change requires an explicit metadata/schema migration rather than silent renormalization. A missing target returns `not_found`; an already-satisfied mutation succeeds unchanged.
 
-**Acceptance.** Adding the same normalized tag twice stores one value, clearing an already empty note returns unchanged, and attempting a duplicate alias changes neither entry.
+**Acceptance.** Adding ` Review ` and then `review` stores one tag displayed as `Review`; composed `caf\u00e9` and decomposed `cafe\u0301` likewise share one key and retain the first display spelling. Internal whitespace is not collapsed, Turkish case folding is locale-independent, and empty/control/oversized tags fail without mutation. Removing through any equivalent spelling removes the one stored value. Clearing an already empty note returns unchanged, and attempting a duplicate alias changes neither entry.
 
 ## SKL-LIB-009 - Export boundary (Revision 1)
 

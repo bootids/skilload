@@ -23,7 +23,7 @@ Agent-specific filesystem and configuration knowledge belongs behind an `AgentAd
 
 The adapter resolves roots and reports facts. The application layer decides hard failure, confirmation, degraded status, and transaction membership. Filesystem writes go through the transaction/ownership adapter, not arbitrary Agent adapter code.
 
-`AgentProfile` contains Agent kind, executable path, effective `HOME`, relevant config overrides, project root when applicable, canonical global Skill root, compatibility/conflict roots, and a deterministic environment fingerprint. For global and manager scope, the database maps only `(Agent kind, canonical global Skill root)` to the opaque `profile_id`. Executable, HOME, config, compatibility roots, and the fingerprint are replaceable observations used for current preflight and diagnostics; changing them without changing the identity tuple refreshes the same profile instead of creating a second owner for one target.
+`AgentProfile` contains Agent kind, executable path, effective `HOME`, relevant config overrides, project root when applicable, canonical project/global Skill roots, compatibility/conflict roots, and a deterministic environment fingerprint. For workspace scope, ownership maps only `(canonical workspace path, Agent kind, canonical project Skill root)` to a deployment target; for global and manager scope, the database maps only `(Agent kind, canonical global Skill root)` to the opaque `profile_id`. Executable, HOME, config, compatibility roots, and the fingerprint are replaceable observations used for current preflight and diagnostics; changing them without changing the applicable identity tuple refreshes the same target instead of creating a second owner for one filesystem path.
 
 ## Claude Code Adapter
 
@@ -50,7 +50,7 @@ For new global/manager scope, target the current canonical user root:
 
     $HOME/.agents/skills/<verified-name>
 
-Current Codex also reads deprecated `$CODEX_HOME/skills`. Include that root, system/admin roots where readable, and other repository roots from current directory to repository root in semantic conflict inspection. Do not deploy new content to the deprecated root. The observation fingerprint includes effective `CODEX_HOME` because it changes compatibility/system/config observations, but a `CODEX_HOME`-only change under fixed `HOME` retains the same Codex profile identity and `$HOME/.agents/skills` deployment root.
+Current Codex also reads deprecated `$CODEX_HOME/skills`. Include that root, system/admin roots where readable, and other repository roots from current directory to repository root in semantic conflict inspection. Do not deploy new content to the deprecated root. The observation fingerprint includes effective `CODEX_HOME` because it changes compatibility/system/config observations, but a `CODEX_HOME`-only change retains the same fixed-workspace Codex target at `<workspace>/.agents/skills`; under fixed `HOME` it also retains the same global Codex profile and `$HOME/.agents/skills` deployment root.
 
 Codex may expose two same-name Skills instead of deterministic shadowing. Internal skilload duplicates remain a hard failure; an external duplicate can proceed only with the explicit degraded-conflict contract. Symlinked Skill directories are natively supported, but next-launch remains the product guarantee.
 
@@ -142,4 +142,4 @@ Uninstall removes only an exact owned manager tree. If user modification changes
 
 ## Tests
 
-Use fake Agent executables and isolated HOME/config roots. Adapter contract tests cover default/override roots, deprecated Codex conflict discovery, missing executables, disabled settings, parent symlinks, exact foreign targets, semantic conflicts, environment profile changes, and next-launch fixture discovery. Manager tests parse both embedded assets, compare referenced commands to the CLI schema, validate PATH preflight, exercise multi-Agent failpoints, and prove cache clear cannot remove manager copies. Live model conversations remain optional nonblocking smoke tests.
+Use fake Agent executables and isolated HOME/config roots. Adapter contract tests cover default/override roots, deprecated Codex conflict discovery, missing executables, disabled settings, parent symlinks, exact foreign targets, semantic conflicts, same-root observation refresh versus changed-root identity, fixed-workspace `CODEX_HOME` changes, global environment profile changes, and next-launch fixture discovery. Manager tests parse both embedded assets, compare referenced commands to the CLI schema, validate PATH preflight, exercise multi-Agent failpoints, and prove cache clear cannot remove manager copies. Live model conversations remain optional nonblocking smoke tests.

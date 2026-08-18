@@ -82,7 +82,7 @@ Version-1 error/confirmation shape:
       }
     }
 
-`result.outcome` is one of `changed`, `unchanged`, `already_exists`, or `already_immutable` where appropriate. Domain data uses explicit typed fields, canonical source strings, lowercase full commit SHA, `sha256:` integrity, opaque profile IDs, and paths encoded as display-safe strings plus a lossless representation when required. Although `RepositoryId` is a `u64` internally, portable JSON/YAML serializes it as a decimal string to avoid IEEE-754 precision loss in common consumers. Lists have documented stable ordering.
+`result.outcome` is one of `changed`, `unchanged`, `already_exists`, or `already_immutable` where appropriate. Domain data uses explicit typed fields, injectively percent-encoded canonical source strings from `SKL-SRC-002`, lowercase full commit SHA, `sha256:` integrity, opaque profile IDs, and paths encoded as display-safe strings plus a lossless representation when required. Although `RepositoryId` is a `u64` internally, portable JSON/YAML serializes it as a decimal string to avoid IEEE-754 precision loss in common consumers. Lists have documented stable ordering.
 
 A preview or result for an operation that can promote external content includes `cache_quota.configured_limit_bytes`, `cache_quota.effective_limit_bytes`, `cache_quota.projected_bytes`, and `cache_quota.override_applied`. A detached uninstall result includes the affected profile/source/path, `link_removed: false`, and `orphan_recorded: true`; list/status represent the orphan separately from active target associations.
 
@@ -125,6 +125,10 @@ Network-capable requests are explicit source add/Trust add, Library refresh, sou
 
 Human output is English and optimized for terminal scanning rather than mirroring JSON. Mutation previews show complete selected sources/targets and warnings before confirmation. Success summaries distinguish changed versus unchanged and include degraded states. List/search output has deterministic sort and an explicit machine-independent fallback when width is narrow or stdout is not a TTY.
 
+Treat every repository-controlled, path/filesystem-derived, environment-derived, and user-supplied value as untrusted terminal data. A shared renderer wraps each such field in ASCII double quotes, represents quote as backslash-double-quote and backslash as two backslashes, uses `\n`, `\r`, and `\t`, renders every other C0/DEL/C1 code point, U+2028/U+2029, and the bidirectional-format set U+061C, U+200E-U+200F, U+202A-U+202E, and U+2066-U+2069 as `\u{XXXX}` with uppercase hexadecimal zero-padded to four through six digits, and renders invalid UTF-8 bytes as `\xHH` with two uppercase digits. The encoding is injective because literal backslashes are escaped. No data field may contain raw ESC, BEL, carriage return, cursor movement, OSC hyperlink, or bidi-format control. Renderer-owned layout is the only source of newlines; renderer-owned ANSI styling is the only source of terminal escapes and is absent for `--no-color` or non-TTY output. Apply the encoder before width calculation so truncation never splits an escape, and prefer wrapping over dropping identifying bytes.
+
+JSON uses a standards-compliant serializer over the original domain value, not the human-display string. JSON escapes its required control characters; a non-UTF-8 path uses the documented display-plus-lossless representation. Debug and error rendering use the same terminal-safe field encoder, so a validation failure cannot reintroduce hostile bytes outside a preview.
+
 Do not write persistent logs by default. `--debug` (or a documented environment equivalent) writes redacted diagnostics to stderr. An explicit debug-log destination, if P1 adds it, belongs under XDG state and must be opt-in.
 
 ## Test Architecture
@@ -137,7 +141,7 @@ Default tests are offline and deterministic:
 * local HTTP fixtures for GitHub metadata, redirects, auth/rate errors, default branches, repository ID changes, and candidate trees;
 * isolated HOME/XDG/Claude/Codex roots and fake Agent executables/configuration;
 * transaction failpoint tests at every journal/filesystem/database phase;
-* golden JSON/help/human snapshots with secret-redaction assertions;
+* golden JSON/help/human snapshots with secret-redaction assertions and hostile ANSI/OSC/CR/bidirectional/invalid-byte fields in previews, errors, lists, and diagnostics;
 * cache-quota fixtures for the 536,870,912-byte default, persistent set/unset, accepted and rejected per-invocation overrides, complete-batch accounting, confirmation drift, and non-persistence;
 * profile fixtures proving that auxiliary Codex observations do not split one `(Agent, global root)` identity, plus inaccessible detach/orphan/cleanup fixtures that never claim an unobserved link deletion;
 * post-deployment cache-modification fixtures proving the direct-read limitation, read-only detection, and quarantine/refetch behavior on the next mutating use;

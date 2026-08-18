@@ -39,9 +39,11 @@ The first three omit Skill path and ref; metadata supplies the explicit default 
 
 The canonical textual form is:
 
-    github:<lowercase-owner>/<lowercase-repo>#<normalized-path>@<explicit-ref>
+    github:<lowercase-owner>/<lowercase-repo>#<encoded-path>@<encoded-ref>
 
-GitHub owner/repository matching is case-insensitive; preserve current display spelling separately. Normalize path separators to `/`, remove `.` segments, reject `..`, absolute paths, NUL/control bytes, empty selected paths except repository root, and `.git`. A full commit SHA is lowercase hexadecimal. Branch/tag text remains exact after validation and is always passed to Git/GitHub as data, never shell syntax.
+GitHub owner/repository matching is case-insensitive; preserve current display spelling separately. Normalize path separators to `/`, remove `.` segments, reject `..`, absolute paths, NUL/control bytes, empty selected paths except repository root, and `.git`. Do not Unicode-normalize Git path spelling. After structural normalization, percent-encode each path segment and the explicit ref from their UTF-8 bytes: leave only RFC 3986 unreserved ASCII bytes literal, retain `/` as the path/ref separator, and encode every other byte with uppercase `%HH`. This includes literal `%`, `#`, `@`, and all non-ASCII bytes, so the serialized form has exactly one literal `#` and one literal `@`. Decode input URL escapes once, validate, and re-encode; never treat an already encoded canonical value as raw text and decode it twice. A full commit SHA is lowercase hexadecimal. Branch/tag text remains exact after validation and is always passed to Git/GitHub as data, never shell syntax.
+
+Use a structured `SourceIdentity { owner, repository, path, git_ref }` domain value as the database, Trust, workspace, and export key; parse or render the textual form only at serialization boundaries. Golden tests include path `skills/foo@bar` with ref `main` and path `skills/foo` with ref `bar@main` and require distinct text, keys, Trust records, and import round trips.
 
 ## Repository Metadata and Credentials
 
@@ -88,17 +90,17 @@ Detect a Git LFS pointer by its standard header and pointer structure; reject it
 
 Define a versioned byte encoding, `skilload-tree-v1`, independent of filesystem enumeration and metadata. Hash with SHA-256:
 
-    magic "skilload-tree-v1\0"
+    magic bytes "skilload-tree-v1\0"
     for each entry sorted by raw normalized relative path bytes:
-      entry type byte: regular or symlink
-      unsigned big-endian path length, then path bytes
+      entry type byte: 0x01 regular or 0x02 symlink
+      path byte length as one unsigned 64-bit big-endian integer, then path bytes
       for regular:
-        executable byte (0 or 1)
-        unsigned big-endian content length, then exact blob bytes
+        executable byte 0x00 or 0x01
+        content byte length as one unsigned 64-bit big-endian integer, then exact blob bytes
       for symlink:
-        unsigned big-endian target length, then original relative target bytes
+        target byte length as one unsigned 64-bit big-endian integer, then original relative target bytes
 
-Directories are represented implicitly by child paths; empty directories are not Git tree content relevant to a Skill. The resolved record stores `sha256:<lowercase-hex>` plus repository ID, commit, selected path, verified name, and format version. Tests use cross-platform golden fixtures covering ordering, executable bits, symlinks, empty files, Unicode path bytes, and collision rejection.
+Every length is exactly eight bytes and counts the following byte sequence, not Unicode scalar values or filesystem characters. Reject a value that cannot fit in `u64` before hashing, although the smaller source resource ceilings normally make that unreachable. Directly concatenate the records above with no padding, terminator, entry count, BOM, or platform newline. Directories are represented implicitly by child paths; empty directories are not Git tree content relevant to a Skill. The resolved record stores `sha256:<lowercase-hex>` plus repository ID, commit, selected path, verified name, and format version. Tests use byte-level cross-platform golden fixtures covering zero/one/multibyte lengths, ordering, executable bits, symlinks, empty files, Unicode path bytes, and collision rejection.
 
 ## Immutable Cache Promotion
 
@@ -116,7 +118,7 @@ If the destination already exists, verify its manifest and tree. Reuse only an e
 
 ## Trust Preview and Token
 
-An `ApprovalPreview` contains operation, canonical source, repository ID/current display name, commit, verified Skill name/description, file/byte counts, both active file/byte ceilings, integrity, ref mutability, warnings, and requested limit overrides. Human mode renders it and asks for consent only when interactive behavior is allowed.
+An `ApprovalPreview` contains operation, canonical source, repository ID/current display name, commit, verified Skill name/description, file/byte counts, both active file/byte ceilings, integrity, ref mutability, warnings, and requested limit overrides. Human mode passes every repository-controlled name, description, path, ref, and warning through the CLI design's terminal-safe quoted encoder before asking for consent; source bytes never provide raw terminal control. JSON serializes the original logical values with ordinary JSON escaping rather than substituting the human-display form.
 
 JSON mode returns a signed-or-random opaque token backed by a short-lived local database record. Store only a cryptographic token hash plus a canonical digest of the complete preview plan (action, all sources/repository IDs/commits, selected targets, overrides, and warnings), semantic `state_revision`, workspace digest when applicable, expiry, and consumed flag. Token bookkeeping does not advance `state_revision`. The second call hashes the presented token, reconstructs and compares the complete plan, acquires final locks, and atomically marks it consumed with the requested operation; any product-state change in that commit advances the revision. It fails on any bound-field drift. This token prevents accidental stale or broadened approval; it is not authentication against the same-account attacker excluded by the threat model.
 
@@ -128,4 +130,4 @@ Neither command changes path, ref, commit, integrity, verified name, Trust state
 
 ## Testing
 
-Default tests use local bare Git repositories and an HTTP fixture server that models GitHub responses, redirects, authentication failures, mutable refs, deleted commits, and rate/error conditions. Fixtures cover the exact discovery, candidate, entry, and byte boundaries; explicit-path discovery bypass; one-shot per-dimension overrides; hostile paths/modes; filters/hooks that must never execute; submodules; LFS pointers; symlink graphs; candidate ambiguity; repository path reuse; confirmation replay/drift; and golden integrity digests. Real GitHub smoke tests are explicit or scheduled and never required for the default suite.
+Default tests use local bare Git repositories and an HTTP fixture server that models GitHub responses, redirects, authentication failures, mutable refs, deleted commits, and rate/error conditions. Fixtures cover the exact discovery, candidate, entry, and byte boundaries; explicit-path discovery bypass; one-shot per-dimension overrides; hostile paths/modes; filters/hooks that must never execute; submodules; LFS pointers; symlink graphs; candidate ambiguity; canonical delimiter collisions and percent round trips; repository path reuse; confirmation replay/drift; hostile terminal fields; and byte-exact golden integrity digests with eight-byte lengths. Real GitHub smoke tests are explicit or scheduled and never required for the default suite.

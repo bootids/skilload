@@ -136,11 +136,11 @@ A **workspace** is the exact current directory containing `.skilload.yaml`. The 
 
 **Acceptance.** A missing executable or inaccessible root fails before any selected Agent changes. A resolvable Agent with no known numeric version may proceed when functional checks pass.
 
-## SKL-WSP-023 - Environment-specific deployment identity (Revision 1)
+## SKL-WSP-023 - Resolved workspace deployment identity (Revision 1)
 
-**Behavior.** Deployment state MUST record the effective `HOME`, `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, and resolved Agent roots relevant to the selected adapters. Guarantees apply only to the same resolved environment. A different environment is a distinct target and MUST NOT be silently conflated with an old record.
+**Behavior.** A workspace deployment target MUST be identified only by `(canonical workspace path, Agent, canonical resolved project Skill root)`. Deployment state MUST also record the effective `HOME`, `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, executable, compatibility/conflict roots, and other adapter observations used for preflight, but those observations are replaceable and MUST NOT allocate a second owner while the identity tuple is unchanged. A different canonical project Skill root is a distinct target and MUST NOT be silently conflated with an old record.
 
-**Acceptance.** Changing an override so an Agent root resolves elsewhere produces a distinct preflight/status target and never deletes an entry under the former root without verifying its recorded ownership.
+**Acceptance.** In a fixed workspace, changing only `CODEX_HOME` retains the Codex target at `<workspace>/.agents/skills`, refreshes conflict observations on the same deployment record, and does not make its existing exact links appear foreign. Changing an override or canonical workspace resolution so the actual project Skill root differs produces a distinct preflight/status target and never deletes an entry under the former root without verifying its recorded ownership.
 
 ## SKL-WSP-024 - Visibility timing guarantee (Revision 1)
 
@@ -150,9 +150,9 @@ A **workspace** is the exact current directory containing `.skilload.yaml`. The 
 
 ## SKL-WSP-025 - Ownership, exclusion, and status (Revision 1)
 
-**Behavior.** skilload MUST maintain a git-excluded local workspace manifest and a durable global workspace index containing exact owned links, cache targets, Agents, lock digest, and environment roots. In Git repositories it MUST maintain only its exact entries in Git's effective `info/exclude` file, resolving that file through Git rather than assuming `.git` is a directory, and MUST never edit shared `.gitignore`. A missing manifest MAY be rebuilt only when name, link target, commit, and integrity all match. `workspace status` is read-only, reports registered deployments by default, and MAY explicitly rerun Agent preflight.
+**Behavior.** skilload MUST maintain a git-excluded local workspace manifest and a durable global workspace index containing exact owned links, cache targets, Agents, lock digest, target identities, and replaceable environment observations. In Git repositories it MUST resolve both the worktree root and Git's effective `info/exclude` file through Git rather than assuming the workspace is the worktree root or `.git` is a directory. It MUST write an anchored, literal-escaped worktree-relative pattern for the manifest, maintain only its exact entries, and never edit shared `.gitignore`. A workspace path that cannot be represented safely as one literal exclude pattern MUST fail before manifest creation. A missing manifest MAY be rebuilt only when name, link target, commit, and integrity all match. `workspace status` is read-only, reports registered deployments by default, and MAY explicitly rerun Agent preflight.
 
-**Acceptance.** Status creates no state and distinguishes healthy, missing, foreign, stale, degraded, and inaccessible entries. Manifest reconstruction refuses a near match. Ordinary repositories and linked worktrees both exclude the manifest through their Git-resolved `info/exclude` file, and user `.gitignore` and pre-existing exclude content remain unchanged.
+**Acceptance.** Status creates no state and distinguishes healthy, missing, foreign, stale, degraded, and inaccessible entries. Manifest reconstruction refuses a near match. For a workspace at `<worktree>/packages/app`, the managed pattern matches only `/packages/app/.skilload/state/deployments.json` relative to that worktree rather than an incorrect root-level `.skilload` path. Root, nested, ordinary, and linked-worktree fixtures all exclude the manifest through their Git-resolved `info/exclude` file, including literal Git-ignore metacharacters in a directory name, while user `.gitignore` and pre-existing exclude content remain unchanged.
 
 ## SKL-WSP-026 - Workspace deletion and scale (Revision 1)
 
