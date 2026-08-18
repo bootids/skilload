@@ -70,6 +70,7 @@ The deliberately narrow development command surface is important. Building all 5
 - [x] (2026-08-18 13:56Z) Created the review-state change that moves this sole Plan copy to `docs/exec-plans/review/` and sets `status: review`.
 - [x] (2026-08-18) Classified all six inline review concerns in the Review Conversation Log. R1 preserves the documented literal-native-path interpretation; R2 through R6 are ordinary in-scope remediations. Focused core and CLI regressions, locked workspace tests, format, Clippy, build, and diff checks passed; remediation commit `3417b8a2c914b0ed9c16259f969fbc2ba9546031` is pushed before reviewer replies.
 - [x] (2026-08-18) Replied to R1 through R6 from pushed remediation head `3417b8a2c914b0ed9c16259f969fbc2ba9546031`; the final `pr_threads.cjs list --all` reconciliation reports all six inline threads resolved.
+- [x] (2026-08-18) Implemented R7 through R10 in the review state and retained the documented R11 no-fix disposition. Focused core and CLI regressions, locked workspace tests, format, Clippy, build, and diff checks passed; the preliminary remediation log is ready to commit and push before replies and final reconciliation.
 - [ ] After a later explicit human merge prompt, use `merge-exec-plan` to pass preflight, complete and push the Plan, merge, update local `main`, and delete the local delivery branch.
 
 ## Surprises & Discoveries
@@ -88,6 +89,8 @@ The deliberately narrow development command surface is important. Building all 5
   Evidence: CI run 32144984316 emitted the same Node.js warning for `ubuntu-24.04` and `macos-15`; the exact action pin remains verified and its warning is captured in `docs/references/rust-foundation-versions.md`.
 - Observation: Canonical path spelling does not prove XDG-root separation for bind mounts or equivalent aliases; pairwise device/inode identity plus relative suffix ancestry is required.
   Evidence: The new `filesystem_alias_identities_reject_equal_or_nested_application_roots` regression fixture reaches the alias branch with distinct path spellings and a shared filesystem identity.
+- Observation: `DirBuilder::recursive(true)` cannot recover from a restrictive umask because a missing parent can be created without owner search permission before the builder descends into it; syncing only the final configuration directory does not persist its entry in a newly created parent.
+  Evidence: `first_mutation_creates_nested_xdg_roots_under_restrictive_umask` runs the real binary with `umask 0177`, creates previously absent configuration and state roots, persists `config.toml`, and verifies every created component is mode `0700`; the full locked workspace suite passed 34 tests.
 
 ## Decision Log
 
@@ -121,6 +124,9 @@ The deliberately narrow development command surface is important. Building all 5
 - Decision: Treat a whitespace-delimited trailing option token in an Agent executable setting as command-line intent, but preserve an absolute filesystem path whose name merely contains spaces.
   Rationale: This rejects inputs such as `/usr/bin/claude --version` without needlessly rejecting valid native path names.
   Date/Author: 2026-08-18 / Codex
+- Decision: Create missing application-directory components one at a time, retain the configuration-created chain, and sync its parent entries after the configuration-file rename.
+  Rationale: Each new component must regain mode `0700` before traversal continues under a restrictive umask. A durable initial `config.toml` also requires first syncing its own directory after rename, then each newly created directory's parent from the innermost entry toward the existing anchor.
+  Date/Author: 2026-08-18 / Codex
 
 ## Outcomes & Retrospective
 
@@ -131,6 +137,8 @@ Local acceptance on 2026-08-18 passed `mise exec -- cargo fmt --all --check`, `m
 Review outcome: PR [#2](https://github.com/bootids/skilload/pull/2) is ready for human review. The ready transaction used implementation head `5faf8ff8a5f06087e572e0c8c20e63ebc0f85b36`, which [CI run 32145189606](https://github.com/bootids/skilload/actions/runs/32145189606) passed on both required runners. The Product Baseline remains Revision 1 of `SKL-CLI-002`, `SKL-CLI-003`, `SKL-OPS-006`, and `SKL-CLI-011`. This review-state commit records lifecycle metadata only; a later explicit merge authorization must complete the review-conversation preflight and final archive transition.
 
 Review remediation on 2026-08-18 closes five valid in-scope defects: newly used app directories explicitly regain mode `0700`; embedded NUL is rejected from both raw and TOML executable inputs; parser diagnostics never echo malformed user input; known malformed JSON configuration leaves emit one API-v1 `usage_error` envelope; and XDG separation compares existing-directory device/inode identities as well as path ancestry. The full locked workspace suite passes 31 tests (18 core, six CLI unit, seven CLI integration). Remediation commit `3417b8a2c914b0ed9c16259f969fbc2ba9546031` is pushed, each review concern has a reply, and the final full conversation reconciliation reports all six inline threads resolved.
+
+Review remediation added four in-scope protections: recursive XDG root creation now repairs each newly created component before descent and parent-syncs newly created configuration-directory entries after the file replacement; invalid native bytes for a numeric setting no longer become `PathValue`; and unrepresentable TOML versions become an `invalid_state` envelope rather than an invalid API-v1 `SchemaDetails` payload. `mise exec -- cargo fmt --all --check`, `mise exec -- cargo clippy --workspace --all-targets --all-features -- -D warnings`, `mise exec -- cargo test --workspace --all-features --locked` (34 tests: 19 core, six CLI unit, nine CLI integration), `mise exec -- cargo build --workspace --all-features --locked`, and `git diff --check` passed before the preliminary remediation commit.
 
 ## Review Conversation Log
 
@@ -229,6 +237,86 @@ Resolution: XDG resolution records device/inode identities for every existing ca
 Evidence: `filesystem_alias_identities_reject_equal_or_nested_application_roots` exercises distinct aliases with the same identity; `revalidation_detects_a_recreated_root_identity` proves same-spelling replacement is rejected. The focused core suite passed 18 tests and the full locked workspace suite passed 31. Remediation commit `3417b8a2c914b0ed9c16259f969fbc2ba9546031`.
 
 GitHub outcome: [Reply](https://github.com/bootids/skilload/pull/2#discussion_r3805305012); thread resolved: true.
+
+### R7 — Recursive root creation fails under a restrictive umask
+
+Source: inline thread `PRRT_kwDOT7YN2s6aK4hw`, comment `PRRC_kwDOT7YN2s7i1VSr`, [review comment](https://github.com/bootids/skilload/pull/2#discussion_r3805631659) by `chatgpt-codex-connector`.
+
+Problem: Recursive `DirBuilder` creation can create an absent XDG base without owner search permission under a restrictive umask, then fail before creating its `skilload` child.
+
+Disposition: fixed.
+
+Status: open.
+
+Resolution: `ensure_restrictive_directory` now finds the nearest existing real directory, creates each missing component with `fs::create_dir`, applies mode `0700` before descending, and retains the existing final-directory mode repair.
+
+Evidence: `first_mutation_creates_nested_xdg_roots_under_restrictive_umask` runs the real binary with `umask 0177`, creates absent configuration/state bases and children, persists the configuration, and verifies `0700` on all five created components. `mise exec -- cargo test -p skilload-core --lib --locked` passed 19 tests; the locked workspace suite passed 34.
+
+GitHub outcome: pending reply; thread remains open.
+
+### R8 — Newly created directory entries are not parent-synced
+
+Source: inline thread `PRRT_kwDOT7YN2s6aK4h1`, comment `PRRC_kwDOT7YN2s7i1VS0`, [review comment](https://github.com/bootids/skilload/pull/2#discussion_r3805631668) by `chatgpt-codex-connector`.
+
+Problem: After an initial configuration write, syncing the new configuration directory persists its file entries but does not persist that directory's own entry in every newly created parent.
+
+Disposition: fixed.
+
+Status: open.
+
+Resolution: `write_document` retains the configuration directories created during the mutation. After staging, syncing, renaming, and syncing `config_root`, it syncs every created directory's parent from innermost to outermost before reporting success.
+
+Evidence: The restrictive-umask integration regression exercises the first-write creation path; `failpoints_preserve_old_bytes_before_rename_and_sync_before_after_failure` still proves the post-sync hook is reached only after the replacement path. The focused core suite passed 19 tests and the locked workspace suite passed 34.
+
+GitHub outcome: pending reply; thread remains open.
+
+### R9 — Non-UTF-8 numeric input is labeled as a host path
+
+Source: inline thread `PRRT_kwDOT7YN2s6aK4h8`, comment `PRRC_kwDOT7YN2s7i1VS_`, [review comment](https://github.com/bootids/skilload/pull/2#discussion_r3805631679) by `chatgpt-codex-connector`.
+
+Problem: Invalid native bytes for the scalar `cache_limit_bytes` value become `ValidationDetails.path`, falsely claiming the scalar is a host filesystem path.
+
+Disposition: fixed.
+
+Status: open.
+
+Resolution: `validate_cache_limit_raw` now returns the established scalar constraint with `path: None` when raw native bytes are not UTF-8; executable path validation retains a `PathValue` diagnostic.
+
+Evidence: `scalar_and_schema_validation_remain_api_v1_representable` asserts the core error has no path, and `json_meta_and_invalid_native_path_errors_are_safe` asserts the real CLI emits a null JSON path for the same raw input. The locked workspace suite passed 34.
+
+GitHub outcome: pending reply; thread remains open.
+
+### R10 — Schema error can exceed API-v1 UInt
+
+Source: inline thread `PRRT_kwDOT7YN2s6aK4iB`, comment `PRRC_kwDOT7YN2s7i1VTG`, [review comment](https://github.com/bootids/skilload/pull/2#discussion_r3805631686) by `chatgpt-codex-connector`.
+
+Problem: A TOML schema version above 9,007,199,254,740,991 can reach `SchemaDetails.found_version`, although API-v1 defines that JSON field as `UInt` with that maximum.
+
+Disposition: fixed.
+
+Status: open.
+
+Resolution: `ConfigDocument::from_toml` now rejects a nonnegative TOML schema version above `9_007_199_254_740_991` as `invalid_version` before constructing a schema-version error.
+
+Evidence: `scalar_and_schema_validation_remain_api_v1_representable` covers the domain bound; `out_of_range_schema_versions_keep_json_details_within_api_v1` asserts the real CLI returns `invalid_state` without a `found_version` field and leaves the document unchanged. The locked workspace suite passed 34.
+
+GitHub outcome: pending reply; thread remains open.
+
+### R11 — No-op mutations are not lock-revalidated
+
+Source: inline thread `PRRT_kwDOT7YN2s6aK4iH`, comment `PRRC_kwDOT7YN2s7i1VTM`, [review comment](https://github.com/bootids/skilload/pull/2#discussion_r3805631692) by `chatgpt-codex-connector`.
+
+Problem: The review asks an optimistic no-op setter to acquire a lock and revalidate after observing that its requested state already matches.
+
+Disposition: no-fix.
+
+Status: open.
+
+Resolution: Retain the current load-linearized no-op. `Application::mutate` returns `unchanged` only after a successful read of the requested state, so an overlapping writer can be ordered after that read. A second read or lock cannot guarantee the state remains unchanged until process return because another writer may commit immediately after it; it would only create state and contention for the lazy idempotent path.
+
+Evidence: `SKL-CLI-007` requires a mutation whose desired state is already satisfied to return `unchanged` without rewriting state. The existing Decision Log records bounded locking for actual writes and optimistic no-op reads; `Application::mutate` uses `ConfigurationStore::replace` only when the desired document differs from the observed document. `repeated_mutations_preserve_file_identity_and_final_unset_keeps_schema_document` verifies that unchanged setters preserve file identity; the locked workspace suite passed 34. No implementation change is warranted.
+
+GitHub outcome: pending reply; thread remains open.
 
 ## Context and Orientation
 

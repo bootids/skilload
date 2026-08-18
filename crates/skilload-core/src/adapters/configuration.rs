@@ -5,9 +5,9 @@ use crate::ports::configuration::{
     ConfigBaseline, ConfigSource, ConfigurationStore, Environment, LoadedConfig, ResolvedRoots,
     StateRootResolver, StoreOutcome,
 };
-use std::fs::{self, DirBuilder, File, OpenOptions};
+use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
-use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
@@ -171,7 +171,7 @@ impl FileConfigurationStore {
         desired: &ConfigDocument,
     ) -> Result<(), AppError> {
         let config_root = &roots.config.effective;
-        ensure_restrictive_directory(config_root, "XDG_CONFIG_HOME")?;
+        let created_directories = ensure_restrictive_directory(config_root, "XDG_CONFIG_HOME")?;
         self.root_resolver.revalidate(roots)?;
         let path = config_path(roots);
         ensure_regular_destination(&path)?;
@@ -228,6 +228,7 @@ impl FileConfigurationStore {
                     error,
                 )
             })?;
+        sync_created_directory_entries(&created_directories, "XDG_CONFIG_HOME")?;
         self.write_hooks.after_rename_and_sync()?;
         Ok(())
     }
@@ -297,21 +298,76 @@ fn config_path(roots: &ResolvedRoots) -> PathBuf {
     roots.config.effective.join("config.toml")
 }
 
-fn ensure_restrictive_directory(path: &Path, variable: &str) -> Result<(), AppError> {
-    let metadata = match fs::symlink_metadata(path) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            let mut builder = DirBuilder::new();
-            builder.recursive(true).mode(0o700);
-            builder.create(path).map_err(|error| {
-                environment_io(variable, path, "create restrictive directory", error)
-            })?;
-            fs::symlink_metadata(path).map_err(|error| {
-                environment_io(variable, path, "inspect created directory", error)
-            })?
+fn ensure_restrictive_directory(path: &Path, variable: &str) -> Result<Vec<PathBuf>, AppError> {
+    let mut missing_directories = Vec::new();
+    let mut ancestor = path;
+    loop {
+        match fs::symlink_metadata(ancestor) {
+            Ok(metadata) => {
+                ensure_real_directory(ancestor, &metadata, variable)?;
+                break;
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                missing_directories.push(ancestor.to_path_buf());
+                ancestor = ancestor.parent().ok_or_else(|| {
+                    AppError::invalid_environment(
+                        variable,
+                        Some(NativePath::new(path.to_path_buf())),
+                        "directory has no existing ancestor",
+                    )
+                })?;
+            }
+            Err(error) => {
+                return Err(environment_io(
+                    variable,
+                    ancestor,
+                    "inspect directory",
+                    error,
+                ));
+            }
         }
-        Err(error) => return Err(environment_io(variable, path, "inspect directory", error)),
-    };
+    }
+
+    let mut created_directories = Vec::new();
+    for directory in missing_directories.into_iter().rev() {
+        match fs::create_dir(&directory) {
+            Ok(()) => {
+                let metadata = fs::symlink_metadata(&directory).map_err(|error| {
+                    environment_io(variable, &directory, "inspect created directory", error)
+                })?;
+                ensure_real_directory(&directory, &metadata, variable)?;
+                restrict_directory_permissions(&directory, variable)?;
+                created_directories.push(directory);
+            }
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                let metadata = fs::symlink_metadata(&directory).map_err(|error| {
+                    environment_io(variable, &directory, "inspect raced directory", error)
+                })?;
+                ensure_real_directory(&directory, &metadata, variable)?;
+            }
+            Err(error) => {
+                return Err(environment_io(
+                    variable,
+                    &directory,
+                    "create restrictive directory",
+                    error,
+                ));
+            }
+        }
+    }
+
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|error| environment_io(variable, path, "inspect directory", error))?;
+    ensure_real_directory(path, &metadata, variable)?;
+    restrict_directory_permissions(path, variable)?;
+    Ok(created_directories)
+}
+
+fn ensure_real_directory(
+    path: &Path,
+    metadata: &fs::Metadata,
+    variable: &str,
+) -> Result<(), AppError> {
     if metadata.file_type().is_symlink() || !metadata.file_type().is_dir() {
         return Err(AppError::invalid_environment(
             variable,
@@ -319,8 +375,38 @@ fn ensure_restrictive_directory(path: &Path, variable: &str) -> Result<(), AppEr
             "expected a real directory",
         ));
     }
+    Ok(())
+}
+
+fn restrict_directory_permissions(path: &Path, variable: &str) -> Result<(), AppError> {
     fs::set_permissions(path, fs::Permissions::from_mode(0o700))
         .map_err(|error| environment_io(variable, path, "restrict directory permissions", error))
+}
+
+fn sync_created_directory_entries(
+    created_directories: &[PathBuf],
+    variable: &str,
+) -> Result<(), AppError> {
+    for directory in created_directories.iter().rev() {
+        let parent = directory.parent().ok_or_else(|| {
+            AppError::invalid_environment(
+                variable,
+                Some(NativePath::new(directory.clone())),
+                "new directory has no parent",
+            )
+        })?;
+        File::open(parent)
+            .and_then(|parent| parent.sync_all())
+            .map_err(|error| {
+                environment_io(
+                    variable,
+                    parent,
+                    "sync newly created directory entry",
+                    error,
+                )
+            })?;
+    }
+    Ok(())
 }
 
 fn ensure_regular_destination(path: &Path) -> Result<(), AppError> {

@@ -6,6 +6,7 @@ use std::path::{Component, Path, PathBuf};
 pub const CONFIG_SCHEMA_VERSION: u16 = 1;
 pub const DEFAULT_CACHE_LIMIT_BYTES: u64 = 536_870_912;
 pub const MAX_CACHE_LIMIT_BYTES: u64 = i64::MAX as u64;
+const MAX_API_V1_UINT: u64 = 9_007_199_254_740_991;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct NativePath(PathBuf);
@@ -132,6 +133,14 @@ impl ConfigDocument {
         let found_version = u64::try_from(raw.version).map_err(|_| {
             AppError::invalid_state("configuration", "invalid_version", ["version = 1"])
         })?;
+        if found_version > MAX_API_V1_UINT {
+            return Err(AppError::invalid_state(
+                "configuration",
+                "invalid_version",
+                ["version = 1 with an API-v1 UInt schema version"],
+            ));
+        }
+
         match found_version.cmp(&u64::from(CONFIG_SCHEMA_VERSION)) {
             std::cmp::Ordering::Less => {
                 return Err(AppError::MigrationRequired {
@@ -279,12 +288,9 @@ fn executable_entry(key: ConfigKey, value: Option<NativePath>) -> ConfigEntry {
 }
 
 fn validate_cache_limit_raw(raw_value: OsString) -> Result<u64, AppError> {
-    let value = raw_value.into_string().map_err(|invalid| {
-        AppError::validation(
-            "cache_limit_bytes_must_be_ascii_decimal",
-            Some(NativePath::new(PathBuf::from(invalid))),
-        )
-    })?;
+    let value = raw_value
+        .into_string()
+        .map_err(|_| AppError::validation("cache_limit_bytes_must_be_ascii_decimal", None))?;
     if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
         return Err(AppError::validation(
             "cache_limit_bytes_must_be_ascii_decimal",
@@ -415,6 +421,18 @@ mod tests {
         for value in ["0", "-1", "+1", " 1", "9223372036854775808"] {
             assert!(validate_cache_limit_raw(value.into()).is_err(), "{value}");
         }
+    }
+
+    #[test]
+    fn scalar_and_schema_validation_remain_api_v1_representable() {
+        assert!(matches!(
+            validate_cache_limit_raw(OsString::from_vec(vec![0xff])),
+            Err(AppError::Validation { path: None, .. })
+        ));
+        assert!(matches!(
+            ConfigDocument::from_toml("version = 9007199254740993\n"),
+            Err(AppError::InvalidState { state, .. }) if state == "invalid_version"
+        ));
     }
 
     #[test]

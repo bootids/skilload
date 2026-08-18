@@ -5,7 +5,7 @@ use std::fs;
 use std::os::unix::ffi::OsStringExt;
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
-use std::process::Output;
+use std::process::{Command as ProcessCommand, Output};
 use std::sync::Arc;
 use std::thread;
 use tempfile::tempdir;
@@ -25,6 +25,23 @@ fn command(root: &Path) -> Command {
 fn execute(root: &Path, arguments: &[&str]) -> Output {
     let mut command = command(root);
     command.args(arguments).output().unwrap()
+}
+
+fn execute_with_restrictive_umask(root: &Path, arguments: &[&str]) -> Output {
+    let mut command = ProcessCommand::new("/bin/sh");
+    command
+        .arg("-c")
+        .arg("umask 0177; exec \"$@\"")
+        .arg("skilload")
+        .arg(env!("CARGO_BIN_EXE_skilload"))
+        .args(arguments)
+        .env_clear()
+        .env("HOME", root.join("home"))
+        .env("XDG_CONFIG_HOME", root.join("config"))
+        .env("XDG_DATA_HOME", root.join("data"))
+        .env("XDG_STATE_HOME", root.join("state"))
+        .env("XDG_CACHE_HOME", root.join("cache"));
+    command.output().unwrap()
 }
 
 fn json(output: &Output) -> Value {
@@ -134,6 +151,41 @@ fn configuration_round_trips_in_json_and_human_modes_without_other_roots() {
 }
 
 #[test]
+fn first_mutation_creates_nested_xdg_roots_under_restrictive_umask() {
+    let temporary = tempdir().unwrap();
+    let output = execute_with_restrictive_umask(
+        temporary.path(),
+        &["config", "set", "cache_limit_bytes", "1", "--json"],
+    );
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(config_file(temporary.path())).unwrap(),
+        "version = 1\ncache_limit_bytes = 1\n"
+    );
+    for directory in [
+        "config",
+        "config/skilload",
+        "state",
+        "state/skilload",
+        "state/skilload/locks",
+    ] {
+        assert_eq!(
+            fs::metadata(temporary.path().join(directory))
+                .unwrap()
+                .mode()
+                & 0o777,
+            0o700,
+            "{directory}"
+        );
+    }
+}
+
+#[test]
 fn repeated_mutations_preserve_file_identity_and_final_unset_keeps_schema_document() {
     let temporary = tempdir().unwrap();
     fs::create_dir(temporary.path().join("home")).unwrap();
@@ -214,6 +266,27 @@ fn invalid_input_schema_and_unknown_commands_never_rewrite_or_create_state() {
 }
 
 #[test]
+fn out_of_range_schema_versions_keep_json_details_within_api_v1() {
+    let temporary = tempdir().unwrap();
+    fs::create_dir(temporary.path().join("home")).unwrap();
+    let config_root = temporary.path().join("config/skilload");
+    fs::create_dir_all(&config_root).unwrap();
+    let config = config_file(temporary.path());
+    let original = b"version = 9007199254740993\n";
+    fs::write(&config, original).unwrap();
+
+    let output = execute(temporary.path(), &["config", "list", "--json"]);
+
+    assert_eq!(output.status.code(), Some(4));
+    let document: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(document["error"]["code"], "invalid_state");
+    assert_eq!(document["error"]["details"]["domain"], "configuration");
+    assert_eq!(document["error"]["details"]["state"], "invalid_version");
+    assert!(document["error"]["details"].get("found_version").is_none());
+    assert_eq!(fs::read(&config).unwrap(), original);
+}
+
+#[test]
 fn json_meta_and_invalid_native_path_errors_are_safe() {
     let temporary = tempdir().unwrap();
     fs::create_dir(temporary.path().join("home")).unwrap();
@@ -229,19 +302,31 @@ fn json_meta_and_invalid_native_path_errors_are_safe() {
         String::from_utf8_lossy(&no_operation.stderr).contains("requires a configuration command")
     );
 
-    let mut command = command(temporary.path());
-    command
+    let mut path_command = command(temporary.path());
+    path_command
         .arg("config")
         .arg("set")
         .arg("agents.codex.executable")
         .arg(OsString::from_vec(vec![b'/', 0xff]))
         .arg("--json");
-    let output = command.output().unwrap();
+    let output = path_command.output().unwrap();
     assert_eq!(output.status.code(), Some(4));
     let document: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(document["error"]["code"], "validation_failed");
     assert_eq!(document["error"]["details"]["path"]["bytes_base64"], "L/8=");
     assert!(!config_file(temporary.path()).exists());
+    let mut numeric_command = command(temporary.path());
+    numeric_command
+        .arg("config")
+        .arg("set")
+        .arg("cache_limit_bytes")
+        .arg(OsString::from_vec(vec![0xff]))
+        .arg("--json");
+    let numeric_output = numeric_command.output().unwrap();
+    assert_eq!(numeric_output.status.code(), Some(4));
+    let numeric_document: Value = serde_json::from_slice(&numeric_output.stdout).unwrap();
+    assert_eq!(numeric_document["error"]["code"], "validation_failed");
+    assert!(numeric_document["error"]["details"]["path"].is_null());
 }
 
 #[test]
