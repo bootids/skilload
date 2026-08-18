@@ -114,9 +114,9 @@ A **global deployment** makes a selected external Library Skill visible in every
 
 ## SKL-MGR-006 - Agent-visible PATH requirement (Revision 1)
 
-**Behavior.** Manager installation MUST verify that the selected Agent can resolve both its own executable and `skilload` through the applicable PATH. The manager asset MUST invoke `skilload` by command name and MUST NOT embed the install-time absolute binary path.
+**Behavior.** Manager installation MUST verify that the selected Agent can resolve both its own executable and `skilload` through the trusted absolute-directory rules in `SKL-WSP-022`. The manager asset MUST name `skilload` rather than embed the install-time absolute binary path, and its instructions MUST require runtime resolution through the same rule before invoking the resulting absolute executable path. Empty, relative, current-workspace, enclosing-worktree, and external-cache PATH candidates MUST never satisfy install preflight or manager invocation.
 
-**Acceptance.** A PATH without skilload causes preflight failure and no target changes. Moving/upgrading the binary while preserving PATH resolution does not require rewriting the manager asset.
+**Acceptance.** A PATH without a safe `skilload` causes preflight failure and no target changes. A fake workspace `skilload` reachable through `PATH=.` is neither accepted during install nor invoked by the manager instructions. Moving/upgrading the real binary while preserving safe PATH resolution does not require rewriting the manager asset.
 
 ## SKL-MGR-007 - On-demand JSON management (Revision 1)
 

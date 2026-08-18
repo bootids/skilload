@@ -17,8 +17,8 @@ The pipeline is:
 
 1. Parse supported input and reject non-`github.com` hosts or ambiguous URL shapes.
 2. Query GitHub repository metadata to obtain canonical current `owner/repo`, numeric repository ID, optional node ID, visibility, and default branch.
-3. Normalize an omitted ref to the explicit default-branch name.
-4. Resolve the requested branch/tag/SHA to a full commit SHA without mutating state.
+3. Normalize an omitted ref to `refs/heads/<default-branch>`; otherwise resolve input into a structured `Branch`, `Tag`, or `Commit` intent without dropping its namespace.
+4. Resolve only that intent to a full commit SHA without mutating state. Reject a short name that matches both a branch and tag with both fully qualified candidates.
 5. Retrieve the exact commit's Git objects into a temporary, bare staging repository.
 6. Inspect the Git tree to find/validate candidates and extract one complete Skill directory without checking out repository-controlled content.
 7. Parse required `SKILL.md` frontmatter, validate every entry, compute canonical integrity, measure limits, and build a preview.
@@ -35,15 +35,15 @@ Parse URLs structurally rather than with ad hoc replacement. Supported examples 
     git@github.com:openai/skills.git
     https://github.com/openai/skills/tree/main/skills/example
 
-The first three omit Skill path and ref; metadata supplies the explicit default ref and candidate discovery supplies a selected path. A tree URL contributes its candidate directory. A blob URL is accepted only when the resolved blob basename is exactly `SKILL.md`, and contributes its parent directory. Parse either form only after verifying the URL belongs to the repository and separating ref from path through GitHub resolution, because both can contain slashes.
+The first three omit Skill path and ref; metadata supplies `refs/heads/<default-branch>` and candidate discovery supplies a selected path. A tree URL contributes its candidate directory. A blob URL is accepted only when the resolved blob basename is exactly `SKILL.md`, and contributes its parent directory. Parse either form only after verifying the URL belongs to the repository and separating ref from path through GitHub resolution, because both can contain slashes. Enumerate valid leading URL components against `refs/heads/`, `refs/tags/`, and a full SHA; accept only one `(ref intent, path)` tuple. If a short name exists in both mutable namespaces, or slash-bearing refs produce more than one valid tuple, return `ambiguous_ref`/`ambiguous_source_url` with fully qualified candidates and require an explicit `--ref refs/heads/...`, `--ref refs/tags/...`, or canonical source rather than choosing GitHub/Git precedence.
 
 The canonical textual form is:
 
     github:<lowercase-owner>/<lowercase-repo>#<encoded-path>@<encoded-ref>
 
-GitHub owner/repository matching is case-insensitive; preserve current display spelling separately. Normalize path separators to `/`, remove `.` segments, reject `..`, absolute paths, NUL/control bytes, empty selected paths except repository root, and `.git`. Do not Unicode-normalize Git path spelling. After structural normalization, percent-encode each path segment and the explicit ref from their UTF-8 bytes: leave only RFC 3986 unreserved ASCII bytes literal, retain `/` as the path/ref separator, and encode every other byte with uppercase `%HH`. This includes literal `%`, `#`, `@`, and all non-ASCII bytes, so the serialized form has exactly one literal `#` and one literal `@`. Decode input URL escapes once, validate, and re-encode; never treat an already encoded canonical value as raw text and decode it twice. A full commit SHA is lowercase hexadecimal. Branch/tag text remains exact after validation and is always passed to Git/GitHub as data, never shell syntax.
+GitHub owner/repository matching is case-insensitive; preserve current display spelling separately. Normalize path separators to `/`, remove `.` segments, reject `..`, absolute paths, NUL/control bytes, empty selected paths except repository root, and `.git`. Do not Unicode-normalize Git path spelling. Represent ref intent as `Branch(name)`, `Tag(name)`, or `Commit(sha)`. Serialize the first two with their complete `refs/heads/` or `refs/tags/` prefix and the last as lowercase 40-hex. After structural normalization, percent-encode each path segment and complete serialized ref from their UTF-8 bytes: leave only RFC 3986 unreserved ASCII bytes literal, retain `/` as the path/ref separator, and encode every other byte with uppercase `%HH`. This includes literal `%`, `#`, `@`, and all non-ASCII bytes, so the serialized form has exactly one literal `#` and one literal `@`. Decode input URL escapes once, validate, and re-encode; never treat an already encoded canonical value as raw text and decode it twice. Branch/tag text remains exact after validation and is always passed to Git/GitHub as data, never shell syntax.
 
-Use a structured `SourceIdentity { owner, repository, path, git_ref }` domain value as the database, Trust, workspace, and export key; parse or render the textual form only at serialization boundaries. Golden tests include path `skills/foo@bar` with ref `main` and path `skills/foo` with ref `bar@main` and require distinct text, keys, Trust records, and import round trips.
+Use a structured `SourceIdentity { owner, repository, path, ref_intent: RefIntent }` domain value as the database, Trust, workspace, and export key; parse or render the textual form only at serialization boundaries. Golden tests include path `skills/foo@bar` with branch `main`, path `skills/foo` with branch `bar@main`, and same-name `refs/heads/release`/`refs/tags/release`; they require distinct text, keys, Trust records, fetch refspecs, update targets, and import round trips even when two intents resolve to one commit.
 
 ## Repository Metadata and Credentials
 
@@ -57,18 +57,18 @@ Record the API-returned numeric repository ID as `RepositoryId(u64)`. Store node
 
 ## Safe Git Object Retrieval
 
-Use system `git` because it is an explicit runtime dependency, but avoid a normal working-tree checkout. For each acquisition:
+Use system `git` because it is an explicit runtime dependency, but resolve it before any probe through the shared external-executable adapter from the Agent design: skip empty/relative PATH entries, reject candidate/symlink targets in the current project/worktree or skilload source/cache roots, require a regular executable, and retain its canonical identity for revalidation. Resolve optional `gh` by the same rule. Avoid a normal working-tree checkout. For each acquisition:
 
 1. Create a new private temporary directory and bare repository.
-2. Invoke Git directly as an argv array, never through a shell.
+2. Revalidate the selected Git file identity and invoke its canonical absolute path directly as an argv array, never through a shell.
 3. Construct the GitHub remote URL from validated owner/repository, not arbitrary transport input.
 4. Set `GIT_TERMINAL_PROMPT=0`, a dedicated empty hooks directory, restricted protocols, no optional locks outside the staging repo, and fixed config that prevents user/repository filters from materializing content.
-5. Fetch only the required ref/commit and objects with no tags and bounded depth/bytes/time. If an older pinned commit cannot be obtained shallowly, perform a bounded targeted fetch without executing checkout.
+5. Fetch only the exact stored fully qualified ref or commit and required objects, with no implicit tags and bounded depth/bytes/time. If an older pinned commit cannot be obtained shallowly, perform a bounded targeted fetch without executing checkout.
 6. Use `git rev-parse`, `git ls-tree -rz`, and `git cat-file --batch` with fixed arguments to read object metadata and blob bytes.
 
 No checkout means `.gitattributes` smudge/clean filters and Git LFS do not execute. Tree mode `160000` identifies a submodule and is rejected. Mode `120000` identifies a symlink whose blob bytes are its target. Regular modes provide the executable bit. Tree and blob size accounting occurs before materialization.
 
-Git command failures are captured as redacted structured diagnostics. Never pass a token in a command-line URL. HTTPS Git may use existing credential helpers; SSH may use the user's existing key for content only after API identity is independently known. Both attempts set terminal prompting off and remain bounded.
+Git command failures are captured as redacted structured diagnostics. Never pass a token in a command-line URL. HTTPS Git may use existing credential helpers; SSH may use the user's existing key for content only after API identity is independently known. Both attempts set terminal prompting off and remain bounded. Resolver tests place fake `git` and `gh` files in `.`, an empty PATH component, an absolute worktree directory, and an outside symlink back into the worktree and prove that none is executed.
 
 ## Candidate Discovery and Frontmatter
 

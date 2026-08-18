@@ -37,6 +37,8 @@ No aliases are registered. With no subcommand, the parser renders top-level help
 
 Each leaf converts validated syntax into one application request with a stable dotted operation identifier such as `library.add`, `workspace.sync`, or `manager.status`. The CLI does not sequence lower-level repository calls itself.
 
+The version-1 configuration key registry is exactly `cache_limit_bytes`, `agents.claude.executable`, and `agents.codex.executable`. The two Agent setters consume one absolute path argument and unset restores basename lookup rather than storing a default string. Source-bearing operations accept a fully qualified `--ref refs/heads/...`, `--ref refs/tags/...`, or full SHA when URL/shorthand input needs disambiguation. `workspace sync` alone accepts `--rebind-from <OLD-WORKSPACE>` and still requires explicit Agents including every Agent recorded by the old local manifest. These are options on existing leaves, not additional commands or aliases.
+
 ## Common Arguments
 
 Common presentation arguments are accepted at a documented consistent position:
@@ -82,7 +84,16 @@ Version-1 error/confirmation shape:
       }
     }
 
-`result.outcome` is one of `changed`, `unchanged`, `already_exists`, or `already_immutable` where appropriate. Domain data uses explicit typed fields, injectively percent-encoded canonical source strings from `SKL-SRC-002`, lowercase full commit SHA, `sha256:` integrity, opaque profile IDs, and paths encoded as display-safe strings plus a lossless representation when required. Although `RepositoryId` is a `u64` internally, portable JSON/YAML serializes it as a decimal string to avoid IEEE-754 precision loss in common consumers. Lists have documented stable ordering.
+`result.outcome` is one of `changed`, `unchanged`, `already_exists`, or `already_immutable` where appropriate. Domain data uses explicit typed fields, injectively percent-encoded canonical source strings from `SKL-SRC-002` with `refs/heads/`, `refs/tags/`, or lowercase full commit SHA intent, `sha256:` integrity, opaque profile/workspace-instance IDs, and the required path shape below. Although `RepositoryId` is a `u64` internally, portable JSON/YAML serializes it as a decimal string to avoid IEEE-754 precision loss in common consumers. Lists have documented stable ordering.
+
+Every field with domain type `NativePath` serializes as the same object in success, preview, confirmation, status, and error details:
+
+    {
+      "display": "/tmp/\\xFF",
+      "bytes_base64": "L3RtcC//"
+    }
+
+`display` is the inner content produced by the human field encoder, with no surrounding quote characters. `bytes_base64` uses RFC 4648's standard `A-Z a-z 0-9 + /` alphabet, required `=` padding, and no whitespace over exact operating-system path bytes. Always use this object, including for valid UTF-8 paths, so a field never changes JSON type; for example `/tmp/foo` becomes `{ "display": "/tmp/foo", "bytes_base64": "L3RtcC9mb28=" }`. Workspace roots, Agent roots, link/cache targets, executable paths, configuration locations, profile paths, journal paths, and path-bearing diagnostics are `NativePath`. Git Skill paths and refs are separately validated source-domain UTF-8 strings and remain strings. Do not use native paths as object keys. The decoder treats `bytes_base64` as authoritative and may use `display` only for safe presentation; mismatching display is an invalid payload in any future API input that accepts this type.
 
 A preview or result for an operation that can promote external content includes `cache_quota.configured_limit_bytes`, `cache_quota.effective_limit_bytes`, `cache_quota.projected_bytes`, and `cache_quota.override_applied`. A detached uninstall result includes the affected profile/source/path, `link_removed: false`, and `orphan_recorded: true`; list/status represent the orphan separately from active target associations.
 
@@ -98,8 +109,8 @@ Define stable string error codes in `skilload-core`; rendering never derives the
 * `not_found`, `already_immutable` (success), and invalid state;
 * `confirmation_required`, invalid/expired/stale confirmation;
 * `trust_required`, authentication, permission, or source unavailable;
-* duplicate/reserved/exact/semantic conflict and `agent_disabled`;
-* `busy`, stale baseline, inaccessible profile/workspace;
+* `ambiguous_ref`, `ambiguous_source_url`, duplicate/reserved/exact/semantic conflict, and `agent_disabled`;
+* `unsafe_executable_path`, `executable_not_found`, `relocation_required`, `duplicate_workspace_instance`, `busy`, stale baseline, and inaccessible profile/workspace;
 * validation, limit, integrity, cache corruption, and unsupported entry;
 * schema newer/migration required/database corrupt;
 * recovery blocked and internal invariant failure.
@@ -117,7 +128,7 @@ Human errors use the same code internally, an English message, relevant paths/so
 
 ## Command/Query Network Policy
 
-Application request types declare one of `Offline`, `MayResolve`, or `RequiresResolve`. The production network/Git port refuses access for an `Offline` request even if a handler accidentally calls it. Offline includes help/version, Library reads and metadata-only changes, Trust reads/revoke, workspace list/status/delete/remove where no restoration occurs, global list/status/uninstall, manager operations, cache info/prune/clear, config, and doctor/fix. Cleanup remains possible without source access.
+Application request types declare one of `Offline`, `MayResolve`, or `RequiresResolve`. The production network/Git port refuses access for an `Offline` request even if a handler accidentally calls it. Offline includes help/version, Library reads and metadata-only changes, Trust reads/revoke, workspace list/status/delete/remove and a cache-complete relocation rebind where no restoration occurs, global list/status/uninstall, manager operations, cache info/prune/clear, config, and doctor/fix. Cleanup remains possible without source access.
 
 Network-capable requests are explicit source add/Trust add, Library refresh, source or workspace source migration, workspace lock/update/pin and a sync with a cache miss, global install/update/pin and a sync with a cache miss. Migration resolution may only prove that fresh metadata for the proposed name matches the repository ID stored with the old source; it cannot change path or ref under the migration operation. The application result records whether network and which credential class were used, without returning secret material.
 
@@ -127,7 +138,7 @@ Human output is English and optimized for terminal scanning rather than mirrorin
 
 Treat every repository-controlled, path/filesystem-derived, environment-derived, and user-supplied value as untrusted terminal data. A shared renderer wraps each such field in ASCII double quotes, represents quote as backslash-double-quote and backslash as two backslashes, uses `\n`, `\r`, and `\t`, renders every other C0/DEL/C1 code point, U+2028/U+2029, and the bidirectional-format set U+061C, U+200E-U+200F, U+202A-U+202E, and U+2066-U+2069 as `\u{XXXX}` with uppercase hexadecimal zero-padded to four through six digits, and renders invalid UTF-8 bytes as `\xHH` with two uppercase digits. The encoding is injective because literal backslashes are escaped. No data field may contain raw ESC, BEL, carriage return, cursor movement, OSC hyperlink, or bidi-format control. Renderer-owned layout is the only source of newlines; renderer-owned ANSI styling is the only source of terminal escapes and is absent for `--no-color` or non-TTY output. Apply the encoder before width calculation so truncation never splits an escape, and prefer wrapping over dropping identifying bytes.
 
-JSON uses a standards-compliant serializer over the original domain value, not the human-display string. JSON escapes its required control characters; a non-UTF-8 path uses the documented display-plus-lossless representation. Debug and error rendering use the same terminal-safe field encoder, so a validation failure cannot reintroduce hostile bytes outside a preview.
+JSON uses a standards-compliant serializer over original valid string domain values, not their human-display form. JSON escapes its required string control characters. Every native path, whether valid UTF-8 or not, uses the `PathValue` object above; its display member uses the same encoder without outer quotes and its base64 member preserves exact bytes. Debug and error rendering use the terminal-safe field encoder, so a validation failure cannot reintroduce hostile bytes outside a preview.
 
 Do not write persistent logs by default. `--debug` (or a documented environment equivalent) writes redacted diagnostics to stderr. An explicit debug-log destination, if P1 adds it, belongs under XDG state and must be opt-in.
 
@@ -137,11 +148,12 @@ Default tests are offline and deterministic:
 
 * unit tests for domain validation, source normalization, integrity encoding, conflict policy, command schema, JSON rendering, and exit mapping;
 * repository/adapter contract tests against fakes and SQLite/filesystem implementations;
-* temporary bare Git repositories with branches, tags, SHA pins, submodules, LFS pointers, symlinks, executable bits, hostile names, and deleted/unavailable commits;
+* temporary bare Git repositories with same-name/different-commit branches and tags, ambiguous slash-bearing refs/URL paths, SHA pins, submodules, LFS pointers, symlinks, executable bits, hostile names, and deleted/unavailable commits;
 * local HTTP fixtures for GitHub metadata, redirects, auth/rate errors, default branches, repository ID changes, and candidate trees;
-* isolated HOME/XDG/Claude/Codex roots and fake Agent executables/configuration;
+* isolated HOME/XDG/Claude/Codex roots and fake Agent/Git/gh/skilload executables/configuration, including empty/relative/project/cache PATH entries, outside symlinks back into a worktree, and execution-marker assertions;
 * transaction failpoint tests at every journal/filesystem/database phase;
-* golden JSON/help/human snapshots with secret-redaction assertions and hostile ANSI/OSC/CR/bidirectional/invalid-byte fields in previews, errors, lists, and diagnostics;
+* workspace relocation fixtures for proved rebind, duplicate/copy refusal, old-path accessibility, complete Agent selection, link/exclude transfer, and crash recovery;
+* golden JSON/help/human snapshots with secret-redaction assertions and hostile ANSI/OSC/CR/bidirectional/invalid-byte fields in previews, errors, lists, and diagnostics, plus `PathValue` round trips for valid UTF-8, invalid bytes, padding boundaries, and every path-bearing field;
 * cache-quota fixtures for the 536,870,912-byte default, persistent set/unset, accepted and rejected per-invocation overrides, complete-batch accounting, confirmation drift, and non-persistence;
 * profile fixtures proving that auxiliary Codex observations do not split one `(Agent, global root)` identity, plus inaccessible detach/orphan/cleanup fixtures that never claim an unobserved link deletion;
 * post-deployment cache-modification fixtures proving the direct-read limitation, read-only detection, and quarantine/refetch behavior on the next mutating use;

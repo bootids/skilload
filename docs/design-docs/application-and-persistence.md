@@ -45,7 +45,7 @@ Representative application interfaces should have this shape (names may be refin
 
     pub struct Application { /* injected ports */ }
 
-Application output is structured domain data such as `Changed`, `Unchanged`, `ConfirmationRequired`, or a typed error. It never contains preformatted terminal lines.
+Application output is structured domain data such as `Changed`, `Unchanged`, `ConfirmationRequired`, or a typed error. It never contains preformatted terminal lines. Host paths remain a `NativePath` byte value through the application boundary; only the CLI adapter derives the terminal display and lossless `PathValue` JSON object required by `SKL-CLI-004`.
 
 ## XDG Layout
 
@@ -84,7 +84,7 @@ Use SQLite compiled into the binary with FTS5 enabled. The exact SQL is a P1 del
 
 * `schema_info`: current schema version and migration metadata.
 * `state_revision`: a monotonic semantic revision incremented by committed product-state mutations, not by confirmation-token bookkeeping or derived-index maintenance.
-* `library_entries`: canonical source key, repository ID, derived metadata, alias/category/note, and metadata revision.
+* `library_entries`: canonical source key with structured branch/tag/SHA ref intent, repository ID, derived metadata, alias/category/note, and metadata revision.
 * `library_tags`: many-to-one tags with the Unicode-15.1 NFC display spelling and unique full-case-folded comparison key required by `SKL-LIB-008`.
 * `library_fts`: derived FTS5 index over the fields required by `SKL-LIB-004`, including each tag's display spelling and comparison key.
 * `trust_records`: exact source, repository ID, state, approval evidence revision, and revocation state. No credential or Skill bytes.
@@ -93,13 +93,13 @@ Use SQLite compiled into the binary with FTS5 enabled. The exact SQL is a P1 del
 * `detached_global_targets`: non-active orphan warnings with the prior source, profile, exact path/link, pin, integrity, ownership evidence, and detach reason; these rows do not participate in update/pin or cache protection.
 * `profiles`: opaque profile ID whose unique identity is `(Agent, canonical global Skill root)`, plus replaceable executable, HOME, Agent-configuration, compatibility-root, and environment-fingerprint observations.
 * `manager_installs`: Agent/profile, embedded asset version/digest, target, marker, and observed ownership status.
-* `known_workspaces`: canonical workspace path, manifest location, and last committed lock digest.
+* `known_workspaces`: unique random `workspace_instance_id`, canonical workspace path, manifest/exclude location, last committed lock digest, and latest transaction evidence.
 * `workspace_targets`: unique `(canonical workspace, Agent, canonical project Skill root)` identity plus replaceable executable, HOME, Agent-configuration, compatibility-root, and environment-fingerprint observations.
 * `owned_links`: exact target, expected link target, owner domain and workspace-target/profile identity, source/pin, and transaction revision.
 * `confirmation_tokens`: token hash, canonical preview-plan digest, semantic state revision, optional workspace digest, expiry, and consumed state.
 * `committed_transactions`: transaction IDs that act as recovery anchors after SQLite commit.
 
-Use foreign keys and uniqueness constraints for exact source, alias, tag comparison key within one Library entry, the `(Agent, canonical global Skill root)` profile identity, the `(canonical workspace, Agent, canonical project Skill root)` workspace-target identity, active target ownership, and one pin per global source. Updating environment observations for an existing global profile or workspace target never allocates a second owner for the same filesystem target. FTS is derived: triggers or an explicit transaction-maintained index keep it synchronized, and doctor may rebuild it from base rows.
+Use foreign keys and uniqueness constraints for exact namespace-preserving source, alias, tag comparison key within one Library entry, one `workspace_instance_id`, the `(Agent, canonical global Skill root)` profile identity, the `(canonical workspace, Agent, canonical project Skill root)` workspace-target identity, active target ownership, and one pin per global source. Updating environment observations for an existing global profile or workspace target never allocates a second owner for the same filesystem target. A journaled workspace rebind changes all canonical-workspace foreign keys for one instance in one SQLite transaction only after the deployment adapter proves the old/new filesystem plan. FTS is derived: triggers or an explicit transaction-maintained index keep it synchronized, and doctor may rebuild it from base rows.
 
 SQLite transactions cover all database changes for one application mutation. Filesystem changes remain journaled separately; the database's committed transaction ID determines whether recovery rolls external work forward or back.
 
@@ -127,12 +127,12 @@ FTS-only corruption can be repaired by dropping/recreating derived index structu
     cache_limit_bytes = 536870912
 
     [agents.claude]
-    executable = "claude"
+    executable = "/opt/claude/bin/claude"
 
     [agents.codex]
-    executable = "codex"
+    executable = "/opt/codex/bin/codex"
 
-Agent executable overrides and `cache_limit_bytes` are permitted; credentials, Trust, desired deployments, and dynamic roots are not. The absent/unset cache value resolves to 536,870,912 bytes. `config set cache_limit_bytes <BYTES>` accepts a positive finite integer and `config unset cache_limit_bytes` returns to that default. Parsing uses a structured TOML decoder with unknown-field denial and validated types/ranges. Read commands operate on defaults when the file is absent. `config set` stages a complete canonical document and atomically renames it; it does not preserve comments.
+Beyond required `version`, only `cache_limit_bytes`, `agents.claude.executable`, and `agents.codex.executable` are permitted; credentials, Trust, desired deployments, dynamic roots, command lines, and arbitrary Agent tables are not. `version` maps only to read-only `schema_version` metadata, never a set/unset key. The absent/unset cache value resolves to 536,870,912 bytes. `config set cache_limit_bytes <BYTES>` accepts a positive finite integer and `config unset cache_limit_bytes` returns to that default. Each Agent executable setter accepts one nonempty valid-UTF-8 absolute path, performs CWD-independent lexical normalization without probing it, and stores it under the matching table; unset removes the key and restores no-override lookup of the fixed basename. Get/list return `{ configured: false, value: null, default_command: "claude"|"codex" }` for an absent Agent key and a native-path value plus `configured: true` when set; the CLI serializes that value as `PathValue`. Parsing uses a structured TOML decoder with unknown-field denial and validated types/ranges. Read commands operate on defaults when the file is absent. `config set` stages a complete canonical document and atomically renames it; it does not preserve comments.
 
 No automatic config migration exists in 0.1. An unsupported version is an error until a future product behavior and explicit migration command are approved.
 
@@ -165,7 +165,7 @@ Import first parses and validates the complete document into an `ImportPlan` con
 
 ## Testing Consequences
 
-Default tests use temporary XDG/HOME roots and an in-memory or temporary-file SQLite database compiled with the same FTS5 features as production. Repository contract tests run against both an in-memory fake and SQLite adapter. Tag fixtures cover whitespace trimming, NFC composition, full default case folding, Turkish locale independence, control/size rejection, first-spelling retention, import/export ordering, removal by equivalent spelling, and FTS matches through both display and comparison forms. Path tests cover unset, empty, relative, and absolute values for every XDG variable; prove that relative values fall back identically from different current directories; prove invalid fallback `HOME` fails before filesystem access; and reject equal, nested, or symlink-aliased effective application roots. Other tests prove that query construction creates no path, migration backups survive injected failure, FTS rebuild preserves base rows, unknown schema blocks writes, and concurrent mutations return deterministic commit/busy results.
+Default tests use temporary XDG/HOME roots and an in-memory or temporary-file SQLite database compiled with the same FTS5 features as production. Repository contract tests run against both an in-memory fake and SQLite adapter. Tag fixtures cover whitespace trimming, NFC composition, full default case folding, Turkish locale independence, control/size rejection, first-spelling retention, import/export ordering, removal by equivalent spelling, and FTS matches through both display and comparison forms. Path tests cover unset, empty, relative, and absolute values for every XDG variable; prove that relative values fall back identically from different current directories; prove invalid fallback `HOME` fails before filesystem access; and reject equal, nested, or symlink-aliased effective application roots. Configuration fixtures cover all three exact keys, unknown keys/tables, positive cache integers, absolute/relative/empty/non-UTF-8 Agent paths, unset defaults, idempotence, and `PathValue` projection. Persistence fixtures keep branch/tag same-name source keys distinct and move every workspace foreign key atomically during a proved instance rebind. Other tests prove that query construction creates no path, migration backups survive injected failure, FTS rebuild preserves base rows, unknown schema blocks writes, and concurrent mutations return deterministic commit/busy results.
 
 ## Decisions Deferred to P1
 

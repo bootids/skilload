@@ -7,6 +7,7 @@ Status: planned design for the 0.1 CLI MVP. It supports `SKL-WSP-015` through `S
 * Agent selection, native project paths, link naming, conflict/disable checks, environment identity, visibility, and ownership inspection implement `SKL-WSP-015` through `SKL-WSP-025`.
 * Profile identity, shared-pin targets, accessibility, ownership, conflicts, and observed global status implement `SKL-GLB-002` and `SKL-GLB-004` through `SKL-GLB-013`.
 * Embedded variants, copied installation, upgrades, PATH validation, on-demand JSON use, reserved naming, and test boundaries implement `SKL-MGR-001` through `SKL-MGR-009`.
+* Exact Agent executable configuration and trusted external-process discovery implement `SKL-OPS-006`, `SKL-SRC-016`, and `SKL-WSP-022` and support the inert-data boundary in `SKL-OPS-010`.
 * The adapter's refusal to overwrite or broaden permissions supports `SKL-OPS-009` and `SKL-OPS-010`.
 
 ## Adapter Contract
@@ -23,7 +24,7 @@ Agent-specific filesystem and configuration knowledge belongs behind an `AgentAd
 
 The adapter resolves roots and reports facts. The application layer decides hard failure, confirmation, degraded status, and transaction membership. Filesystem writes go through the transaction/ownership adapter, not arbitrary Agent adapter code.
 
-`AgentProfile` contains Agent kind, executable path, effective `HOME`, relevant config overrides, project root when applicable, canonical project/global Skill roots, compatibility/conflict roots, and a deterministic environment fingerprint. For workspace scope, ownership maps only `(canonical workspace path, Agent kind, canonical project Skill root)` to a deployment target; for global and manager scope, the database maps only `(Agent kind, canonical global Skill root)` to the opaque `profile_id`. Executable, HOME, config, compatibility roots, and the fingerprint are replaceable observations used for current preflight and diagnostics; changing them without changing the applicable identity tuple refreshes the same target instead of creating a second owner for one filesystem path.
+`AgentProfile` contains Agent kind, executable `NativePath` plus file identity, effective `HOME`, relevant config overrides, project root when applicable, canonical project/global Skill roots, compatibility/conflict roots, and a deterministic environment fingerprint. For workspace scope, ownership maps only `(canonical workspace path, Agent kind, canonical project Skill root)` to a deployment target; for global and manager scope, the database maps only `(Agent kind, canonical global Skill root)` to the opaque `profile_id`. Executable, HOME, config, compatibility roots, and the fingerprint are replaceable observations used for current preflight and diagnostics; changing them without changing the applicable identity tuple refreshes the same target instead of creating a second owner for one filesystem path.
 
 ## Claude Code Adapter
 
@@ -58,7 +59,11 @@ The current vendor evidence is in [`../references/claude-and-codex-skill-discove
 
 ## Executable and Root Preflight
 
-Resolve an Agent executable from a configured nonsecret override or PATH. Record its canonical path for the plan but do not require a numeric version. Run only a bounded, documented noninteractive version/help probe if necessary to distinguish a compatible local CLI; never start an interactive Agent.
+One shared `ExecutableResolver` port serves Agent CLIs, system Git, optional `gh`, and the Agent-visible `skilload` check. For an Agent, read only `agents.claude.executable` or `agents.codex.executable`; a configured value is already a validated absolute path and replaces PATH search. Other executables and an Agent without an override use a fixed basename. Parse PATH without shell expansion, skip empty or non-absolute directory components, append only that basename, and never reinterpret a skipped component relative to CWD.
+
+Build an untrusted-root set before probing: the canonical exact workspace when present, filesystem-discovered current project/Git markers and the enclosing worktree once a safe Git executable can confirm it, temporary source acquisition roots, and external cache/staging/quarantine payload roots. Inspect a candidate and each symlink hop with `lstat`, resolve existing aliases, require a regular executable file with applicable execute permission, and reject a canonical final path within any untrusted root. A symlink in `/usr/local/bin` is permitted only when its final target remains outside those roots. Return `ResolvedExecutable { canonical_path, file_identity, source }`, where source distinguishes the exact config key from the absolute PATH directory. If only unsafe candidates exist, report `unsafe_executable_path`; if no candidate exists, report `executable_not_found`. JSON path details use `PathValue`.
+
+Revalidate the recorded identity immediately before every spawn. Run a bounded documented noninteractive version/help probe, when needed, from a private empty working directory with repository-sensitive environment inputs removed and stdin closed; never start an interactive Agent. Record the canonical executable in the plan but do not require a numeric Agent version. The same-account concurrent-replacement exclusion in the threat model permits identity revalidation rather than claiming an unavailable cross-platform execute-by-handle primitive.
 
 For every selected profile:
 
@@ -132,7 +137,7 @@ Manager content is copied, not linked. Install stages a complete embedded direct
 
 The `asset_digest` covers the embedded payload tree and excludes the generated marker, avoiding a self-referential digest. The durable manager row stores the same digest/profile/target. Ownership requires both the exact marker and the installed payload tree digest (again excluding the marker) to match. A marker alone cannot authorize deletion of modified content. Explicit install over an exact older owned asset is an upgrade transaction; an equal version is unchanged; a newer/unknown or modified target is reported and not overwritten automatically.
 
-Before install, verify the Agent executable and `skilload` resolve through the PATH environment that the local Agent process will inherit. Do not embed either absolute path. Multi-Agent install/uninstall uses the common journal and is all-or-nothing.
+Before install, verify the Agent executable and `skilload` resolve through the PATH environment that the local Agent process will inherit, using the shared resolver and current project exclusion above. Do not embed either install-time absolute path. The embedded manager instructions name `skilload`, then require the Agent to apply the same absolute-directory/final-target rejection at runtime and invoke the selected absolute result; they never execute the first shell result from an empty, relative, project, or cache PATH location. Multi-Agent install/uninstall uses the common journal and is all-or-nothing.
 
 ## Manager Status and Uninstall
 
@@ -142,4 +147,4 @@ Uninstall removes only an exact owned manager tree. If user modification changes
 
 ## Tests
 
-Use fake Agent executables and isolated HOME/config roots. Adapter contract tests cover default/override roots, deprecated Codex conflict discovery, missing executables, disabled settings, parent symlinks, exact foreign targets, semantic conflicts, same-root observation refresh versus changed-root identity, fixed-workspace `CODEX_HOME` changes, global environment profile changes, and next-launch fixture discovery. Manager tests parse both embedded assets, compare referenced commands to the CLI schema, validate PATH preflight, exercise multi-Agent failpoints, and prove cache clear cannot remove manager copies. Live model conversations remain optional nonblocking smoke tests.
+Use fake Agent executables and isolated HOME/config roots. Resolver matrices cover both exact Agent configuration keys; absolute safe and missing overrides; empty, relative, and absolute PATH entries; project/worktree/cache containment; outside symlinks back into those roots; final non-files/executable permission; identity drift; private probe CWD/environment; and the same cases for Git, optional `gh`, and Agent-visible `skilload`. No rejected fixture may create an execution marker. Adapter contract tests also cover default/override roots, deprecated Codex conflict discovery, disabled settings, parent symlinks, exact foreign targets, semantic conflicts, same-root observation refresh versus changed-root identity, fixed-workspace `CODEX_HOME` changes, global environment profile changes, and next-launch fixture discovery. Manager tests parse both embedded assets, compare referenced commands to the CLI schema, validate install-time and runtime PATH rules, exercise multi-Agent failpoints, and prove cache clear cannot remove manager copies. Live model conversations remain optional nonblocking smoke tests.

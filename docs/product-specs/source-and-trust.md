@@ -12,21 +12,21 @@ A **source** identifies one Skill location and one intended Git ref on GitHub. *
 
 ## SKL-SRC-002 - Canonical source identity (Revision 1)
 
-**Behavior.** Canonical source identity MUST include normalized `owner/repo`, normalized Skill path, and explicit ref in the textual form `github:<lowercase-owner>/<lowercase-repo>#<encoded-path>@<encoded-ref>`. Path separators and ref slashes remain `/`; within each path segment and the ref, only RFC 3986 unreserved ASCII bytes (`A-Z`, `a-z`, `0-9`, `-`, `.`, `_`, and `~`) remain literal. Every other UTF-8 byte, including `%`, `#`, `@`, and every non-ASCII byte, MUST use uppercase percent encoding `%HH`. Percent decoding occurs exactly once before validation, and canonical serialization MUST contain exactly one literal `#` and one literal `@`; a repository-root Skill has an empty encoded path. Git path spelling MUST NOT receive Unicode normalization because canonically equivalent Unicode spellings can identify different Git entries. Two otherwise equal sources with different refs are distinct. Source identity MUST NOT use a machine path or Library database ID.
+**Behavior.** Canonical source identity MUST include normalized `owner/repo`, normalized Skill path, and an explicit namespace-preserving ref intent in the textual form `github:<lowercase-owner>/<lowercase-repo>#<encoded-path>@<encoded-ref>`. A branch MUST serialize as its full `refs/heads/<name>` ref, a tag as its full `refs/tags/<name>` ref, and a commit as its lowercase 40-hex SHA. Path separators and ref slashes remain `/`; within each path segment and the ref, only RFC 3986 unreserved ASCII bytes (`A-Z`, `a-z`, `0-9`, `-`, `.`, `_`, and `~`) remain literal. Every other UTF-8 byte, including `%`, `#`, `@`, and every non-ASCII byte, MUST use uppercase percent encoding `%HH`. Percent decoding occurs exactly once before validation, and canonical serialization MUST contain exactly one literal `#` and one literal `@`; a repository-root Skill has an empty encoded path. Git path spelling and branch/tag spelling MUST NOT receive Unicode normalization because canonically equivalent spellings can identify different Git entries. Two otherwise equal sources with different ref namespaces, names, or SHAs are distinct. Source identity MUST NOT use a machine path or Library database ID.
 
-**Acceptance.** Adding `main` and `v2` for the same repository path produces two source identities, and exporting either identity contains sufficient GitHub coordinates to resolve it on another machine. Path `skills/foo@bar` at ref `main` serializes as `github:owner/repo#skills/foo%40bar@main`, while path `skills/foo` at ref `bar@main` serializes as `github:owner/repo#skills/foo@bar%40main`; parsing, export/import, database keys, and exact Trust keep them distinct.
+**Acceptance.** A repository with `refs/heads/release` and `refs/tags/release` produces distinct identities ending in `@refs/heads/release` and `@refs/tags/release`, even when the refs currently resolve to the same commit. Path `skills/foo@bar` at branch `main` serializes as `github:owner/repo#skills/foo%40bar@refs/heads/main`, while path `skills/foo` at branch `bar@main` serializes as `github:owner/repo#skills/foo@refs/heads/bar%40main`; parsing, export/import, database keys, and exact Trust keep all four tuples distinct.
 
 ## SKL-SRC-003 - Default ref normalization (Revision 1)
 
-**Behavior.** When input omits a ref, skilload MUST query the repository's current default branch, resolve it, and persist the branch name explicitly. It MUST NOT retain an implicit "default" sentinel whose meaning can later change.
+**Behavior.** When input omits a ref, skilload MUST query the repository's current default branch, resolve it, and persist the branch as `refs/heads/<default-name>`. It MUST NOT retain an implicit "default" sentinel or an unqualified name whose meaning can later change.
 
-**Acceptance.** Adding a repository whose default branch is `trunk` writes `@trunk` to resulting source state. A later default-branch rename does not silently change that stored ref.
+**Acceptance.** Adding a repository whose default branch is `trunk` writes `@refs/heads/trunk` to resulting source state. A later default-branch rename does not silently change that stored ref.
 
 ## SKL-SRC-004 - Mutable ref resolution (Revision 1)
 
-**Behavior.** A ref MAY be a branch, tag, or full commit SHA. Branches and tags are mutable source intents whose current commit is resolved into a lock or global pin. An update operation MUST compare and deliberately advance the resolved commit; ordinary sync and read operations MUST NOT advance it.
+**Behavior.** A ref intent MAY be a branch, tag, or full commit SHA. Branches and tags are mutable source intents whose current commit is resolved into a lock or global pin. A fully qualified `refs/heads/...` or `refs/tags/...` input MUST retain that namespace. A short mutable ref supplied by an option or embedded in a tree/blob URL MAY normalize only when exactly one matching branch or tag intent can be proved; if both namespaces match, skilload MUST return structured `ambiguous_ref` with both fully qualified candidates and require explicit selection rather than apply Git's precedence rules. An update operation MUST resolve only the stored namespace and compare and deliberately advance the resolved commit; ordinary sync and read operations MUST NOT advance it.
 
-**Acceptance.** After a branch moves, sync continues using the previous pinned commit and update selects the new commit. A tag is treated by the same rule even if users expect tags to be stable.
+**Acceptance.** After a branch moves, sync continues using the previous pinned commit and update selects the new commit from `refs/heads/...`; a tag is treated by the same rule within `refs/tags/...` even if users expect tags to be stable. Given different commits at `refs/heads/release` and `refs/tags/release`, short `release` makes no persistent change and returns both candidates, while explicit fully qualified inputs resolve, update, export, and authorize independently.
 
 ## SKL-SRC-005 - Immutable SHA source (Revision 1)
 
@@ -96,15 +96,15 @@ A **source** identifies one Skill location and one intended Git ref on GitHub. *
 
 ## SKL-SRC-016 - Data-only retrieval and authentication (Revision 1)
 
-**Behavior.** skilload MUST treat repositories as untrusted data. It MAY invoke system Git with fixed safe arguments, but MUST NOT execute repository hooks, scripts, filters, submodules, or Skill content. Public repository metadata MAY be queried without authentication. Private repository identity validation MUST use authenticated GitHub REST or GraphQL metadata via `GH_TOKEN`, `GITHUB_TOKEN`, or an authenticated `gh`; SSH Git access alone is insufficient. skilload MUST NOT prompt for or persist credentials, and commit signatures are not required.
+**Behavior.** skilload MUST treat repositories as untrusted data. It MAY invoke system Git with fixed safe arguments, but MUST resolve Git and optional `gh` only through the trusted external-executable rules in `SKL-WSP-022` and MUST NOT execute a candidate from an empty, relative, current-workspace, or enclosing-worktree PATH location. It MUST NOT execute repository hooks, scripts, filters, submodules, or Skill content. Public repository metadata MAY be queried without authentication. Private repository identity validation MUST use authenticated GitHub REST or GraphQL metadata via `GH_TOKEN`, `GITHUB_TOKEN`, or an authenticated `gh`; SSH Git access alone is insufficient. skilload MUST NOT prompt for or persist credentials, and commit signatures are not required.
 
-**Acceptance.** A private SSH clone without API metadata credentials cannot establish first Trust and explains the missing requirement. Supplying a valid supported API credential allows identity validation without writing that credential to skilload state. A repository-controlled hook is never run.
+**Acceptance.** A private SSH clone without API metadata credentials cannot establish first Trust and explains the missing requirement. Supplying a valid supported API credential allows identity validation without writing that credential to skilload state. A repository-controlled hook is never run, and a fake `git` or `gh` reachable only through `PATH=.` or an absolute worktree directory is rejected before execution.
 
 ## SKL-TRUST-001 - Exact Trust binding (Revision 1)
 
 **Behavior.** A Trust record MUST authorize exactly one canonical encoded source from `SKL-SRC-002` plus the verified numeric repository ID. Trust for one ref, path, or repository MUST NOT authorize another, even when delimiter characters in one tuple could resemble separators in another before canonical encoding.
 
-**Acceptance.** Trusting `skills/review@main` does not authorize `skills/review@v2`, `skills/test@main`, or a new repository occupying the same path spelling.
+**Acceptance.** Trusting `skills/review@refs/heads/main` does not authorize `skills/review@refs/tags/main`, `skills/review@refs/heads/v2`, `skills/test@refs/heads/main`, or a new repository occupying the same path spelling.
 
 ## SKL-TRUST-002 - Trust is separate from Library membership (Revision 1)
 
@@ -114,7 +114,7 @@ A **source** identifies one Skill location and one intended Git ref on GitHub. *
 
 ## SKL-TRUST-003 - First-approval preview (Revision 1)
 
-**Behavior.** Before first Trust is persisted, skilload MUST safely fetch and validate temporary content and present normalized source, numeric repository ID, resolved commit, verified name, description, file count, total bytes, and warnings. Every repository-controlled or otherwise untrusted field in a human preview MUST use the terminal-safe quoted encoding required by `SKL-CLI-009`; JSON MUST preserve the original logical values through standard JSON string escaping. Direct GitHub adds to Library or workspace use this same flow. Confirmation is a user-interface consent step, not cryptographic proof of a human.
+**Behavior.** Before first Trust is persisted, skilload MUST safely fetch and validate temporary content and present normalized source, numeric repository ID, resolved commit, verified name, description, file count, total bytes, and warnings. Every repository-controlled or otherwise untrusted field in a human preview MUST use the terminal-safe quoted encoding required by `SKL-CLI-009`; JSON MUST preserve valid logical string values through standard JSON escaping and every host filesystem path through `SKL-CLI-004`'s `PathValue`. Direct GitHub adds to Library or workspace use this same flow. Confirmation is a user-interface consent step, not cryptographic proof of a human.
 
 **Acceptance.** Rejecting the preview leaves no Trust, Library/workspace mutation, or promoted cache entry. Approving an unchanged preview creates Trust and allows the requested mutation to continue atomically. A description containing ESC, OSC, BEL, carriage return, or bidirectional-format controls is displayed only as visible escaped text and cannot clear, rewrite, relabel, or reorder the approval screen.
 
