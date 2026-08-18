@@ -1,14 +1,14 @@
 # skilload Architecture
 
-Status: planned architecture for the 0.1 CLI MVP. The repository does not yet contain the Rust workspace described here.
+Status: partially implemented architecture for the 0.1 CLI MVP. `PLAN-0002` establishes the Rust workspace and the configuration vertical slice; SQLite, source resolution, cache content, deployment, manager assets, and every other product domain remain planned.
 
 Product behavior is authoritative in [`docs/product-specs/`](docs/product-specs/README.md). This file defines boundaries, dependency direction, state ownership, and invariants. Technical mechanisms and rationale live in [`docs/design-docs/`](docs/design-docs/).
 
 ## System Shape
 
-skilload is one local Rust binary. It resolves and validates GitHub-hosted Skill directories, stores durable metadata and desired state, maintains immutable external content in a removable cache, and reconciles owned links into native Claude Code and Codex Skill roots. It never wraps or launches an Agent.
+The intended 0.1 system is one local Rust binary. It resolves and validates GitHub-hosted Skill directories, stores durable metadata and desired state, maintains immutable external content in a removable cache, and reconciles owned links into native Claude Code and Codex Skill roots. It never wraps or launches an Agent. The current P1 binary implements only the configuration slice of that system.
 
-The planned Cargo workspace is:
+The current Cargo workspace is:
 
     Cargo.toml
     Cargo.lock
@@ -21,23 +21,12 @@ The planned Cargo workspace is:
           application/
           ports/
           adapters/
-          library/
-          trust/
-          source/
-          workspace/
-          global/
-          cache/
-          agents/
-          persistence/
-          recovery/
       skilload-cli/
         src/
-    assets/
-      manager/
-        claude-code/
-        codex/
 
-`skilload-core` is the reusable domain/application library. `skilload-cli` is the only 0.1 presentation adapter and produces the single binary. The module names under `skilload-core` identify ownership areas; P1 may group files differently while preserving the boundaries below. Embedded manager assets are source files compiled into the binary, not external cache content.
+The implemented modules are `skilload-core` configuration domain/application/port/adapter files, `error.rs`, and `skilload-cli` argument, JSON, human-rendering, and process-entry files. The omitted ownership modules and manager assets remain planned and must be added only with their real application behavior.
+
+`skilload-core` is the reusable domain/application library. `skilload-cli` is the only 0.1 presentation adapter and produces the single binary. The P1 slice currently exposes only `config get|set|unset|list`; its filesystem policy remains in the core adapter, and its CLI only parses, dispatches, and renders. Future module names under `skilload-core` identify ownership areas and must preserve the boundaries below. Embedded manager assets, when implemented, are source files compiled into the binary rather than external cache content.
 
 ## Dependency Direction
 
@@ -58,7 +47,7 @@ Dependencies point inward:
 
 * Domain values and rules do not import CLI, SQLite, HTTP, process, filesystem, clock, or Agent-specific code.
 * Application services coordinate domain rules through explicit ports. They own use-case transaction boundaries and return presentation-neutral results.
-* Adapters implement ports for SQLite/FTS5, XDG/config files, immutable cache, system Git, GitHub metadata HTTP, time/randomness, and Claude/Codex environments.
+* Adapters implement ports for XDG/config files in the current slice. SQLite/FTS5, immutable cache, system Git, GitHub metadata HTTP, time/randomness, and Claude/Codex adapters remain planned.
 * The CLI parses arguments, invokes one application command/query, and renders human or JSON output. It does not issue SQL, edit workspace files, run Git, or manage links directly.
 * Future TUI, Web, or other interfaces must call the same application layer. They may not bypass Trust, ownership, transaction, or network policies.
 
@@ -126,7 +115,7 @@ This is recoverable command atomicity, not a claim that unrelated filesystems an
 
 ## External Boundaries
 
-The required external executables are system `git` for source object retrieval, a safe system `ssh` only when an SSH Git transport is attempted, and the selected Agent CLI for additive, repair, or functional Agent operations. An exact-owned removal-only plan does not require an installed Agent executable. `gh` is optional as an authenticated metadata-token source. Every discovery, including an accepted direct or `/usr/bin/env` script interpreter, uses the shared trusted resolver from `SKL-WSP-022`; only `agents.claude.executable` and `agents.codex.executable` may override a basename, and those values are absolute paths. SQLite with FTS5 and the GitHub HTTP client are linked into the binary. Node.js is not a product runtime dependency.
+The current configuration binary does not execute an external program, perform network access, or link SQLite/FTS5 or an HTTP client. Future source/deployment domains require system `git` for source object retrieval, a safe system `ssh` only when an SSH Git transport is attempted, and the selected Agent CLI for additive, repair, or functional Agent operations. An exact-owned removal-only plan does not require an installed Agent executable. `gh` is optional as an authenticated metadata-token source. Every future discovery, including an accepted direct or `/usr/bin/env` script interpreter, uses the shared trusted resolver from `SKL-WSP-022`; only `agents.claude.executable` and `agents.codex.executable` may override a basename, and those values are absolute paths. Node.js is not a product runtime dependency.
 
 Network access is limited to the operations named by `SKL-OPS-008` and only GitHub.com is a content source. Agent directories and their version-sensitive behavior are isolated behind adapters and recorded in [the Agent discovery reference](docs/references/claude-and-codex-skill-discovery.md).
 

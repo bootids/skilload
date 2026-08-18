@@ -1,6 +1,6 @@
 # Application and Persistence Design
 
-Status: planned design for the 0.1 CLI MVP. No crate or schema described here exists yet.
+Status: partially implemented design for the 0.1 CLI MVP. `PLAN-0002` implements the configuration-only `skilload-core` path; SQLite and every durable/domain system beyond configuration remain planned.
 
 This design supports the durable and application-layer portions of `SKL-LIB-*`, `SKL-TRUST-*`, `SKL-WSP-*`, `SKL-GLB-*`, `SKL-MGR-*`, `SKL-CACHE-*`, `SKL-OPS-*`, and `SKL-CLI-*`, within the boundaries in `ARCHITECTURE.md`.
 
@@ -21,7 +21,7 @@ This design supports the durable and application-layer portions of `SKL-LIB-*`, 
 
 ## Crate Composition
 
-`crates/skilload-core` should expose an `Application` facade constructed from port implementations. Internally it contains:
+`crates/skilload-core` should expose an `Application` facade constructed from port implementations. The full 0.1 core will contain:
 
 * `domain`: validated value types such as `CanonicalSource`, `RepositoryId`, `GitCommit`, `SkillPath`, `SkillName`, `Integrity`, `TrustState`, `ProfileId`, `DeploymentStatus`, and typed outcomes/errors.
 * `application`: commands and queries. A command may mutate; a query is read-only by type and dependency contract.
@@ -30,6 +30,8 @@ This design supports the durable and application-layer portions of `SKL-LIB-*`, 
 * domain-focused modules (`library`, `trust`, `source`, `workspace`, `global`, `cache`, `agents`, `persistence`, `recovery`) that group rules and service implementations without changing dependency direction.
 
 `crates/skilload-cli` owns `clap` command definitions, conversion into application requests, human rendering, JSON envelope serialization, and process exit status. It composes production adapters once at startup but does not expose them to command handlers.
+
+The current P1 implementation contains `domain/configuration.rs`, `application/configuration.rs`, `ports/configuration.rs`, `adapters/xdg.rs`, `adapters/configuration.rs`, and `error.rs`. Its `Application` facade owns the four configuration use cases and receives a focused configuration store; the store resolves all four XDG roots, reads absent configuration as an in-memory default, uses a bounded lock only for real writes, and atomically replaces `config.toml`. It deliberately creates no SQLite database or dormant domain module.
 
 Representative application interfaces should have this shape (names may be refined without changing the boundary):
 
@@ -80,7 +82,7 @@ The cache index is rebuildable operational metadata rather than durable product 
 
 ## Durable SQLite Model
 
-Use SQLite compiled into the binary with FTS5 enabled. The exact SQL is a P1 deliverable, but ownership is fixed:
+Use SQLite compiled into the binary with FTS5 enabled once the durable-domain delivery begins. The exact SQL remains a later delivery decision, but ownership is fixed:
 
 * `schema_info`: current schema version and migration metadata.
 * `state_revision`: a monotonic semantic revision incremented by committed product-state mutations, not by confirmation-token bookkeeping or derived-index maintenance.
@@ -179,6 +181,6 @@ Library export is built from domain records, sorted by canonical source, and ser
 
 Default tests use temporary XDG/HOME roots and an in-memory or temporary-file SQLite database compiled with the same FTS5 features as production. Repository contract tests run against both an in-memory fake and SQLite adapter. Tag and metadata fixtures cover whitespace trimming, NFC composition, full default case folding, Turkish locale independence, direct alias/category/note/tag-count limits, first-spelling retention, import/export ordering, removal by equivalent spelling, and FTS matches through both display and comparison forms. Pagination fixtures compare fake/SQLite default and adjacent pages, same-snapshot totals, offset-at/beyond-total emptiness, unsigned-64-bit offsets above SQLite's signed bound without conversion, and stable ordering under unchanged data. Import-reader fixtures exercise every exact byte/entry/value/depth/string/number boundary, duplicate keys, early termination, no partial model/plan, and atomic conflict failure. Path tests cover unset, empty, relative, and absolute values for every XDG variable; prove that relative values fall back identically from different current directories; prove invalid fallback `HOME` fails before filesystem access; reject equal, nested, or symlink-aliased effective application roots; and separately reject present empty/relative `CLAUDE_CONFIG_DIR`/`CODEX_HOME` plus required invalid `HOME` before Agent-root access. Configuration fixtures cover all three exact keys, unknown keys/tables, cache integers through signed-64-bit maximum plus overflow/zero rejection and decimal-string projection, absolute/relative/empty/non-UTF-8 Agent paths, unset defaults, idempotence, and `PathValue` projection. Workspace-store fixtures enforce exact byte/record/node/depth/scalar ceilings and forbidden YAML features without returning a partial model, while manifest fixtures inject alternate Git directories/worktrees/indexes/configuration and prove the bound real-index check preserves both persistent representations and pending recovery. Persistence fixtures keep branch/tag same-name source keys distinct, allow a `NULL` executable only for proved removal, move every workspace foreign key atomically during a proved instance rebind, and prove database-wide source migration cannot update any workspace row. Other tests prove that query construction creates no path; migration backup manifests survive injected failure and obey the newest-three/previous-generation retention rule; isolated restore validation rejects corrupt, newer, foreign-key-invalid, and WAL-mixed candidates and migrates a supported older candidate only on a disposable copy; atomic restore and rollback preserve one complete generation; explicit reset adopts no surviving artifact; FTS rebuild preserves base rows; unknown schema blocks writes; and concurrent mutations return deterministic commit/busy results.
 
-## Decisions Deferred to P1
+## Decisions Deferred Beyond the Configuration Foundation
 
-P1 selects and locks exact Rust crate versions and final SQL names. It may use `rusqlite`, `clap`, `serde`, and a mature HTTP client, but must prove embedded FTS5 and release portability. Those dependency versions are implementation details; changing them later does not change this design unless the ownership or boundary model changes.
+`PLAN-0002` selected and locked the Rust toolchain, `clap`, `serde`, TOML, error, filesystem-staging, JSON, and test dependencies for the configuration slice. A later durable-domain delivery selects final SQLite/FTS5 and HTTP dependency versions and SQL names, and must prove embedded FTS5 and release portability. Those dependency choices remain implementation details unless they change the ownership or boundary model.

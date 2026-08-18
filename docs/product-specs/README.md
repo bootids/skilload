@@ -4,7 +4,7 @@ These files are the authoritative source for skilload's user-visible behavior. `
 
 Every normative behavior has a stable ID and revision. Later ExecPlans must name the exact IDs and revisions they implement or verify. A wording-only clarification keeps the revision; a semantic change increments it or introduces a replacement ID.
 
-All behaviors in this baseline are **planned**, not implemented. Unless a behavior says otherwise, its target is the 0.1 CLI MVP.
+`PLAN-0002` implements Revision 1 of `SKL-CLI-002`, `SKL-CLI-003`, `SKL-CLI-011`, and `SKL-OPS-006` as the development `0.0.1` configuration slice. Every other behavior in this baseline remains **planned** for the 0.1 CLI MVP unless its owning specification says otherwise.
 
 ## Specification Index
 

@@ -1,6 +1,6 @@
 # CLI Contract
 
-Status: planned baseline for the skilload CLI MVP.
+Status: partially implemented. `PLAN-0002` implements Revision 1 of `SKL-CLI-002`, `SKL-CLI-003`, and `SKL-CLI-011` in the development `0.0.1` configuration slice. All other behaviors in this document remain planned for the 0.1 CLI MVP.
 
 The CLI is both the human interface and the stable machine interface used by the built-in manager Skill. Product-domain semantics remain authoritative in their domain specifications; this file fixes routing, output, and compatibility behavior.
 

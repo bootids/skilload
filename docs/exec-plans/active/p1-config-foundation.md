@@ -64,7 +64,8 @@ The deliberately narrow development command surface is important. Building all 5
 - [x] (2026-08-18 12:22Z) Verified current Rust, crate, standard-library locking, and CI action inputs against primary sources; recorded them in `docs/references/rust-foundation-versions.md` and authored this self-contained `plan`-status delivery.
 - [x] (2026-08-18 13:09Z) Committed and pushed the initial planning baseline as `c21211b0d1aa55e2c422d6d5929bf65457fb5a91`, opened Draft PR https://github.com/bootids/skilload/pull/2, wrote its canonical URL into frontmatter, and published this metadata evidence; awaiting a later explicit execution trigger.
 - [x] (2026-08-18 13:26Z) Received explicit execution authorization, reran `mise install` and GitHub/Draft-PR preflight, confirmed `PLAN-0001` is completed on `origin/main`, and entered `active` before implementation.
-- [ ] Implement the locked Rust workspace, configuration domain/application/filesystem adapter, CLI projections, and required focused tests.
+- [x] (2026-08-18 13:49Z) Implemented the locked Rust workspace, root CI matrix, strict configuration domain/application/filesystem adapter, four real CLI leaves, API-v1 JSON and safe human projections, 15 core unit/adapter tests, five CLI unit tests, and six isolated CLI integration tests.
+- [ ] Push the active implementation and synchronized documentation, wait for the Linux/macOS CI matrix, and record its immutable evidence before the ready/review transaction.
 - [ ] After implementation, acceptance, synchronized documentation, and retrospective are committed and pushed, mark the PR ready, verify its exact head, then automatically enter `review` and push the lifecycle commit.
 - [ ] After a later explicit human merge prompt, use `merge-exec-plan` to pass preflight, complete and push the Plan, merge, update local `main`, and delete the local delivery branch.
 
@@ -76,6 +77,10 @@ The deliberately narrow development command surface is important. Building all 5
   Evidence: `SKL-CLI-001` requires each accepted path to reach an operation, while `SKL-CLI-003` rejects scaffold-only subcommands.
 - Observation: Rust 1.97.1 already includes standard-library cross-process file locks, so the first mutation lock needs no extra crate.
   Evidence: the official `std::fs::File` documentation marks `lock`, `try_lock`, and `unlock` stable since Rust 1.89.
+- Observation: The mise-installed Rust 1.97.1 toolchain initially lacked Clippy even though `rust-toolchain.toml` names it as a component.
+  Evidence: `mise exec -- cargo clippy` reported that `cargo-clippy` was not installed; `mise exec -- rustup component add clippy` installed it under the same pinned toolchain, after which the warning-free workspace lint passed.
+- Observation: macOS resolves temporary-directory paths through `/private/var/...`, so XDG root tests must compare canonical existing prefixes rather than the textual temporary-directory spelling.
+  Evidence: the XDG resolver's filesystem-identity check returned the canonical `/private/var/...` path for a `/var/...` temporary fixture.
 
 ## Decision Log
 
@@ -100,10 +105,21 @@ The deliberately narrow development command surface is important. Building all 5
 - Decision: Use standard-library advisory file locking with a two-second bounded acquisition, optimistic no-op reads, re-read/revalidation under the lock for actual writes, and same-directory atomic replacement.
   Rationale: This prevents lost updates and partial documents without creating operational state for an absent idempotent no-op or adding a locking dependency.
   Date/Author: 2026-08-18 / Codex
+- Decision: Compare the raw configuration baseline beneath the lock and retry the application mutation on a stale baseline.
+  Rationale: Two concurrent setters for different keys can then serialize and retain both updates, while an externally changed invalid document is never rewritten from a stale in-memory view.
+  Date/Author: 2026-08-18 / Codex
+- Decision: Reject `--json` without a configuration operation and with text-only help/version, while accepting `--no-color` as a no-op presentation choice.
+  Rationale: API-v1 has no operation identifier or envelope for meta invocations, and a JSON flag must not create an undocumented response shape.
+  Date/Author: 2026-08-18 / Codex
+- Decision: Treat a whitespace-delimited trailing option token in an Agent executable setting as command-line intent, but preserve an absolute filesystem path whose name merely contains spaces.
+  Rationale: This rejects inputs such as `/usr/bin/claude --version` without needlessly rejecting valid native path names.
+  Date/Author: 2026-08-18 / Codex
 
 ## Outcomes & Retrospective
 
-Planning outcome only: the delivery scope, exact product revisions, architecture boundaries, dependency inputs, interfaces, tests, documentation synchronization, and lifecycle recovery are specified in Draft PR https://github.com/bootids/skilload/pull/2. No Rust implementation or product command has been added yet. The Plan must remain in `plan` and the associated Pull Request must remain Draft until a later explicit execution prompt.
+The implementation now provides a `0.0.1` Rust binary with only `config get|set|unset|list`, text help/version, strict version-1 TOML validation, all-four-root XDG validation, lock-protected atomic writes, and API-v1/human result projections. It deliberately leaves every non-configuration domain absent rather than exposing a placeholder command. The product-spec index, owning specifications, architecture, and two affected design documents now identify exactly the four implemented Revision 1 behaviors and continue to mark all remaining behavior planned.
+
+Local acceptance on 2026-08-18 passed `mise exec -- cargo fmt --all --check`, `mise exec -- cargo clippy --workspace --all-targets --all-features -- -D warnings`, `mise exec -- cargo test --workspace --all-features --locked` (26 tests: 15 core, five CLI-unit, six CLI-integration), `mise exec -- cargo build --workspace --all-features --locked`, and `git diff --check`. An isolated manual run printed `skilload 0.0.1`, returned the three ordered default configuration entries as one JSON document, changed the cache and Claude settings, returned the padded `PathValue`, and after mutation left only the config document plus the state lock hierarchy; data and cache roots remained absent. CI evidence is pending the first implementation push.
 
 ## Review Conversation Log
 
@@ -303,6 +319,25 @@ Planning baseline on 2026-08-18:
     #1 merged: docs: establish skilload product and architecture baseline
 
 The only predecessor is `PLAN-0001`. No implementation or open delivery exists to reuse. Current external version evidence and action commit pins are retained in `docs/references/rust-foundation-versions.md` rather than only in this Plan or chat.
+
+Implementation evidence on 2026-08-18:
+
+    $ mise exec -- rustc --version
+    rustc 1.97.1 (8bab26f4f 2026-07-14)
+
+    $ mise exec -- cargo test --workspace --all-features --locked
+    15 core tests passed; 5 CLI unit tests passed; 6 CLI integration tests passed.
+
+    $ target/debug/skilload config list --json
+    {"api_version":1,"operation":"config.list","ok":true,...}
+
+    $ target/debug/skilload config set cache_limit_bytes 1073741824 --json
+    {"api_version":1,"operation":"config.set","ok":true,"result":{"outcome":"changed",...}}
+
+    $ find "$tmp" -mindepth 1 -print
+    .../home
+    .../config/skilload/config.toml
+    .../state/skilload/locks/config.lock
 
 ## Interfaces and Dependencies
 
