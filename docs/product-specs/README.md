@@ -14,7 +14,9 @@ All behaviors in this baseline are **planned**, not implemented. Unless a behavi
 * [Workspace](workspace.md): `SKL-WSP-001` through `SKL-WSP-027`.
 * [Global deployment and manager Skill](global-and-manager.md): `SKL-GLB-001` through `SKL-GLB-013` and `SKL-MGR-001` through `SKL-MGR-009`.
 * [Cache and local operations](cache-and-operations.md): `SKL-CACHE-001` through `SKL-CACHE-010` and `SKL-OPS-001` through `SKL-OPS-010`.
+* [Database corruption recovery](database-recovery.md): normative operator procedure `database-corruption-v1` for `SKL-OPS-004`; it introduces no separate behavior ID.
 * [CLI contract](cli-contract.md): `SKL-CLI-001` through `SKL-CLI-012`.
+* [JSON API version 1 schema catalog](api-v1.md): normative field-level detail for `SKL-CLI-004`, `SKL-CLI-005`, `SKL-CLI-006`, and `SKL-CLI-012`; it introduces no separate behavior ID.
 
 ## Normative Language
 

@@ -4,7 +4,7 @@ Status: planned design for the 0.1 CLI MVP. It implements `SKL-CLI-*`, `SKL-PROD
 
 ## Behavior Traceability
 
-* Command parsing, common arguments, JSON, confirmation, errors, idempotency, streams, and compatibility implement `SKL-CLI-001` through `SKL-CLI-012`.
+* Command parsing, common arguments, the field-level API-v1 catalog, confirmation, errors, idempotency, streams, and compatibility implement `SKL-CLI-001` through `SKL-CLI-012`.
 * Offline dispatch, credentials, diagnostics, and network enforcement implement the CLI-facing portions of `SKL-OPS-005` and `SKL-OPS-007` through `SKL-OPS-009`.
 * The default fixture and fault suites cover the acceptance mechanisms and scale targets named throughout `SKL-SRC-*`, `SKL-TRUST-*`, `SKL-LIB-*`, `SKL-WSP-*`, `SKL-GLB-*`, `SKL-MGR-*`, and `SKL-CACHE-*`.
 * Build, platform matrix, version policy, checksums, attestations, license inclusion, and compatibility fixtures implement `SKL-PROD-002` and `SKL-PROD-004` through `SKL-PROD-007`.
@@ -84,7 +84,7 @@ Version-1 error/confirmation shape:
       }
     }
 
-`result.outcome` is one of `changed`, `unchanged`, `already_exists`, or `already_immutable` where appropriate. Domain data uses explicit typed fields, injectively percent-encoded canonical source strings from `SKL-SRC-002` with `refs/heads/`, `refs/tags/`, or lowercase full commit SHA intent, `sha256:` integrity, opaque profile/workspace-instance IDs, and the required path shape below. Although `RepositoryId` is a `u64` internally, portable JSON/YAML serializes it as a decimal string to avoid IEEE-754 precision loss in common consumers. Lists have documented stable ordering.
+The authoritative [`../product-specs/api-v1.md`](../product-specs/api-v1.md) catalog defines required versus optional notation, scalar encodings, closed producer objects, consumer forward compatibility, deterministic ordering, reusable records, and the exact `result.data` type plus allowed outcome for each of the 50 non-meta operation leaves. Read-only operations use `observed`; mutations use only the narrowed `changed`, `unchanged`, `already_exists`, or `already_immutable` values listed for their operation. Domain data uses explicit typed fields, injectively percent-encoded canonical source strings from `SKL-SRC-002` with `refs/heads/`, `refs/tags/`, or lowercase full commit SHA intent, `sha256:` integrity, opaque profile/workspace-instance IDs, and the required path shape below. Although `RepositoryId` is a `u64` internally, portable JSON/YAML serializes it as a decimal string to avoid IEEE-754 precision loss in common consumers. Lists follow the catalog's stable ordering.
 
 Every field with domain type `NativePath` serializes as the same object in success, preview, confirmation, status, and error details:
 
@@ -95,25 +95,15 @@ Every field with domain type `NativePath` serializes as the same object in succe
 
 `display` is the inner content produced by the human field encoder, with no surrounding quote characters. `bytes_base64` uses RFC 4648's standard `A-Z a-z 0-9 + /` alphabet, required `=` padding, and no whitespace over exact operating-system path bytes. Always use this object, including for valid UTF-8 paths, so a field never changes JSON type; for example `/tmp/foo` becomes `{ "display": "/tmp/foo", "bytes_base64": "L3RtcC9mb28=" }`. Workspace roots, Agent roots, link/cache targets, executable paths, configuration locations, profile paths, journal paths, and path-bearing diagnostics are `NativePath`. Git Skill paths and refs are separately validated source-domain UTF-8 strings and remain strings. Do not use native paths as object keys. The decoder treats `bytes_base64` as authoritative and may use `display` only for safe presentation; mismatching display is an invalid payload in any future API input that accepts this type.
 
-A preview or result for an operation that can promote external content includes `cache_quota.configured_limit_bytes`, `cache_quota.effective_limit_bytes`, `cache_quota.projected_bytes`, and `cache_quota.override_applied`. A detached uninstall result includes the affected profile/source/path, `link_removed: false`, and `orphan_recorded: true`; list/status represent the orphan separately from active target associations.
+A preview or result for an operation that can acquire/promote external content includes the catalog's applicable `source_limits`, fixed `fetch_budget`, and `cache_quota` records. `CacheQuota` always includes `configured_limit_bytes`, `effective_limit_bytes`, `projected_bytes`, `stable_quarantine_bytes`, `repair_headroom_bytes`, and `override_applied`; null rather than omission represents a record that does not apply. A detached uninstall result carries the affected profile/source/path in a `DetachedOrphan` with `link_removed: false` and `orphan_recorded: true`; list/status keep that orphan separate from active target associations.
 
 Progress and diagnostics go to stderr. In JSON mode, stderr remains optional operational diagnostics and never carries data required to complete the workflow. Secrets and confirmation tokens are redacted from debug output; the token appears only in its JSON response and is stored hashed.
 
-API version 1 only gains optional fields. Required-field removal/rename or semantic reinterpretation requires a new top-level API version and compatibility/migration design.
+API version 1 only gains optional fields. Required-field removal/rename, enum narrowing/reinterpretation, an operation's result-type change, or an error code's details-type change requires a new top-level API version and compatibility/migration design. `clap` operation metadata and Rust result/error types are the implementation source, but generated validator fixtures must prove exact agreement with the normative catalog rather than treating Rust serialization as self-authorizing.
 
 ## Errors and Exit Status
 
-Define stable string error codes in `skilload-core`; rendering never derives them from prose. Initial families include:
-
-* syntax/usage and unsupported command/argument;
-* `not_found`, `already_immutable` (success), and invalid state;
-* `confirmation_required`, invalid/expired/stale confirmation;
-* `trust_required`, authentication, permission, or source unavailable;
-* `ambiguous_ref`, `ambiguous_source_url`, duplicate/reserved/exact/semantic conflict, and `agent_disabled`;
-* `unsafe_executable_path`, `executable_not_found`, `relocation_required`, `duplicate_workspace_instance`, `busy`, stale baseline, and inaccessible profile/workspace;
-* validation, limit, integrity, cache corruption, and unsupported entry;
-* schema newer/migration required/database corrupt;
-* recovery blocked and internal invariant failure.
+Define stable string error codes and typed detail structs in `skilload-core`; rendering never derives either from prose. The API-v1 catalog's error table is exhaustive and maps every code to exactly one details type and exit category. In particular, independent resource/security failures remain distinguishable as `fetch_limit_exceeded`, `agent_input_limit_exceeded`, `portable_path_collision`, `filesystem_path_collision`, `unsupported_interpreter`, `cache_quota_exceeded`, `cache_repair_space_insufficient`, and `database_corrupt`, rather than collapsing into a validation string. Confirmation has separate required-details variants for required, invalid, expired, and stale tokens. No API-v1 handler may emit an unlisted code, omit a required details field, or substitute a free-form object.
 
 Exit categories are stable but callers use JSON `error.code` for detail:
 
@@ -130,7 +120,7 @@ Human errors use the same code internally, an English message, relevant paths/so
 
 Application request types declare one of `Offline`, `MayResolve`, or `RequiresResolve`. The production network/Git port refuses access for an `Offline` request even if a handler accidentally calls it. Offline includes help/version, Library reads and metadata-only changes, Trust reads/revoke, workspace list/status/delete/remove and a cache-complete relocation rebind where no restoration occurs, global list/status/uninstall, manager operations, cache info/prune/clear, config, and doctor/fix. Cleanup remains possible without source access.
 
-Network-capable requests are explicit source add/Trust add, Library refresh, source or workspace source migration, workspace lock/update/pin and a sync with a cache miss, global install/update/pin and a sync with a cache miss. Migration resolution may only prove that fresh metadata for the proposed name matches the repository ID stored with the old source; it cannot change path or ref under the migration operation. A `source migrate` result separates mutated Library/Trust/global records from read-only workspace impacts; only `workspace migrate-source` may report workspace records as changed. The application result records whether network and which credential class were used, without returning secret material.
+Network-capable requests are explicit source add/Trust add, Library refresh, source or workspace source migration, workspace lock/update/pin and a sync with a cache miss, global install/update/pin and a sync with a cache miss. Migration resolution may only prove that fresh metadata for the proposed name matches the repository ID stored with the old source; it cannot change path or ref under the migration operation. A `source migrate` result separates mutated Library/Trust/global records from read-only workspace impacts; only `workspace migrate-source` may report workspace records as changed. Wherever the catalog includes `NetworkUse`, the result records whether network was used plus separate metadata and content-transport credential classes without returning secret material; operation types that omit it are statically offline by contract.
 
 ## Human Rendering
 
@@ -146,20 +136,20 @@ Do not write persistent logs by default. `--debug` (or a documented environment 
 
 Default tests are offline and deterministic:
 
-* unit tests for domain validation, source normalization, integrity encoding, conflict policy, command schema, JSON rendering, and exit mapping;
+* unit tests for domain validation, source normalization, integrity encoding, conflict policy, command schema, JSON rendering, and the catalog's exact error-to-details/exit mapping;
 * repository/adapter contract tests against fakes and SQLite/filesystem implementations;
-* temporary bare Git repositories with same-name/different-commit branches and tags, ambiguous slash-bearing refs/URL paths, SHA pins, submodules, LFS pointers, symlinks, executable bits, exact valid/invalid Skill-name and bounded-frontmatter fixtures, hostile names, and deleted/unavailable commits;
+* temporary bare Git repositories with same-name/different-commit branches and tags, ambiguous slash-bearing refs/URL paths, SHA pins, submodules, LFS pointers, symlinks, executable bits, exact valid/invalid root and non-root Skill names, portable/target-filesystem path collisions, bounded-frontmatter fixtures, hostile names, bounded pack bytes/objects/deadlines, and deleted/unavailable commits;
 * local HTTP fixtures for GitHub metadata, redirects, auth/rate errors, default branches, repository ID changes, and candidate trees;
-* isolated HOME/XDG/Claude/Codex roots and fake Agent/Git/gh/ssh/skilload executables/configuration, including empty/relative/project/cache PATH entries, inherited Git exec-path/config/repository/index/SSH overrides, fixed-exec-path and bound-real-index assertions, relative Agent-root environments, outside symlinks back into a worktree, and execution-marker assertions;
+* isolated HOME/XDG/Claude/Codex roots and fake Agent/Git/gh/ssh/skilload executables/configuration, including empty/relative/project/cache PATH entries, inherited Git exec-path/config/repository/index/SSH overrides, fixed-exec-path and bound-real-index assertions, relative Agent-root environments, outside symlinks back into a worktree, complete native/direct/env script-interpreter chains, and execution-marker assertions;
 * transaction failpoint tests at every journal/filesystem/database phase;
 * workspace relocation fixtures for proved rebind, duplicate/copy refusal, old-path accessibility, complete Agent selection, link/exclude transfer, and crash recovery;
-* bounded Library import JSON and workspace YAML fixtures covering exact byte/entry/value/record/depth/scalar limits, duplicate-key/non-expanding feature rejection, and no model/plan before pre-validation, plus tracked-manifest fixtures covering literal Git pathspecs, alternate-index poisoning, blocked recovery, and retry after untracking;
-* golden JSON/help/human snapshots with secret-redaction assertions and hostile ANSI/OSC/CR/bidirectional/invalid-byte fields in previews, errors, lists, and diagnostics, plus `PathValue` round trips for valid UTF-8, invalid bytes, padding boundaries, and every path-bearing field;
-* cache-quota fixtures for the 536,870,912-byte default, persistent set/unset, accepted and rejected per-invocation overrides, complete-batch accounting, confirmation drift, and non-persistence;
+* bounded Library import JSON, workspace YAML, and Agent project-input fixtures covering every exact document/byte/entry/value/record/node/depth/scalar/traversal limit, duplicate-key/non-expanding feature rejection, directory symlinks, and no model/plan before pre-validation, plus tracked-manifest fixtures covering literal Git pathspecs, alternate-index poisoning, blocked recovery, and retry after untracking;
+* golden JSON/help/human snapshots with secret-redaction assertions and hostile ANSI/OSC/CR/bidirectional/invalid-byte fields in previews, errors, lists, and diagnostics, plus `PathValue` round trips for valid UTF-8, invalid bytes, padding boundaries, and every path-bearing field; schema coverage extracts exactly 50 parser leaves, compares their dotted identifiers to the catalog, and validates every leaf/outcome/type pair, every confirmable preview, and every listed error details variant;
+* cache-quota fixtures for the 536,870,912-byte default, persistent set/unset, accepted and rejected per-invocation overrides, complete-batch allocated-byte accounting, retained staging/quarantine visibility, one-object repair headroom, success/failure/crash cleanup, confirmation drift, and non-persistence;
 * profile fixtures proving that auxiliary Codex observations do not split one `(Agent, global root)` identity, plus inaccessible detach/orphan/cleanup fixtures that never claim an unobserved link deletion;
 * removal-only fixtures proving absent Agent executables do not block empty workspace sync, exact global uninstall, or exact manager uninstall while additive, inaccessible, drifted, foreign, and mixed plans remain failures;
 * post-deployment cache-modification fixtures proving the direct-read limitation, read-only detection, and quarantine/refetch behavior on the next mutating use;
-* source-migration fixtures proving workspace impacts remain read-only until the separate journaled migration, plus scale fixtures for 10,000 Library entries, 200 workspace Skills, and 100 global targets.
+* database-corruption fixtures covering backup manifest selection, isolated restore validation, stale WAL exclusion, atomic rollback, explicit reset, and non-adoption; source-migration fixtures proving workspace impacts remain read-only until the separate journaled migration; and scale fixtures for 10,000 Library entries, 200 workspace Skills, and 100 global targets.
 
 Performance budgets are recorded by the implementation Plan before acceptance, then enforced in nonflaky benchmark/integration thresholds. Tests must measure representative search, status, lock planning, and deployment planning rather than only database insertion.
 
@@ -196,4 +186,4 @@ Code signing and macOS notarization are future hardening, not hidden 0.1 accepta
 
 ## Compatibility Checks
 
-Maintain versioned fixtures for JSON API 1, workspace config/lock 1, Library export 1, config 1, database migrations, and manager markers. Every 0.1.x build reads prior patch fixtures and preserves required command/field semantics. A breaking format or command change requires a new product behavior revision, explicit migration, and later minor version.
+Maintain versioned fixtures for every JSON API 1 operation/outcome/error document, workspace config/lock 1, Library export 1, config 1, database migrations, and manager markers. The released 0.1.0 corpus becomes an immutable compatibility input. Every 0.1.x build reads prior patch fixtures, preserves all required fields, encodings, discriminators, ordering, and enum meanings, and proves its consumer ignores newly added optional fields. A breaking format or command change requires a new product behavior revision, explicit migration, and later minor version.
