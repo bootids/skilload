@@ -2,7 +2,7 @@
 plan_id: PLAN-0002
 branch: codex/p1-config-foundation
 pull_request: https://github.com/bootids/skilload/pull/2
-status: active
+status: review
 depends_on: [PLAN-0001]
 ---
 
@@ -66,7 +66,8 @@ The deliberately narrow development command surface is important. Building all 5
 - [x] (2026-08-18 13:26Z) Received explicit execution authorization, reran `mise install` and GitHub/Draft-PR preflight, confirmed `PLAN-0001` is completed on `origin/main`, and entered `active` before implementation.
 - [x] (2026-08-18 13:49Z) Implemented the locked Rust workspace, root CI matrix, strict configuration domain/application/filesystem adapter, four real CLI leaves, API-v1 JSON and safe human projections, 15 core unit/adapter tests, five CLI unit tests, and six isolated CLI integration tests.
 - [x] (2026-08-18 13:54Z) Pushed implementation commit `05ad0c9ae39f244d4287194249b09e29bb56ecff`; [CI run 32144984316](https://github.com/bootids/skilload/actions/runs/32144984316) passed its `ubuntu-24.04` and `macos-15` jobs, including locked format, Clippy, and test checks.
-- [ ] After implementation, acceptance, synchronized documentation, and retrospective are committed and pushed, mark the PR ready, verify its exact head, then automatically enter `review` and push the lifecycle commit.
+- [x] (2026-08-18 13:56Z) With the active implementation at `5faf8ff8a5f06087e572e0c8c20e63ebc0f85b36`, ran `gh pr ready https://github.com/bootids/skilload/pull/2` and observed `isDraft: false` plus the same `headRefOid`; CI run 32145189606 also passed both required jobs for that exact head.
+- [x] (2026-08-18 13:56Z) Created the review-state change that moves this sole Plan copy to `docs/exec-plans/review/` and sets `status: review`.
 - [ ] After a later explicit human merge prompt, use `merge-exec-plan` to pass preflight, complete and push the Plan, merge, update local `main`, and delete the local delivery branch.
 
 ## Surprises & Discoveries
@@ -122,6 +123,8 @@ The deliberately narrow development command surface is important. Building all 5
 The implementation now provides a `0.0.1` Rust binary with only `config get|set|unset|list`, text help/version, strict version-1 TOML validation, all-four-root XDG validation, lock-protected atomic writes, and API-v1/human result projections. It deliberately leaves every non-configuration domain absent rather than exposing a placeholder command. The product-spec index, owning specifications, architecture, and two affected design documents now identify exactly the four implemented Revision 1 behaviors and continue to mark all remaining behavior planned.
 
 Local acceptance on 2026-08-18 passed `mise exec -- cargo fmt --all --check`, `mise exec -- cargo clippy --workspace --all-targets --all-features -- -D warnings`, `mise exec -- cargo test --workspace --all-features --locked` (26 tests: 15 core, five CLI-unit, six CLI-integration), `mise exec -- cargo build --workspace --all-features --locked`, and `git diff --check`. An isolated manual run printed `skilload 0.0.1`, returned the three ordered default configuration entries as one JSON document, changed the cache and Claude settings, returned the padded `PathValue`, and after mutation left only the config document plus the state lock hierarchy; data and cache roots remained absent. [CI run 32144984316](https://github.com/bootids/skilload/actions/runs/32144984316) passed the same locked format, lint, and test matrix on Ubuntu 24.04 and macOS 15.
+
+Review outcome: PR [#2](https://github.com/bootids/skilload/pull/2) is ready for human review. The ready transaction used implementation head `5faf8ff8a5f06087e572e0c8c20e63ebc0f85b36`, which [CI run 32145189606](https://github.com/bootids/skilload/actions/runs/32145189606) passed on both required runners. The Product Baseline remains Revision 1 of `SKL-CLI-002`, `SKL-CLI-003`, `SKL-OPS-006`, and `SKL-CLI-011`. This review-state commit records lifecycle metadata only; a later explicit merge authorization must complete the review-conversation preflight and final archive transition.
 
 ## Review Conversation Log
 
@@ -339,6 +342,12 @@ Implementation evidence on 2026-08-18:
     $ gh run view 32144984316
     CI succeeded: ubuntu-24.04 and macos-15 passed format, Clippy, and locked tests.
 
+    $ gh pr view https://github.com/bootids/skilload/pull/2 --json isDraft,headRefOid
+    {"isDraft":false,"headRefOid":"5faf8ff8a5f06087e572e0c8c20e63ebc0f85b36"}
+
+    $ gh run view 32145189606
+    CI succeeded: ubuntu-24.04 and macos-15 passed for implementation head 5faf8ff.
+
     $ find "$tmp" -mindepth 1 -print
     .../home
     .../config/skilload/config.toml
@@ -419,4 +428,4 @@ The public `Application` facade provides:
 
 At the workspace root, declare compatible direct requirements using the exact starting versions in the Rust reference, then treat committed `Cargo.lock` as the executable dependency snapshot. `skilload-core` depends on `serde`, `toml`, `thiserror`, and `tempfile`. `skilload-cli` depends on `skilload-core`, `clap`, `serde`, `serde_json`, and `base64`. CLI integration tests additionally use `assert_cmd`, `predicates`, and `tempfile`. No other direct dependency is authorized by this Plan without a recorded discovery and Decision Log entry.
 
-Plan revision note: created on 2026-08-18 to turn the completed product/architecture baseline into the smallest real implementation slice. It selects the Rust foundation and exact current direct inputs, fully scopes four Revision 1 behaviors, forbids placeholder domain commands, and defines the application, storage, CLI, validation, documentation, and lifecycle evidence needed for an independently reviewable delivery. The same day, initial commit `c21211b0d1aa55e2c422d6d5929bf65457fb5a91` was pushed, Draft PR https://github.com/bootids/skilload/pull/2 was opened, and its canonical URL plus publication evidence were recorded before the required metadata push.
+Plan revision note: created on 2026-08-18 to turn the completed product/architecture baseline into the smallest real implementation slice. It selects the Rust foundation and exact current direct inputs, fully scopes four Revision 1 behaviors, forbids placeholder domain commands, and defines the application, storage, CLI, validation, documentation, and lifecycle evidence needed for an independently reviewable delivery. The same day, initial commit `c21211b0d1aa55e2c422d6d5929bf65457fb5a91` was pushed, Draft PR https://github.com/bootids/skilload/pull/2 was opened, and its canonical URL plus publication evidence were recorded before the required metadata push. Execution completed on the same day: implementation head `5faf8ff8a5f06087e572e0c8c20e63ebc0f85b36` passed CI, the PR was made ready, and this Plan moved to `review` pending human review and a later explicit merge authorization.
