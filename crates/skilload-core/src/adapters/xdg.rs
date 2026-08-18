@@ -493,7 +493,8 @@ mod tests {
         let resolver = XdgRootResolver;
         let roots = resolver.resolve(&environment).unwrap();
         let config_root = temporary.path().join("config/skilload");
-        fs::remove_dir(&config_root).unwrap();
+        let retired_config_root = temporary.path().join("retired-config-root");
+        fs::rename(&config_root, &retired_config_root).unwrap();
         fs::create_dir(&config_root).unwrap();
 
         assert!(resolver.revalidate(&roots).is_err());
