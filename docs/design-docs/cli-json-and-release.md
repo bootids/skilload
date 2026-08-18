@@ -130,7 +130,7 @@ Human errors use the same code internally, an English message, relevant paths/so
 
 Application request types declare one of `Offline`, `MayResolve`, or `RequiresResolve`. The production network/Git port refuses access for an `Offline` request even if a handler accidentally calls it. Offline includes help/version, Library reads and metadata-only changes, Trust reads/revoke, workspace list/status/delete/remove and a cache-complete relocation rebind where no restoration occurs, global list/status/uninstall, manager operations, cache info/prune/clear, config, and doctor/fix. Cleanup remains possible without source access.
 
-Network-capable requests are explicit source add/Trust add, Library refresh, source or workspace source migration, workspace lock/update/pin and a sync with a cache miss, global install/update/pin and a sync with a cache miss. Migration resolution may only prove that fresh metadata for the proposed name matches the repository ID stored with the old source; it cannot change path or ref under the migration operation. The application result records whether network and which credential class were used, without returning secret material.
+Network-capable requests are explicit source add/Trust add, Library refresh, source or workspace source migration, workspace lock/update/pin and a sync with a cache miss, global install/update/pin and a sync with a cache miss. Migration resolution may only prove that fresh metadata for the proposed name matches the repository ID stored with the old source; it cannot change path or ref under the migration operation. A `source migrate` result separates mutated Library/Trust/global records from read-only workspace impacts; only `workspace migrate-source` may report workspace records as changed. The application result records whether network and which credential class were used, without returning secret material.
 
 ## Human Rendering
 
@@ -150,16 +150,16 @@ Default tests are offline and deterministic:
 * repository/adapter contract tests against fakes and SQLite/filesystem implementations;
 * temporary bare Git repositories with same-name/different-commit branches and tags, ambiguous slash-bearing refs/URL paths, SHA pins, submodules, LFS pointers, symlinks, executable bits, exact valid/invalid Skill-name and bounded-frontmatter fixtures, hostile names, and deleted/unavailable commits;
 * local HTTP fixtures for GitHub metadata, redirects, auth/rate errors, default branches, repository ID changes, and candidate trees;
-* isolated HOME/XDG/Claude/Codex roots and fake Agent/Git/gh/ssh/skilload executables/configuration, including empty/relative/project/cache PATH entries, inherited Git SSH overrides, relative Agent-root environments, outside symlinks back into a worktree, and execution-marker assertions;
+* isolated HOME/XDG/Claude/Codex roots and fake Agent/Git/gh/ssh/skilload executables/configuration, including empty/relative/project/cache PATH entries, inherited Git exec-path/config/repository/index/SSH overrides, fixed-exec-path and bound-real-index assertions, relative Agent-root environments, outside symlinks back into a worktree, and execution-marker assertions;
 * transaction failpoint tests at every journal/filesystem/database phase;
 * workspace relocation fixtures for proved rebind, duplicate/copy refusal, old-path accessibility, complete Agent selection, link/exclude transfer, and crash recovery;
-* bounded workspace YAML and tracked-manifest fixtures covering exact limits, non-expanding feature rejection, literal Git pathspecs, blocked recovery, and retry after untracking;
+* bounded Library import JSON and workspace YAML fixtures covering exact byte/entry/value/record/depth/scalar limits, duplicate-key/non-expanding feature rejection, and no model/plan before pre-validation, plus tracked-manifest fixtures covering literal Git pathspecs, alternate-index poisoning, blocked recovery, and retry after untracking;
 * golden JSON/help/human snapshots with secret-redaction assertions and hostile ANSI/OSC/CR/bidirectional/invalid-byte fields in previews, errors, lists, and diagnostics, plus `PathValue` round trips for valid UTF-8, invalid bytes, padding boundaries, and every path-bearing field;
 * cache-quota fixtures for the 536,870,912-byte default, persistent set/unset, accepted and rejected per-invocation overrides, complete-batch accounting, confirmation drift, and non-persistence;
 * profile fixtures proving that auxiliary Codex observations do not split one `(Agent, global root)` identity, plus inaccessible detach/orphan/cleanup fixtures that never claim an unobserved link deletion;
 * removal-only fixtures proving absent Agent executables do not block empty workspace sync, exact global uninstall, or exact manager uninstall while additive, inaccessible, drifted, foreign, and mixed plans remain failures;
 * post-deployment cache-modification fixtures proving the direct-read limitation, read-only detection, and quarantine/refetch behavior on the next mutating use;
-* scale fixtures for 10,000 Library entries, 200 workspace Skills, and 100 global targets.
+* source-migration fixtures proving workspace impacts remain read-only until the separate journaled migration, plus scale fixtures for 10,000 Library entries, 200 workspace Skills, and 100 global targets.
 
 Performance budgets are recorded by the implementation Plan before acceptance, then enforced in nonflaky benchmark/integration thresholds. Tests must measure representative search, status, lock planning, and deployment planning rather than only database insertion.
 
