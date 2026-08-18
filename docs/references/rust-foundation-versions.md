@@ -17,6 +17,7 @@ The repository baseline deliberately deferred exact Rust and crate versions to t
 * Use ordinary compatible direct requirements with all three numeric components and commit `Cargo.lock`. The lockfile, rather than artificially narrow upper bounds, is the exact dependency snapshot for the binary workspace.
 * The initial CI workflow should pin `actions/checkout` major tag `v5` to commit `fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09` and `jdx/mise-action` major tag `v3` to commit `5228313ee0372e111a38da051671ca30fc5a96db`. Those immutable commits were the tag targets returned by GitHub on 2026-08-18.
 * Node.js, npm, and pnpm are not needed by this slice. Any later repository tooling that adds them must pin them through the root `mise.toml` rather than introducing a parallel toolchain.
+* CI run [#32144984316](https://github.com/bootids/skilload/actions/runs/32144984316) passed on Ubuntu 24.04 and macOS 15 with the pinned `jdx/mise-action` SHA. GitHub emitted a non-failing warning that this action targets deprecated Node.js 20 and was forced onto Node.js 24. Keep the immutable pin for this delivery; reevaluate and revalidate an action upgrade deliberately rather than changing it incidentally.
 
 ## Selected Dependency Roles
 

@@ -65,7 +65,7 @@ The deliberately narrow development command surface is important. Building all 5
 - [x] (2026-08-18 13:09Z) Committed and pushed the initial planning baseline as `c21211b0d1aa55e2c422d6d5929bf65457fb5a91`, opened Draft PR https://github.com/bootids/skilload/pull/2, wrote its canonical URL into frontmatter, and published this metadata evidence; awaiting a later explicit execution trigger.
 - [x] (2026-08-18 13:26Z) Received explicit execution authorization, reran `mise install` and GitHub/Draft-PR preflight, confirmed `PLAN-0001` is completed on `origin/main`, and entered `active` before implementation.
 - [x] (2026-08-18 13:49Z) Implemented the locked Rust workspace, root CI matrix, strict configuration domain/application/filesystem adapter, four real CLI leaves, API-v1 JSON and safe human projections, 15 core unit/adapter tests, five CLI unit tests, and six isolated CLI integration tests.
-- [ ] Push the active implementation and synchronized documentation, wait for the Linux/macOS CI matrix, and record its immutable evidence before the ready/review transaction.
+- [x] (2026-08-18 13:54Z) Pushed implementation commit `05ad0c9ae39f244d4287194249b09e29bb56ecff`; [CI run 32144984316](https://github.com/bootids/skilload/actions/runs/32144984316) passed its `ubuntu-24.04` and `macos-15` jobs, including locked format, Clippy, and test checks.
 - [ ] After implementation, acceptance, synchronized documentation, and retrospective are committed and pushed, mark the PR ready, verify its exact head, then automatically enter `review` and push the lifecycle commit.
 - [ ] After a later explicit human merge prompt, use `merge-exec-plan` to pass preflight, complete and push the Plan, merge, update local `main`, and delete the local delivery branch.
 
@@ -81,6 +81,8 @@ The deliberately narrow development command surface is important. Building all 5
   Evidence: `mise exec -- cargo clippy` reported that `cargo-clippy` was not installed; `mise exec -- rustup component add clippy` installed it under the same pinned toolchain, after which the warning-free workspace lint passed.
 - Observation: macOS resolves temporary-directory paths through `/private/var/...`, so XDG root tests must compare canonical existing prefixes rather than the textual temporary-directory spelling.
   Evidence: the XDG resolver's filesystem-identity check returned the canonical `/private/var/...` path for a `/var/...` temporary fixture.
+- Observation: GitHub forced the pinned `jdx/mise-action` SHA from deprecated Node.js 20 onto Node.js 24 and emitted a warning, but both CI jobs passed.
+  Evidence: CI run 32144984316 emitted the same Node.js warning for `ubuntu-24.04` and `macos-15`; the exact action pin remains verified and its warning is captured in `docs/references/rust-foundation-versions.md`.
 
 ## Decision Log
 
@@ -119,7 +121,7 @@ The deliberately narrow development command surface is important. Building all 5
 
 The implementation now provides a `0.0.1` Rust binary with only `config get|set|unset|list`, text help/version, strict version-1 TOML validation, all-four-root XDG validation, lock-protected atomic writes, and API-v1/human result projections. It deliberately leaves every non-configuration domain absent rather than exposing a placeholder command. The product-spec index, owning specifications, architecture, and two affected design documents now identify exactly the four implemented Revision 1 behaviors and continue to mark all remaining behavior planned.
 
-Local acceptance on 2026-08-18 passed `mise exec -- cargo fmt --all --check`, `mise exec -- cargo clippy --workspace --all-targets --all-features -- -D warnings`, `mise exec -- cargo test --workspace --all-features --locked` (26 tests: 15 core, five CLI-unit, six CLI-integration), `mise exec -- cargo build --workspace --all-features --locked`, and `git diff --check`. An isolated manual run printed `skilload 0.0.1`, returned the three ordered default configuration entries as one JSON document, changed the cache and Claude settings, returned the padded `PathValue`, and after mutation left only the config document plus the state lock hierarchy; data and cache roots remained absent. CI evidence is pending the first implementation push.
+Local acceptance on 2026-08-18 passed `mise exec -- cargo fmt --all --check`, `mise exec -- cargo clippy --workspace --all-targets --all-features -- -D warnings`, `mise exec -- cargo test --workspace --all-features --locked` (26 tests: 15 core, five CLI-unit, six CLI-integration), `mise exec -- cargo build --workspace --all-features --locked`, and `git diff --check`. An isolated manual run printed `skilload 0.0.1`, returned the three ordered default configuration entries as one JSON document, changed the cache and Claude settings, returned the padded `PathValue`, and after mutation left only the config document plus the state lock hierarchy; data and cache roots remained absent. [CI run 32144984316](https://github.com/bootids/skilload/actions/runs/32144984316) passed the same locked format, lint, and test matrix on Ubuntu 24.04 and macOS 15.
 
 ## Review Conversation Log
 
@@ -333,6 +335,9 @@ Implementation evidence on 2026-08-18:
 
     $ target/debug/skilload config set cache_limit_bytes 1073741824 --json
     {"api_version":1,"operation":"config.set","ok":true,"result":{"outcome":"changed",...}}
+
+    $ gh run view 32144984316
+    CI succeeded: ubuntu-24.04 and macos-15 passed format, Clippy, and locked tests.
 
     $ find "$tmp" -mindepth 1 -print
     .../home
