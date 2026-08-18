@@ -2,7 +2,7 @@
 plan_id: PLAN-0001
 branch: codex/p0-product-architecture-baseline
 pull_request: https://github.com/bootids/skilload/pull/1
-status: review
+status: active
 depends_on: []
 ---
 
@@ -76,6 +76,9 @@ The repository currently has governance documents but no product specification, 
 - [x] (2026-08-18 08:26Z) Synchronized all four sixth-pass fixes across product behavior, architecture, source/persistence/deployment/CLI designs, tests, Plan context, and the Git reference; all documentation gates and the hostile-exec-path/alternate-index local Git fixtures pass; commit/push and GitHub reconciliation are next.
 - [x] (2026-08-18 08:27Z) Committed and pushed the sixth-pass fixes plus preliminary ledger as `cda2489164e20400fbc8d83d5225e9d9b2ce7a02`; verified the PR head equals that commit.
 - [x] (2026-08-18 08:31Z) Re-fetched conversation, replied to and resolved all four sixth-pass threads, and reconciled all 30 logged problems plus top-level/review sources; every inline thread reports resolved and no unlogged problem, no-fix outcome, blocker, or status drift remains.
+- [x] (2026-08-18 09:09Z) Re-ran full branch/PR/Plan preflight and classified eight seventh-pass inline problems under RC-031 through RC-038. The missing per-operation API-v1 contract makes acceptance materially incomplete, so PR #1 was returned to Draft and this Plan moved from `review` to `active` for the required rework transaction.
+- [ ] Complete the seventh-pass product, architecture, design, reference, schema, recovery-procedure, and test-contract rework; run focused and complete documentation acceptance gates; commit and push the implementation while PR #1 remains Draft.
+- [ ] Mark PR #1 ready at the pushed rework head, verify it, return this Plan to `review`, then rerun `address-pr-threads` to reply to and resolve RC-031 through RC-038.
 - [ ] After a later explicit human merge prompt, pass preflight, complete and push the Plan, merge the PR, return to updated `main`, and delete the local delivery branch.
 
 ## Surprises & Discoveries
@@ -150,6 +153,8 @@ The repository currently has governance documents but no product specification, 
   Evidence: review thread `PRRT_kwDOT7YN2s6aB8tW` identified unlimited input bytes, entries, values, depth, scalar tokens, alias/category/note lengths, and tags before `ImportPlan` construction.
 - Observation: a literal tracked-file query can inspect the wrong index when caller Git repository variables survive.
   Evidence: review thread `PRRT_kwDOT7YN2s6aB8tZ`, official Git repository-environment documentation, and a local Git 2.50.1 fixture showed an alternate empty `GIT_INDEX_FILE` hiding a tracked manifest while explicit real worktree/Git-directory/index binding found it.
+- Observation: the seventh review pass exposed one materially incomplete acceptance area and seven adjacent determinism/resource/recovery gaps rather than ordinary isolated wording defects.
+  Evidence: thread `PRRT_kwDOT7YN2s6aC9WY` found no required API-v1 payload schema for most of the 50 command leaves, while threads RC-031 through RC-036 and RC-038 found unbounded Agent inputs/fetches, host-dependent path collisions, incompatible quarantine/quota behavior, undefined root naming, no actionable database recovery procedure, and indirect interpreter execution.
 
 ## Decision Log
 
@@ -309,6 +314,9 @@ The repository currently has governance documents but no product specification, 
 - Decision: bind every tracked-manifest query to a cleanly resolved canonical worktree, per-worktree Git directory, and effective index.
   Rationale: a literal pathspec protects path interpretation but not repository selection. Explicit resources plus an application-owned `GIT_INDEX_FILE` keep linked worktrees correct and prevent inherited alternate-index or worktree state from authorizing a manifest write.
   Date/Author: 2026-08-18 / Codex
+- Decision: treat the missing API-v1 schema baseline as material acceptance rework and perform the documented `review`-to-`active` reverse transaction.
+  Rationale: `SKL-PROD-006` promises backward-compatible API-v1 semantics, but an envelope without required per-operation result, preview, and error-detail fields gives later implementations no compatibility baseline. Completing that catalog and synchronizing the seven related contract gaps is necessary before the documentation delivery can truthfully return to review.
+  Date/Author: 2026-08-18 / Codex
 
 ## Outcomes & Retrospective
 
@@ -451,6 +459,38 @@ A sixth review pass identified four more security/resource/ownership gaps. The r
 ### RC-030 - Bind tracked-manifest checks to the real Git index
 
 `Source`: inline thread `PRRT_kwDOT7YN2s6aB8tZ`, comment `PRRC_kwDOT7YN2s7ioQvE`, https://github.com/bootids/skilload/pull/1#discussion_r3802205124. `Problem`: the literal tracked-state check inherits `GIT_INDEX_FILE`, `GIT_DIR`, `GIT_WORK_TREE`, and related repository-selection variables, so an alternate empty index can make an actually tracked local manifest appear untracked. `Disposition`: fixed. `Status`: resolved. `Resolution`: use the sanitized Git runner to resolve and record the canonical worktree, per-worktree Git directory, and effective index without caller `GIT_*` state, then bind both preflight and immediate revalidation to those exact resources with fixed repository arguments and the application-owned index path; synchronize workspace behavior, architecture, deployment/persistence/CLI tests, reference evidence, and Plan context. `Evidence`: pushed commit `cda2489164e20400fbc8d83d5225e9d9b2ce7a02`; all complete documentation gates pass, and a local Git 2.50.1 fixture observed `alternate_index_status=1` for the tracked manifest while the bound real-index query returned status 0. `GitHub outcome`: replied at https://github.com/bootids/skilload/pull/1#discussion_r3802375318; thread resolved: true.
+
+### RC-031 - Bound hostile Agent configuration parsing
+
+`Source`: inline thread `PRRT_kwDOT7YN2s6aC9WB`, comment `PRRC_kwDOT7YN2s7ipv46`, https://github.com/bootids/skilload/pull/1#discussion_r3802594874. `Problem`: normal Agent preflight parses repository-controlled settings and conflict metadata without byte, entry, depth, scalar, or traversal ceilings before ownership checks. `Disposition`: fixed. `Status`: open. `Resolution`: define one versioned streaming pre-validation contract for every project-controlled Agent settings/conflict input, reject unsupported expansion and traversal before model/inventory construction, and synchronize product, architecture, Agent design, tests, and Plan context. `Evidence`: intended seventh-pass remediation commit plus focused boundary fixtures and complete documentation gates. `GitHub outcome`: no reply yet; thread unresolved.
+
+### RC-032 - Enforce a concrete pre-validation fetch budget
+
+`Source`: inline thread `PRRT_kwDOT7YN2s6aC9WF`, comment `PRRC_kwDOT7YN2s7ipv5A`, https://github.com/bootids/skilload/pull/1#discussion_r3802594880. `Problem`: exact-ref acquisition is called bounded but has no numeric pack-byte, object, or elapsed-time ceiling before selected-tree validation, so a small Skill in a large commit can exhaust staging resources. `Disposition`: fixed. `Status`: open. `Resolution`: define Revision 1 acquisition budgets, require a supervised transport/indexing path that stops input before the staging object database exceeds them, return typed measured-limit evidence, and synchronize source behavior/design, threat model, reference conclusions, tests, and Plan context. `Evidence`: intended seventh-pass remediation commit plus focused fetch-boundary contract checks and complete documentation gates. `GitHub outcome`: no reply yet; thread unresolved.
+
+### RC-033 - Define a portable Skill-tree path collision key
+
+`Source`: inline thread `PRRT_kwDOT7YN2s6aC9WH`, comment `PRRC_kwDOT7YN2s7ipv5C`, https://github.com/bootids/skilload/pull/1#discussion_r3802594882. `Problem`: rejecting undefined "case-fold collisions" lets implementations and supported filesystems disagree about Unicode case/normalization collisions for one Git tree. `Disposition`: fixed. `Status`: open. `Resolution`: define a pinned host-independent collision key and target-filesystem alias probe, specify invalid-UTF-8 and lock behavior, and synchronize source behavior/design, Unicode reference, tests, and Plan context. `Evidence`: intended seventh-pass remediation commit plus normalization/collision fixtures and complete documentation gates. `GitHub outcome`: no reply yet; thread unresolved.
+
+### RC-034 - Account for quarantine and repair headroom
+
+`Source`: inline thread `PRRT_kwDOT7YN2s6aC9WP`, comment `PRRC_kwDOT7YN2s7ipv5N`, https://github.com/bootids/skilload/pull/1#discussion_r3802594893. `Problem`: cache quota projection neither counts quarantine/staging bytes nor defines bounded transient headroom and cleanup, so exact repair can either fail near quota or grow storage without limit. `Disposition`: fixed. `Status`: open. `Resolution`: define stable quota accounting, one-object transient repair headroom, serialized cleanup/recovery, success/failure retention, typed capacity errors, cache-info visibility, and synchronized cache/deployment/CLI/test contracts. `Evidence`: intended seventh-pass remediation commit plus near-quota repair fixtures and complete documentation gates. `GitHub outcome`: no reply yet; thread unresolved.
+
+### RC-035 - Define repository-root Skill-name normalization
+
+`Source`: inline thread `PRRT_kwDOT7YN2s6aC9WQ`, comment `PRRC_kwDOT7YN2s7ipv5Q`, https://github.com/bootids/skilload/pull/1#discussion_r3802594896. `Problem`: root-Skill validation compares frontmatter with an undefined normalized repository name, leaving case, punctuation, URL decoding, display spelling, and invalid-result behavior incompatible. `Disposition`: fixed. `Status`: open. `Resolution`: derive one logical root segment from fresh GitHub metadata with an exact ASCII transformation, preserve display spelling separately, reject an empty/overlong result, and add punctuation/case fixtures across source product/design/reference/test surfaces. `Evidence`: intended seventh-pass remediation commit plus root-name fixtures and complete documentation gates. `GitHub outcome`: no reply yet; thread unresolved.
+
+### RC-036 - Document database corruption restore and reset
+
+`Source`: inline thread `PRRT_kwDOT7YN2s6aC9WU`, comment `PRRC_kwDOT7YN2s7ipv5U`, https://github.com/bootids/skilload/pull/1#discussion_r3802594900. `Problem`: base-row corruption disables writes and promises diagnostics for an out-of-band recovery procedure, but no document defines backup selection, salvage/export, replacement or explicit reset, validation, state re-establishment, or rollback. `Disposition`: fixed. `Status`: open. `Resolution`: add a versioned operator procedure to the persistence design and authoritative behavior, including process shutdown, byte-preserving evidence, SQLite-backup validation, atomic restore, destructive reset consequences, post-recovery checks, and rollback. `Evidence`: intended seventh-pass remediation commit plus procedure completeness checks and complete documentation gates. `GitHub outcome`: no reply yet; thread unresolved.
+
+### RC-037 - Specify every API-v1 operation payload
+
+`Source`: inline thread `PRRT_kwDOT7YN2s6aC9WY`, comment `PRRC_kwDOT7YN2s7ipv5Y`, https://github.com/bootids/skilload/pull/1#discussion_r3802594904. `Problem`: the common JSON envelope has no required per-operation result, confirmation-preview, or error-detail schemas, so independent implementations and the manager Skill cannot share or compatibility-test API version 1. `Disposition`: fixed. `Status`: open. `Resolution`: add an authoritative API-v1 schema catalog with reusable scalar/domain records, exhaustive operation-to-result/outcome mapping for every command leaf, preview/action schemas, stable enum ordering, required-versus-optional rules, and code-specific error details; synchronize product index, CLI design, architecture, manager tests, compatibility fixtures, and Plan acceptance. `Evidence`: intended seventh-pass remediation commit plus schema coverage/operation parity checks and complete documentation gates. `GitHub outcome`: no reply yet; thread unresolved.
+
+### RC-038 - Resolve and validate script interpreter chains
+
+`Source`: inline thread `PRRT_kwDOT7YN2s6aC9Wc`, comment `PRRC_kwDOT7YN2s7ipv5d`, https://github.com/bootids/skilload/pull/1#discussion_r3802594909. `Problem`: a directly safe Agent/Git/SSH/helper executable may be a script whose shebang or `/usr/bin/env` lookup selects a repository-controlled interpreter from inherited PATH before the intended program starts. `Disposition`: fixed. `Status`: open. `Resolution`: extend the shared resolver to parse and bound supported shebang chains, resolve every absolute or env-selected interpreter through the same containment/identity rule, reject ambiguous/unsupported chains, supply only resolver-built absolute PATH directories, and revalidate the complete chain before every spawn. `Evidence`: intended seventh-pass remediation commit plus indirect-interpreter execution-marker fixtures and complete documentation gates. `GitHub outcome`: no reply yet; thread unresolved.
 
 ## Context and Orientation
 
