@@ -70,7 +70,7 @@ The deliberately narrow development command surface is important. Building all 5
 - [x] (2026-08-18 13:56Z) Created the review-state change that moves this sole Plan copy to `docs/exec-plans/review/` and sets `status: review`.
 - [x] (2026-08-18) Classified all six inline review concerns in the Review Conversation Log. R1 preserves the documented literal-native-path interpretation; R2 through R6 are ordinary in-scope remediations. Focused core and CLI regressions, locked workspace tests, format, Clippy, build, and diff checks passed; remediation commit `3417b8a2c914b0ed9c16259f969fbc2ba9546031` is pushed before reviewer replies.
 - [x] (2026-08-18) Replied to R1 through R6 from pushed remediation head `3417b8a2c914b0ed9c16259f969fbc2ba9546031`; the final `pr_threads.cjs list --all` reconciliation reports all six inline threads resolved.
-- [x] (2026-08-18) Implemented R7 through R10 in the review state and retained the documented R11 no-fix disposition. Focused core and CLI regressions, locked workspace tests, format, Clippy, build, and diff checks passed; the preliminary remediation log is ready to commit and push before replies and final reconciliation.
+- [x] (2026-08-18) Implemented R7 through R10 in pushed remediation commit `c3977fe5653118487ec0801e3bb6f1cfec749e28` and retained the documented R11 no-fix disposition. Focused core and CLI regressions, locked workspace tests, format, Clippy, build, and diff checks passed; replies and final reconciliation remain.
 - [ ] After a later explicit human merge prompt, use `merge-exec-plan` to pass preflight, complete and push the Plan, merge, update local `main`, and delete the local delivery branch.
 
 ## Surprises & Discoveries
@@ -138,7 +138,7 @@ Review outcome: PR [#2](https://github.com/bootids/skilload/pull/2) is ready for
 
 Review remediation on 2026-08-18 closes five valid in-scope defects: newly used app directories explicitly regain mode `0700`; embedded NUL is rejected from both raw and TOML executable inputs; parser diagnostics never echo malformed user input; known malformed JSON configuration leaves emit one API-v1 `usage_error` envelope; and XDG separation compares existing-directory device/inode identities as well as path ancestry. The full locked workspace suite passes 31 tests (18 core, six CLI unit, seven CLI integration). Remediation commit `3417b8a2c914b0ed9c16259f969fbc2ba9546031` is pushed, each review concern has a reply, and the final full conversation reconciliation reports all six inline threads resolved.
 
-Review remediation added four in-scope protections: recursive XDG root creation now repairs each newly created component before descent and parent-syncs newly created configuration-directory entries after the file replacement; invalid native bytes for a numeric setting no longer become `PathValue`; and unrepresentable TOML versions become an `invalid_state` envelope rather than an invalid API-v1 `SchemaDetails` payload. `mise exec -- cargo fmt --all --check`, `mise exec -- cargo clippy --workspace --all-targets --all-features -- -D warnings`, `mise exec -- cargo test --workspace --all-features --locked` (34 tests: 19 core, six CLI unit, nine CLI integration), `mise exec -- cargo build --workspace --all-features --locked`, and `git diff --check` passed before the preliminary remediation commit.
+Review remediation added four in-scope protections: recursive XDG root creation now repairs each newly created component before descent and parent-syncs newly created configuration-directory entries after the file replacement; invalid native bytes for a numeric setting no longer become `PathValue`; and unrepresentable TOML versions become an `invalid_state` envelope rather than an invalid API-v1 `SchemaDetails` payload. `mise exec -- cargo fmt --all --check`, `mise exec -- cargo clippy --workspace --all-targets --all-features -- -D warnings`, `mise exec -- cargo test --workspace --all-features --locked` (34 tests: 19 core, six CLI unit, nine CLI integration), `mise exec -- cargo build --workspace --all-features --locked`, and `git diff --check` passed in remediation commit `c3977fe5653118487ec0801e3bb6f1cfec749e28`, pushed before replies and final reconciliation.
 
 ## Review Conversation Log
 
@@ -250,7 +250,7 @@ Status: open.
 
 Resolution: `ensure_restrictive_directory` now finds the nearest existing real directory, creates each missing component with `fs::create_dir`, applies mode `0700` before descending, and retains the existing final-directory mode repair.
 
-Evidence: `first_mutation_creates_nested_xdg_roots_under_restrictive_umask` runs the real binary with `umask 0177`, creates absent configuration/state bases and children, persists the configuration, and verifies `0700` on all five created components. `mise exec -- cargo test -p skilload-core --lib --locked` passed 19 tests; the locked workspace suite passed 34.
+Evidence: `first_mutation_creates_nested_xdg_roots_under_restrictive_umask` runs the real binary with `umask 0177`, creates absent configuration/state bases and children, persists the configuration, and verifies `0700` on all five created components. `mise exec -- cargo test -p skilload-core --lib --locked` passed 19 tests; the locked workspace suite passed 34. Remediation commit `c3977fe5653118487ec0801e3bb6f1cfec749e28`.
 
 GitHub outcome: pending reply; thread remains open.
 
@@ -266,7 +266,7 @@ Status: open.
 
 Resolution: `write_document` retains the configuration directories created during the mutation. After staging, syncing, renaming, and syncing `config_root`, it syncs every created directory's parent from innermost to outermost before reporting success.
 
-Evidence: The restrictive-umask integration regression exercises the first-write creation path; `failpoints_preserve_old_bytes_before_rename_and_sync_before_after_failure` still proves the post-sync hook is reached only after the replacement path. The focused core suite passed 19 tests and the locked workspace suite passed 34.
+Evidence: The restrictive-umask integration regression exercises the first-write creation path; `failpoints_preserve_old_bytes_before_rename_and_sync_before_after_failure` still proves the post-sync hook is reached only after the replacement path. The focused core suite passed 19 tests and the locked workspace suite passed 34. Remediation commit `c3977fe5653118487ec0801e3bb6f1cfec749e28`.
 
 GitHub outcome: pending reply; thread remains open.
 
@@ -282,7 +282,7 @@ Status: open.
 
 Resolution: `validate_cache_limit_raw` now returns the established scalar constraint with `path: None` when raw native bytes are not UTF-8; executable path validation retains a `PathValue` diagnostic.
 
-Evidence: `scalar_and_schema_validation_remain_api_v1_representable` asserts the core error has no path, and `json_meta_and_invalid_native_path_errors_are_safe` asserts the real CLI emits a null JSON path for the same raw input. The locked workspace suite passed 34.
+Evidence: `scalar_and_schema_validation_remain_api_v1_representable` asserts the core error has no path, and `json_meta_and_invalid_native_path_errors_are_safe` asserts the real CLI emits a null JSON path for the same raw input. The locked workspace suite passed 34. Remediation commit `c3977fe5653118487ec0801e3bb6f1cfec749e28`.
 
 GitHub outcome: pending reply; thread remains open.
 
@@ -298,7 +298,7 @@ Status: open.
 
 Resolution: `ConfigDocument::from_toml` now rejects a nonnegative TOML schema version above `9_007_199_254_740_991` as `invalid_version` before constructing a schema-version error.
 
-Evidence: `scalar_and_schema_validation_remain_api_v1_representable` covers the domain bound; `out_of_range_schema_versions_keep_json_details_within_api_v1` asserts the real CLI returns `invalid_state` without a `found_version` field and leaves the document unchanged. The locked workspace suite passed 34.
+Evidence: `scalar_and_schema_validation_remain_api_v1_representable` covers the domain bound; `out_of_range_schema_versions_keep_json_details_within_api_v1` asserts the real CLI returns `invalid_state` without a `found_version` field and leaves the document unchanged. The locked workspace suite passed 34. Remediation commit `c3977fe5653118487ec0801e3bb6f1cfec749e28`.
 
 GitHub outcome: pending reply; thread remains open.
 
@@ -314,7 +314,7 @@ Status: open.
 
 Resolution: Retain the current load-linearized no-op. `Application::mutate` returns `unchanged` only after a successful read of the requested state, so an overlapping writer can be ordered after that read. A second read or lock cannot guarantee the state remains unchanged until process return because another writer may commit immediately after it; it would only create state and contention for the lazy idempotent path.
 
-Evidence: `SKL-CLI-007` requires a mutation whose desired state is already satisfied to return `unchanged` without rewriting state. The existing Decision Log records bounded locking for actual writes and optimistic no-op reads; `Application::mutate` uses `ConfigurationStore::replace` only when the desired document differs from the observed document. `repeated_mutations_preserve_file_identity_and_final_unset_keeps_schema_document` verifies that unchanged setters preserve file identity; the locked workspace suite passed 34. No implementation change is warranted.
+Evidence: `SKL-CLI-007` requires a mutation whose desired state is already satisfied to return `unchanged` without rewriting state. The existing Decision Log records bounded locking for actual writes and optimistic no-op reads; `Application::mutate` uses `ConfigurationStore::replace` only when the desired document differs from the observed document. `repeated_mutations_preserve_file_identity_and_final_unset_keeps_schema_document` verifies that unchanged setters preserve file identity; the locked workspace suite passed 34. The no-fix assessment is recorded in commit `c3977fe5653118487ec0801e3bb6f1cfec749e28`. No implementation change is warranted.
 
 GitHub outcome: pending reply; thread remains open.
 
