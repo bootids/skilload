@@ -70,7 +70,7 @@ Git command failures are captured as redacted structured diagnostics. Never pass
 
 ## Candidate Discovery and Frontmatter
 
-List the exact commit tree and locate regular blobs named `SKILL.md` within the documented scan limit. Ignore `.git` by construction. A root `SKILL.md` yields the repository root candidate. An explicit Skill path must contain its own `SKILL.md`; it does not search siblings.
+Stream the exact commit tree and locate regular blobs named `SKILL.md`, counting every visited entry and stopping before the Revision 1 ceiling of 100,000 entries or 257th valid candidate. Ignore `.git` by construction. Never return a truncated candidate set: report `discovery_limit_exceeded` and require an exact Skill path instead. A root `SKILL.md` yields the repository root candidate. An explicit Skill path bypasses repository-wide discovery, must contain its own `SKILL.md`, and does not search siblings.
 
 For every candidate, parse YAML frontmatter with a real parser and require a legal Agent Skills `name` and description as required by the supported Agent contract. The verified name becomes the deployment directory name. Do not execute dynamic content, referenced scripts, or frontmatter extensions. Candidate preview includes validation warnings for Agent-specific fields but skilload does not translate them.
 
@@ -78,7 +78,7 @@ If repository-only input yields more than one valid candidate, return all candid
 
 ## Tree Validation
 
-Walk only entries under the selected root. Enforce configurable default file-count and total-byte limits while reading metadata, before allocating all content. The explicit override is part of the request and confirmation binding.
+Walk only entries under the selected root. The Revision 1 defaults allow 2,000 materialized regular-file/symlink entries and 52,428,800 bytes, where byte accounting sums regular blob sizes and symlink-target blob sizes. Inspect Git metadata and stop before allocating all content when either ceiling is exceeded. `--max-source-files` and `--max-source-bytes` map to an optional application `SourceLimits { max_files, max_bytes }`; validate each supplied unsigned value against its default, keep the default for an omitted dimension, and scope the resulting ceilings to the request's selected source set. JSON previews/results serialize the active values as `source_limits.max_files` and `source_limits.max_bytes`. Bind the complete override and every affected source into the preview and confirmation token but persist neither it nor an unlimited marker. A later update, refetch, or cache-miss restoration therefore requires a new explicit override when the exact selected content exceeds a default.
 
 Accepted entries are directories, regular files, and safe symlinks. Reject gitlinks, special modes, duplicate normalized paths, case-fold collisions that would be ambiguous on supported filesystems, and any path that cannot be represented safely. For a symlink, parse its blob as a relative path, normalize it relative to the link parent, follow the in-tree link graph, and reject absolute, escaping, missing, or cyclic resolution. Preserve the original relative target text after validation.
 
@@ -116,7 +116,7 @@ If the destination already exists, verify its manifest and tree. Reuse only an e
 
 ## Trust Preview and Token
 
-An `ApprovalPreview` contains operation, canonical source, repository ID/current display name, commit, verified Skill name/description, file/byte counts, integrity, ref mutability, warnings, and requested limit override. Human mode renders it and asks for consent only when interactive behavior is allowed.
+An `ApprovalPreview` contains operation, canonical source, repository ID/current display name, commit, verified Skill name/description, file/byte counts, both active file/byte ceilings, integrity, ref mutability, warnings, and requested limit overrides. Human mode renders it and asks for consent only when interactive behavior is allowed.
 
 JSON mode returns a signed-or-random opaque token backed by a short-lived local database record. Store only a cryptographic token hash plus a canonical digest of the complete preview plan (action, all sources/repository IDs/commits, selected targets, overrides, and warnings), semantic `state_revision`, workspace digest when applicable, expiry, and consumed flag. Token bookkeeping does not advance `state_revision`. The second call hashes the presented token, reconstructs and compares the complete plan, acquires final locks, and atomically marks it consumed with the requested operation; any product-state change in that commit advances the revision. It fails on any bound-field drift. This token prevents accidental stale or broadened approval; it is not authentication against the same-account attacker excluded by the threat model.
 
@@ -128,4 +128,4 @@ Neither command changes path, ref, commit, integrity, verified name, Trust state
 
 ## Testing
 
-Default tests use local bare Git repositories and an HTTP fixture server that models GitHub responses, redirects, authentication failures, mutable refs, deleted commits, and rate/error conditions. Fixtures cover hostile paths/modes, filters/hooks that must never execute, submodules, LFS pointers, symlink graphs, resource limits, candidate ambiguity, repository path reuse, confirmation replay/drift, and golden integrity digests. Real GitHub smoke tests are explicit or scheduled and never required for the default suite.
+Default tests use local bare Git repositories and an HTTP fixture server that models GitHub responses, redirects, authentication failures, mutable refs, deleted commits, and rate/error conditions. Fixtures cover the exact discovery, candidate, entry, and byte boundaries; explicit-path discovery bypass; one-shot per-dimension overrides; hostile paths/modes; filters/hooks that must never execute; submodules; LFS pointers; symlink graphs; candidate ambiguity; repository path reuse; confirmation replay/drift; and golden integrity digests. Real GitHub smoke tests are explicit or scheduled and never required for the default suite.

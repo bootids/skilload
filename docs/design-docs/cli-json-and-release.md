@@ -44,7 +44,7 @@ Common presentation arguments are accepted at a documented consistent position:
 * `--json` selects JSON mode and disables all prompts, spinners, color, and progress on stdout.
 * `--confirm-token <opaque>` supplies the token returned by a prior JSON confirmation requirement.
 * `--no-color` disables ANSI styling in human mode; non-TTY output defaults to no styling.
-* Explicit resource-limit or cache-quota overrides belong only to operations that need them and appear in preview/results.
+* Source-validation operations accept `--max-source-files <COUNT>` and `--max-source-bytes <BYTES>` only as explicit per-request ceilings. JSON previews/results carry both active ceilings as `source_limits.max_files` and `source_limits.max_bytes`; they are confirmation-bound and never stored as durable policy. Cache-quota overrides remain separate operation-specific input.
 
 Workspace sync and manager operations accept repeated or multi-value `--agent` and require at least one value. Global install/uninstall/sync/status require one or more `--agent` values when resolving current-environment profiles, or use stored `--profile <id>`/`--all-profiles` selection where specified. Avoid global flags whose presence silently changes product-domain scope.
 

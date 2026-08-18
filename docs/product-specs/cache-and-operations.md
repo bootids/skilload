@@ -66,9 +66,9 @@ The **cache** contains removable external Skill bytes. Durable metadata and desi
 
 ## SKL-OPS-001 - XDG state separation (Revision 1)
 
-**Behavior.** skilload MUST place user configuration under `XDG_CONFIG_HOME`, durable data under `XDG_DATA_HOME`, operational state/journals under `XDG_STATE_HOME`, and removable content under `XDG_CACHE_HOME`, each with documented platform fallbacks. Workspace files remain in the workspace.
+**Behavior.** skilload MUST place user configuration under `XDG_CONFIG_HOME`, durable data under `XDG_DATA_HOME`, operational state/journals under `XDG_STATE_HOME`, and removable content under `XDG_CACHE_HOME`, each with documented platform fallbacks. An XDG home value MUST be used only when it is nonempty and absolute; an unset, empty, or relative value MUST be ignored in favor of its `HOME`-based fallback. `HOME` MUST itself be nonempty and absolute when a fallback is needed, otherwise skilload MUST return a structured environment-path error before filesystem access. Workspace files remain in the workspace.
 
-**Acceptance.** Isolated XDG integration tests show each file category only in its designated root, and clearing the cache root cannot remove durable data or operational ownership records.
+**Acceptance.** Isolated XDG integration tests show each file category only in its designated root, and clearing the cache root cannot remove durable data or operational ownership records. Setting `XDG_DATA_HOME=.data` from two different current directories uses the same absolute `HOME/.local/share` fallback and creates no current-directory `.data`; an invalid fallback `HOME` fails before reading or writing state.
 
 ## SKL-OPS-002 - Durable database ownership (Revision 1)
 

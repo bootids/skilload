@@ -12,9 +12,9 @@ A **workspace** is the exact current directory containing `.skilload.yaml`. The 
 
 ## SKL-WSP-002 - First add creates both files atomically (Revision 1)
 
-**Behavior.** The first successful `workspace add` MUST atomically create both `.skilload.yaml` and `.skilload.lock`. Validation, approval, or write failure MUST leave neither file and MUST leave Agent Skill directories unchanged.
+**Behavior.** The first successful `workspace add` MUST commit `.skilload.yaml` and `.skilload.lock` together as one journaled, recoverable operation. A validation, approval, or write failure returned normally MUST leave neither file and MUST leave Agent Skill directories unchanged. An interruption between the two file renames MAY expose a transitional one-file state only until mandatory journal recovery restores the old absence or completes the new pair.
 
-**Acceptance.** Fault injection at every precommit/write boundary observes either both valid files or neither, never a one-file workspace.
+**Acceptance.** Fault injection at every precommit/write boundary restarts the application and runs recovery before asserting either both valid files or neither. A raw pre-recovery inspection may observe the recorded transitional state, but no recovered state or normally returned command may leave a one-file workspace.
 
 ## SKL-WSP-003 - Nested and non-Git workspaces (Revision 1)
 
@@ -150,9 +150,9 @@ A **workspace** is the exact current directory containing `.skilload.yaml`. The 
 
 ## SKL-WSP-025 - Ownership, exclusion, and status (Revision 1)
 
-**Behavior.** skilload MUST maintain a git-excluded local workspace manifest and a durable global workspace index containing exact owned links, cache targets, Agents, lock digest, and environment roots. In Git repositories it MUST maintain only its exact entries in `.git/info/exclude` and MUST never edit shared `.gitignore`. A missing manifest MAY be rebuilt only when name, link target, commit, and integrity all match. `workspace status` is read-only, reports registered deployments by default, and MAY explicitly rerun Agent preflight.
+**Behavior.** skilload MUST maintain a git-excluded local workspace manifest and a durable global workspace index containing exact owned links, cache targets, Agents, lock digest, and environment roots. In Git repositories it MUST maintain only its exact entries in Git's effective `info/exclude` file, resolving that file through Git rather than assuming `.git` is a directory, and MUST never edit shared `.gitignore`. A missing manifest MAY be rebuilt only when name, link target, commit, and integrity all match. `workspace status` is read-only, reports registered deployments by default, and MAY explicitly rerun Agent preflight.
 
-**Acceptance.** Status creates no state and distinguishes healthy, missing, foreign, stale, degraded, and inaccessible entries. Manifest reconstruction refuses a near match. User `.gitignore` content is unchanged.
+**Acceptance.** Status creates no state and distinguishes healthy, missing, foreign, stale, degraded, and inaccessible entries. Manifest reconstruction refuses a near match. Ordinary repositories and linked worktrees both exclude the manifest through their Git-resolved `info/exclude` file, and user `.gitignore` and pre-existing exclude content remain unchanged.
 
 ## SKL-WSP-026 - Workspace deletion and scale (Revision 1)
 

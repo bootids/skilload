@@ -49,7 +49,7 @@ Application output is structured domain data such as `Changed`, `Unchanged`, `Co
 
 ## XDG Layout
 
-Use environment values when set and these fallbacks on both supported operating systems:
+Use an XDG environment value only when it is nonempty and absolute. Treat an unset, empty, or relative XDG value as absent and use these fallbacks on both supported operating systems:
 
     config: $XDG_CONFIG_HOME/skilload
             or $HOME/.config/skilload
@@ -74,7 +74,7 @@ The expected files/subdirectories are:
     cache/quarantine/
     cache/staging/
 
-Path resolution is pure and creates nothing. Adapters create the minimum parent only when a successful mutation reaches its staging phase. Tests replace all roots and HOME with temporary directories.
+The fallback requires a nonempty absolute `HOME`. If an XDG value needs fallback and `HOME` is missing, empty, or relative, return a typed `invalid_environment_path` before inspecting or creating any state path. Resolve each root once from environment input; never join a relative environment value to the current directory. Path resolution is pure and creates nothing. Adapters create the minimum parent only when a successful mutation reaches its staging phase. Tests replace all roots and HOME with temporary directories.
 
 The cache index is rebuildable operational metadata rather than durable product truth. It stores object size and a monotonic last-use sequence outside immutable cache objects; losing it affects eviction order only and never source identity, pins, Trust, or integrity.
 
@@ -163,7 +163,7 @@ Import first parses and validates the complete document into an `ImportPlan` con
 
 ## Testing Consequences
 
-Default tests use temporary XDG/HOME roots and an in-memory or temporary-file SQLite database compiled with the same FTS5 features as production. Repository contract tests run against both an in-memory fake and SQLite adapter. Tests prove that query construction creates no path, migration backups survive injected failure, FTS rebuild preserves base rows, unknown schema blocks writes, and concurrent mutations return deterministic commit/busy results.
+Default tests use temporary XDG/HOME roots and an in-memory or temporary-file SQLite database compiled with the same FTS5 features as production. Repository contract tests run against both an in-memory fake and SQLite adapter. Path tests cover unset, empty, relative, and absolute values for every XDG variable; prove that relative values fall back identically from different current directories; and prove invalid fallback `HOME` fails before filesystem access. Other tests prove that query construction creates no path, migration backups survive injected failure, FTS rebuild preserves base rows, unknown schema blocks writes, and concurrent mutations return deterministic commit/busy results.
 
 ## Decisions Deferred to P1
 

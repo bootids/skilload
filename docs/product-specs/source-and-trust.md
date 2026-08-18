@@ -36,9 +36,9 @@ A **source** identifies one Skill location and one intended Git ref on GitHub. *
 
 ## SKL-SRC-006 - Repository candidate discovery (Revision 1)
 
-**Behavior.** If input names a repository but not an exact Skill path, skilload MUST scan for valid `SKILL.md` candidates within documented discovery limits. Exactly one candidate MAY proceed automatically. Multiple candidates MUST require an explicit selection; JSON mode MUST return the candidate set and MUST NOT choose one.
+**Behavior.** If input names a repository but not an exact Skill path, skilload MUST scan at most 100,000 Git tree entries and collect at most 256 valid `SKILL.md` candidates. Every visited tree, regular-file, symlink, gitlink, or unsupported entry counts toward the scan ceiling. Exactly one candidate MAY proceed automatically. Multiple candidates MUST require an explicit selection; JSON mode MUST return the candidate set and MUST NOT choose one. Exceeding either discovery ceiling MUST return structured `discovery_limit_exceeded` without a truncated candidate result or persistent change. Discovery limits have no override; supplying an exact Skill path bypasses repository-wide discovery but not selected-Skill validation.
 
-**Acceptance.** A one-Skill repository resolves without an extra selector. A repository containing two valid candidates makes no persistent change until the caller selects one, and its JSON result includes both normalized paths.
+**Acceptance.** A one-Skill repository resolves without an extra selector. A repository containing two valid candidates makes no persistent change until the caller selects one, and its JSON result includes both normalized paths. A scan that would visit entry 100,001 or collect candidate 257 fails with the measured ceiling and instructs the caller to provide an exact path; that exact path proceeds only if the selected Skill satisfies `SKL-SRC-011`.
 
 ## SKL-SRC-007 - Root and complete Skill directory (Revision 1)
 
@@ -66,9 +66,9 @@ A **source** identifies one Skill location and one intended Git ref on GitHub. *
 
 ## SKL-SRC-011 - Resource limits (Revision 1)
 
-**Behavior.** Source validation MUST enforce documented default limits for total file count and total bytes before cache promotion. A caller MAY use an explicit override for a known source; the override MUST be visible in confirmation and JSON input rather than inferred.
+**Behavior.** Source validation MUST default to at most 2,000 materialized entries and 52,428,800 total bytes (50 MiB) per selected Skill before cache promotion. The entry count includes regular files and symlinks but not implicit directories. Total bytes are the exact Git blob sizes of regular files plus preserved symlink-target text. The independent defaults remain in force unless the request explicitly supplies a finite unsigned ceiling through `--max-source-files <COUNT>` and/or `--max-source-bytes <BYTES>`; an omitted dimension keeps its default. JSON previews and results MUST expose the active values as `source_limits.max_files` and `source_limits.max_bytes`. An override MUST be at least the corresponding default, applies only to that request and every selected source in its preview plan, is bound into any preview/confirmation token, and MUST NOT persist in Trust, Library, workspace, lock, global, or configuration state.
 
-**Acceptance.** An over-limit candidate fails without override and reports measured versus allowed values. The same candidate may proceed only when the caller explicitly supplies the supported override and completes any required confirmation.
+**Acceptance.** A 2,001-entry or 52,428,801-byte candidate fails without override and reports both measured values and both active ceilings. The same exact candidate may proceed only when every exceeded dimension has a sufficient explicit numeric override and any required confirmation is completed. A later refetch or update receives the Revision 1 defaults again unless that new request repeats the override.
 
 ## SKL-SRC-012 - Canonical integrity digest (Revision 1)
 
@@ -120,7 +120,7 @@ A **source** identifies one Skill location and one intended Git ref on GitHub. *
 
 ## SKL-TRUST-004 - Noninteractive confirmation token (Revision 1)
 
-**Behavior.** JSON mode MUST never prompt. A confirmation-required response MUST return a short-lived, single-use token bound to the action and complete preview plan: every canonical source, repository ID, commit, selected target/profile, limit override, warning/conflict, durable database revision, and applicable workspace digest. Relevant state drift, expiry, action or plan mismatch, or reuse MUST invalidate the token.
+**Behavior.** JSON mode MUST never prompt. A confirmation-required response MUST return a short-lived, single-use token bound to the action and complete preview plan: every canonical source, repository ID, commit, selected target/profile, active source-limit ceiling, warning/conflict, durable database revision, and applicable workspace digest. Relevant state drift, expiry, action or plan mismatch, or reuse MUST invalidate the token.
 
 **Acceptance.** Replaying a consumed token, applying it after workspace/database/target drift, or reusing a one-source token for a larger batch fails with a structured stale-or-invalid-confirmation error. A fresh token for unchanged state completes only its exact bound action and plan.
 

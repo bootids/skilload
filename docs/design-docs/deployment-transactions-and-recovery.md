@@ -47,11 +47,11 @@ The implementation may add explicitly specified format fields, but never machine
 
 ## Workspace Deployment Manifest
 
-Place a small versioned manifest in the workspace under `.skilload/state/deployments.json` and add that exact path to `.git/info/exclude` when the workspace is a Git repository. The path is local derived state and must not be committed. If a future implementation chooses a different local path, it must preserve the same exclusion and ownership semantics.
+Place a small versioned manifest in the workspace under `.skilload/state/deployments.json` and add that exact path to Git's effective `info/exclude` file when the workspace is a Git repository. The path is local derived state and must not be committed. If a future implementation chooses a different local path, it must preserve the same exclusion and ownership semantics.
 
 The manifest contains workspace canonical path, environment fingerprint, lock digest, and for each Agent: resolved root, exact link path, expected cache target, source, repository ID, commit, integrity, and last committed transaction ID. The durable `known_workspaces`/`owned_links` rows mirror enough data to find and clean known deployments when the workspace manifest is absent or inaccessible.
 
-Modify `.git/info/exclude` through a managed block with a stable marker and only exact skilload-owned entries. Preserve every user line and never edit `.gitignore`. Removal deletes only entries skilload previously inserted and only when no managed state needs them.
+Determine repository membership and the exclude location by invoking Git directly with fixed noninteractive arguments from the workspace. Resolve `git rev-parse --git-path info/exclude`; interpret a relative result against the workspace and retain an absolute result. Do not construct `<workspace>/.git/info/exclude`, because a linked worktree has a `.git` file and normally resolves the exclude path into its common repository. Preflight the resolved file without following an unsafe final path, then modify it through a managed block with a stable marker and only exact skilload-owned entries. Preserve every user line and never edit `.gitignore`. Because linked worktrees may share one resolved exclude file, key managed-block ownership by that resolved file and delete an inserted entry only when no known managed workspace using the same file still needs it.
 
 ## Action Planning and Conflict Classes
 
@@ -93,7 +93,7 @@ SQLite `committed_transactions` is the recovery authority. If its transaction ID
 
 Stage a regular file in the destination's parent filesystem, fsync it, then rename. For an owned existing file/link, rename it to the journal's unique backup name before installing the new entry. A new symlink is created under a unique temporary name, verified with `lstat`/`readlink`, then renamed to the final name. Never follow a final target path while deciding ownership.
 
-Workspace config and lock are a journaled pair: stage both, move old files to transaction backups, install both new files, then commit the database/index anchor. First-add records old absence. Rollback removes only exact transaction-created entries and restores recorded backups.
+Workspace config and lock are a journaled pair: stage both, move old files to transaction backups, install both new files, then commit the database/index anchor. First-add records old absence. An interruption between renames can expose a one-file transitional state before recovery; the journal makes that state identifiable rather than instantaneously atomic. Rollback removes only exact transaction-created entries and restores recorded backups, while roll-forward completes both new files. A normally returned command and a recovered restart expose only the coherent old or new pair.
 
 For link removal, rename the exact owned link into the transaction backup area in the same parent instead of unlinking immediately. After the commit anchor and verification, delete the backup. Foreign or drifted paths stop recovery and surface an explicit manual blocker rather than risking user content.
 
@@ -131,4 +131,4 @@ Doctor uses the same observers across global database, cache, manager, profiles,
 
 ## Failure-Injection Acceptance
 
-The transaction adapter exposes failpoints after every journal write, rename, database commit, and verification. Tests execute each operation with every failpoint, restart a fresh application, run recovery, and assert one coherent old/new state, no unowned change, no dangling temporary target, and a complete/blocked journal explanation. Multi-Agent and multi-source batches receive the same matrix.
+The transaction adapter exposes failpoints after every journal write, rename, database commit, and verification. Tests execute each operation with every failpoint, allow direct pre-recovery inspection to observe a journal-described transitional state, restart a fresh application, run recovery, and then assert one coherent old/new state, no unowned change, no dangling temporary target, and a complete/blocked journal explanation. Git exclusion fixtures cover ordinary repositories and linked worktrees and verify the Git-resolved exclude file while preserving user lines. Multi-Agent and multi-source batches receive the same matrix.
