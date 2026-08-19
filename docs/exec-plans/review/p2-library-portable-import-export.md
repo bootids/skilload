@@ -85,6 +85,9 @@ Revision 2 的 `SKL-CLI-004`、`SKL-CLI-005` 与 `SKL-CLI-012` 以 API-v2 curren
 - [x] (2026-08-19 10:21Z) 已检查完整 staged diff、`git diff --check`，并将代码、测试、产品/API/设计/reference 文档和 preliminary review ledger 以 `03b4aa0de8b05963b0c5a2a3ce7b798684d3a92c` 推送；local/upstream/Draft PR #3 head 已核对为同一 SHA。
 - [x] (2026-08-19 10:23Z) 已执行 `gh pr ready https://github.com/bootids/skilload/pull/3`，确认 `isDraft: false`、`headRefOid: 73f5634a5b9871bb635f5bf8c4fd36ea81bee816` 与已推送 active Plan HEAD 相同；本文件随 review-state commit 移入 `review/`，随后必须重新读取完整 PR 会话并逐源回复/关闭九个线程。
 - [x] (2026-08-19 10:32Z) 已重新读取完整 PR 会话：4 条 top-level trigger、41 个 review body 和 32 个 inline thread 没有新增独立问题；全部 32 个 thread 为 resolved，九个新 source 均已回复、关闭并写入 Review Conversation Log。
+- [x] (2026-08-19 10:36Z) 最终 ledger commit 推送后重新读取 PR 会话，发现六个新的 inline review 问题；均是既有 P2 durable schema、staging identity、portable source 或 API-v2 文档边界内的 ordinary fix，已记录为 open，不执行 review-to-active 逆向事务。
+- [x] (2026-08-19 10:38Z) 已在 review 状态完成六项新增 remediation：empty tags schema/state revision singleton corruption、export API-v2 wording、first staging inode binding、100-byte repository bound 和 immutable commit equality；新增 focused regressions、完整 workspace gates 和 immutable-source CLI smoke 均通过。
+- [ ] 检查完整 diff、运行 `git diff --check`，提交并推送六项 fix、文档和 preliminary review ledger，再逐源 GitHub 回复和关闭。
 - [ ] 收到明确人类合并授权后，完成预检、评审会话记录、completed 事务、必要检查、合并、默认分支更新和本地交付分支清理。
 
 ## Surprises & Discoveries
@@ -219,6 +222,10 @@ P2 implementation 与完整验证已完成，PR #3 已于 2026-08-19 05:57Z 转�
 2026-08-19 10:23Z 已完成 active-to-ready 的 GitHub 事务：PR #3 为 open、ready，`headRefOid` 等于完整 remediation/active-Plan evidence commit `73f5634a5b9871bb635f5bf8c4fd36ea81bee816`。本 review-state commit 只移动本 Plan 并记录 ready evidence；九个新 review source 仍保持 open，下一步由 `address-pr-threads` 在 review 状态重新获取会话、回复并关闭。
 
 2026-08-19 10:32Z 的最终 conversation reconciliation 确认：4 条 top-level `@codex` trigger 和 5 个非空 bot review body 只触发 inline review，不含新的独立问题；32 个 inline thread 均为 resolved，Plan 的 32 个 source heading 与 GitHub thread 一一对应。九项本轮 remediation 均引用 code commit `03b4aa0de8b05963b0c5a2a3ce7b798684d3a92c`、验证和 reply URL；本条 review documentation commit 推送后将再次核对 PR head。
+
+2026-08-19 10:36Z 在 final ledger commit 推送后，自动 review 对最新 head 新增六个 inline source。它们要求空 Library 的 tags schema probe、state revision singleton、export acceptance API-v2 cross-reference、first-import staging inode binding、100-byte repository name 和 commit-intent/resolved-commit equality。所有问题都直接收紧既有 P2 durable/evidence contract，不增加命令、行为 ID 或产品 revision；本 Plan 保持 `review`，先记录 source-complete open ledger 后执行普通 review remediation。
+
+2026-08-19 10:38Z 的第二轮 ordinary review remediation 已完成本地实现。`validate_database` 现在独立 probe empty Library 的 required tags schema 且验证 state revision singleton；first import 与 export 一样在 held staging FD/descriptor-relative entry 上执行 pre/post inode comparison。Source validation 限制 GitHub repository identity 到 100 bytes，并要求 immutable ref SHA 等于 resolved commit；product spec 消除了 export API-v1 遗留文字。core 66 tests、workspace gates 与无状态 immutable-source CLI smoke 均通过，待 preliminary commit/push。
 ## Review Conversation Log
 
 
@@ -734,6 +741,102 @@ Evidence: `03b4aa0de8b05963b0c5a2a3ce7b798684d3a92c` 已推送；`export_io_uses
 
 GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_r3812175152；thread resolved: true。
 
+### PRRC_kwDOT7YN2s7jOVB2 — empty Library 的 tags schema probe
+
+Source: 内联评论 `PRRC_kwDOT7YN2s7jOVB2`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3812184182)；线程 `PRRT_kwDOT7YN2s6abnkR`，当前未解决。
+
+Problem: `library_entries` 为空时不会调用 `load_tags`，缺失或 malformed `library_tags` table 可被 export 误报为健康空 Library。
+
+Disposition: fixed
+
+Status: open
+
+Resolution: `crates/skilload-core/src/adapters/sqlite_library.rs` 新增 `validate_library_tags_schema`，在 entry iteration 前以 required-column probe 验证 `library_tags`；新增 `empty_library_with_missing_tags_schema_is_database_corrupt`。
+
+Evidence: `mise exec -- cargo test -p skilload-core --locked` 通过（66 tests），empty durable schema fixture 返回 `database_corrupt`；待本轮 preliminary commit SHA。
+
+GitHub outcome: 未回复；thread resolved: false。
+
+### PRRC_kwDOT7YN2s7jOVB8 — state revision singleton
+
+Source: 内联评论 `PRRC_kwDOT7YN2s7jOVB8`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3812184188)；线程 `PRRT_kwDOT7YN2s6abnkW`，当前未解决。
+
+Problem: 多个 `state_revision` row 时 `query_row` 任取一个，read/dry-run 可误报健康，后续 import 才以 `invalid_state` 失败而绕过 corruption recovery。
+
+Disposition: fixed
+
+Status: open
+
+Resolution: `validate_database` 现在对 `state_revision` 调用 `singleton_i64`，缺失、额外或错误类型均归为 `database_corrupt`；新增 `multiple_state_revision_rows_are_database_corrupt`。
+
+Evidence: `mise exec -- cargo test -p skilload-core --locked` 通过（66 tests）；待本轮 preliminary commit SHA。
+
+GitHub outcome: 未回复；thread resolved: false。
+
+### PRRC_kwDOT7YN2s7jOVCG — export acceptance 的 API-v2 引用
+
+Source: 内联评论 `PRRC_kwDOT7YN2s7jOVCG`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3812184198)；线程 `PRRT_kwDOT7YN2s6abnkc`，当前未解决。
+
+Problem: `SKL-LIB-009` acceptance 仍将 command result 称为 API-v1，和同层 product spec 的 API-v2 sole-current-producer contract 冲突。
+
+Disposition: fixed
+
+Status: open
+
+Resolution: `docs/product-specs/library.md` 的 `SKL-LIB-009` acceptance 已改为 API-v2 command result；不改文件 output、错误或 revision semantics。
+
+Evidence: 当前 `SKL-CLI-004` Revision 2、product index 和 Library export acceptance 一致；`git diff --check` 与完整 workspace gates 通过，待本轮 preliminary commit SHA。
+
+GitHub outcome: 未回复；thread resolved: false。
+
+### PRRC_kwDOT7YN2s7jOVCL — first-import staging inode
+
+Source: 内联评论 `PRRC_kwDOT7YN2s7jOVCL`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3812184203)；线程 `PRRT_kwDOT7YN2s6abnkg`，当前未解决。
+
+Problem: 首次 database publish 的 `renameat_with` 使用 staging name，但没有把该 entry 与 held staging file inode 比较；同账号 replacement 可让 import 报告 `changed` 却发布不同 inode。
+
+Disposition: fixed
+
+Status: open
+
+Resolution: `FirstImportStaging::verify_entry` 在 `renameat_with` 前后以 `fstat`/descriptor-relative `statat(SYMLINK_NOFOLLOW)` 比较 held staging FD；drift 返回 `database_identity_drift`，不报告 success。新增 `first_import_reports_staging_identity_drift_after_publish_race`。
+
+Evidence: core 66 tests 的 deterministic replacement fixture 证明 foreign inode 被 publish 时 import 返回 error；待本轮 preliminary commit SHA。
+
+GitHub outcome: 未回复；thread resolved: false。
+
+### PRRC_kwDOT7YN2s7jOVCO — GitHub repository name length
+
+Source: 内联评论 `PRRC_kwDOT7YN2s7jOVCO`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3812184206)；线程 `PRRT_kwDOT7YN2s6abnkj`，当前未解决。
+
+Problem: `SourceIdentity` 接受 101+ byte repository component，尽管 GitHub repository metadata name 上限为 100 ASCII characters。
+
+Disposition: fixed
+
+Status: open
+
+Resolution: `crates/skilload-core/src/domain/source.rs` 将 normalized repository 限制为 1–100 ASCII bytes，并新增 `portable_source_rejects_github_overlength_repository`；`SKL-SRC-002` 同步记录已存在 GitHub identity constraint。
+
+Evidence: `docs/references/github-repository-identity-and-auth.md` 的 verified 100-character limit；core 66 tests 通过，待本轮 preliminary commit SHA。
+
+GitHub outcome: 未回复；thread resolved: false。
+
+### PRRC_kwDOT7YN2s7jOVCV — immutable commit source evidence
+
+Source: 内联评论 `PRRC_kwDOT7YN2s7jOVCV`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3812184213)；线程 `PRRT_kwDOT7YN2s6abnkm`，当前未解决。
+
+Problem: `ref_kind: "commit"` 的 source ref 和 `ResolvedSkill.commit` 可各自合法却不同，产生 normal resolution 不可能生成的 immutable source evidence。
+
+Disposition: fixed
+
+Status: open
+
+Resolution: `ResolvedSkill::new` 对 commit-kind source 要求 `source.ref_value == commit`，并新增 `immutable_source_requires_matching_resolved_commit`；`SKL-SRC-002`/`SKL-SRC-005` 同步澄清 immutable evidence。
+
+Evidence: core 66 tests 和隔离 CLI smoke 均证明 mismatch 返回 `validation_failed` 且不创建 XDG state；待本轮 preliminary commit SHA。
+
+GitHub outcome: 未回复；thread resolved: false。
+
 ## Context and Orientation
 
 
@@ -979,3 +1082,5 @@ Library 是本机可搜索的来源元数据集合；在本交付中它只保存
 计划修订说明（2026-08-19 10:23Z）：在所有 remediation、测试、产品/API/设计/reference 和 active Plan evidence 均已推送后，`gh pr ready` 返回 `isDraft: false` 且 `headRefOid` 与 `73f5634a5b9871bb635f5bf8c4fd36ea81bee816` 一致。本 commit 将唯一 Plan copy 移至 `review/`、设置 `status: review` 并记录 ready evidence；下一步重新执行完整 PR 会话 reconciliation。
 
 计划修订说明（2026-08-19 10:32Z）：review-state 下重新读取完整 GitHub 会话后，九个 remediation thread 均已使用具体 code SHA、验证和中文说明回复，并在 reply 成功后逐个关闭。最终列表显示 32 个 thread 全部 resolved、32 个 Plan source 全部覆盖、无新 top-level/review-body 问题；本次最终 Review Conversation Log commit 推送后再进行一次全量核对。
+
+计划修订说明（2026-08-19 10:36Z）：最终 ledger commit 触发的最新 GitHub review 提出六项新的 ordinary P2 fixes。它们已逐源加入 Review Conversation Log（fixed/open），涵盖 empty-table corruption、singleton revision、API-v2 wording、first staging identity、repository length 和 immutable SHA consistency；当前 Plan/PR 均保持 `review`/ready，等待普通 remediation、验证、push 和 thread closure。

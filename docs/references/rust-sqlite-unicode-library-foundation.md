@@ -20,7 +20,7 @@
 
 * P2 仅建立 Library 元数据表；即使嵌入式 SQLite 已具备 FTS5，也不得预先暴露 `library search` 或声明 `SKL-LIB-004` 已完成。
 * Unicode 15.1.0 表的数据文件和生成输出必须保留上游许可证与版本说明。更新表、`unicode-normalization` 或 SQLite 版本属于刻意依赖变更：更新本参考、锁文件、版本断言与完整验证证据，不能作为顺手升级。
-* `rustix::fs::renameat` 或 `renameat_with` 必须仅接收已通过 no-follow 打开并经 device/inode 重验的父目录 handle，以及无分隔符的 staging/output 文件名；将任一绝对或未绑定 path 传给它会恢复被本交付禁止的路径重新解析窗口。对于会在最终检查后被同账号进程替换的 staging entry，publish 前后都必须用 `fstat`/`statat(..., SYMLINK_NOFOLLOW)` 比较 device/inode；不匹配时不得报告成功，也不得让 `NamedTempFile` path cleanup 删除未知 replacement。
+* `rustix::fs::renameat` 或 `renameat_with` 必须仅接收已通过 no-follow 打开并经 device/inode 重验的父目录 handle，以及无分隔符的 staging/output 文件名；将任一绝对或未绑定 path 传给它会恢复被本交付禁止的路径重新解析窗口。export 和首次 database publish 都必须在 rename 前后用 `fstat`/`statat(..., SYMLINK_NOFOLLOW)` 比较 held staging FD 与 directory entry；不匹配时不得报告成功，也不得让 `NamedTempFile` path cleanup 删除未知 replacement。
 * `rusqlite` 的 `backup` 特性暂不加入；尚未实现的前向数据库迁移和恢复行为继续由后续交付负责。
 
 ## 来源

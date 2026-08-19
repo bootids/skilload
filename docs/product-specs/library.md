@@ -56,7 +56,7 @@ The **Library** is the user's durable, searchable collection of source metadata.
 
 **Behavior.** Library export MUST 生成确定性、版本化的 JSON，其中只含可移植的 Library 来源与元数据；它 MUST 排除 Trust、全局 desired state、manager records、已知 workspace paths、本机 profile IDs、凭据、cache content 和不可移植的操作时间。`library export --output <PATH>` MUST 向请求的原生路径原子写入且仅写入一个可移植的 `LibraryExportData` 文档；正常的人类输出或 `--json` 操作结果 MUST 保持在该文件之外。创建 staging 文件前，export MUST 通过不跟随 symlink 的检查和有效 XDG root identity 比较，拒绝指向活动 `data/skilload.db`、`skilload.db-wal`、`skilload.db-shm` 或 `state/locks/database.lock` 的 target；它不得替换这些 skilload-owned path 或在其处创建临时文件。对其余既有普通文件，export MUST 在其父目录创建临时文件、完整写入并 sync 文件、原子 rename，再 sync 父目录；rename 前的失败 MUST 保留旧 target 或无 target 并清理 staging。若 rename 后的父目录 sync 失败，命令 MUST 返回错误且不得声称旧 target 仍在；新文档 MAY 已可见，但不得报告成功。
 
-**Acceptance.** 检查 export 找不到本机绝对路径或 authorization/deployment record。未改变 Library 状态的重复 export MUST 产生语义相同、排序稳定的数据，并以原子替换完成请求路径的输出；输出文件本身必须是 `LibraryExportData`，命令的人类或 API-v1 操作结果不得混入其中。针对活动 database、WAL、SHM 和 database lock 的 target fixture 必须在创建 staging 前失败且保持该路径不变。注入 rename 前失败时旧普通 target 或无 target 必须保留；注入 rename 后父目录 sync 失败时命令必须失败，fixture 可以观察到新 target，且不得把该情形断言为旧 target 保留。
+**Acceptance.** 检查 export 找不到本机绝对路径或 authorization/deployment record。未改变 Library 状态的重复 export MUST 产生语义相同、排序稳定的数据，并以原子替换完成请求路径的输出；输出文件本身必须是 `LibraryExportData`，命令的人类或 API-v2 操作结果不得混入其中。针对活动 database、WAL、SHM 和 database lock 的 target fixture 必须在创建 staging 前失败且保持该路径不变。注入 rename 前失败时旧普通 target 或无 target 必须保留；注入 rename 后父目录 sync 失败时命令必须失败，fixture 可以观察到新 target，且不得把该情形断言为旧 target 保留。
 
 
 ## SKL-LIB-010 - Atomic import and conflicts (Revision 4)

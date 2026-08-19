@@ -392,6 +392,9 @@ impl SqliteLibraryRepository {
                 self.hooks
                     .after_first_publish_destination_check(&database)?;
                 data_directory.revalidate()?;
+                staging.verify_entry(&staging.name)?;
+                self.hooks
+                    .after_first_staging_identity_check_before_publish(&database)?;
                 let database_name = database
                     .file_name()
                     .ok_or_else(Self::database_identity_drift)?
@@ -415,6 +418,10 @@ impl SqliteLibraryRepository {
                         database_sync_error(&database, "publish committed staging database", error)
                     }
                 })?;
+                if let Err(error) = staging.verify_entry(&database_name) {
+                    staging.file.disable_cleanup(true);
+                    return Err(error);
+                }
                 staging.mark_published();
                 data_directory.revalidate()?;
                 data_directory.handle.sync_all().map_err(|error| {
@@ -514,6 +521,13 @@ trait PersistenceHooks: Send + Sync {
     }
 
     fn after_first_publish_destination_check(&self, _database: &Path) -> Result<(), AppError> {
+        Ok(())
+    }
+
+    fn after_first_staging_identity_check_before_publish(
+        &self,
+        _database: &Path,
+    ) -> Result<(), AppError> {
         Ok(())
     }
 
@@ -655,6 +669,17 @@ impl<'directory> FirstImportStaging<'directory> {
         self.file.disable_cleanup(true);
         self.published = true;
     }
+
+    fn verify_entry(&self, name: &std::ffi::OsStr) -> Result<(), AppError> {
+        let held = fstat(self.file.as_file())
+            .map_err(|_| SqliteLibraryRepository::database_identity_drift())?;
+        let entry = statat(&self.directory.handle, name, AtFlags::SYMLINK_NOFOLLOW)
+            .map_err(|_| SqliteLibraryRepository::database_identity_drift())?;
+        if held.st_dev != entry.st_dev || held.st_ino != entry.st_ino {
+            return Err(SqliteLibraryRepository::database_identity_drift());
+        }
+        Ok(())
+    }
 }
 
 impl Drop for FirstImportStaging<'_> {
@@ -754,14 +779,13 @@ fn validate_database(connection: &Connection, path: &Path) -> Result<(), AppErro
             supported_version: SCHEMA_VERSION,
         });
     }
-    let state_revision: i64 = connection
-        .query_row("SELECT revision FROM state_revision", [], |row| row.get(0))
-        .map_err(|_| AppError::database_corrupt(NativePath::new(path.to_path_buf())))?;
+    let state_revision = singleton_i64(connection, "SELECT revision FROM state_revision", path)?;
     if state_revision < 0 {
         return Err(AppError::database_corrupt(NativePath::new(
             path.to_path_buf(),
         )));
     }
+    validate_library_tags_schema(connection, path)?;
     let integrity: String = connection
         .query_row("PRAGMA integrity_check", [], |row| row.get(0))
         .map_err(|error| database_error(path, error))?;
@@ -806,6 +830,13 @@ fn singleton_i64(connection: &Connection, query: &str, path: &Path) -> Result<i6
         )));
     }
     Ok(value)
+}
+
+fn validate_library_tags_schema(connection: &Connection, path: &Path) -> Result<(), AppError> {
+    connection
+        .prepare("SELECT canonical_source, comparison_key, display FROM library_tags LIMIT 0")
+        .map(|_| ())
+        .map_err(|error| database_error(path, error))
 }
 
 fn load_entries(
@@ -1384,6 +1415,43 @@ mod tests {
         assert_eq!(repository.export().unwrap_err().code(), "database_corrupt");
     }
 
+    #[test]
+    fn empty_library_with_missing_tags_schema_is_database_corrupt() {
+        let temporary = tempdir().unwrap();
+        let data = temporary.path().join("data/skilload");
+        let database = data.join("skilload.db");
+        fs::create_dir_all(&data).unwrap();
+        let connection = Connection::open(&database).unwrap();
+        initialize_schema(&connection, &database).unwrap();
+        connection.execute_batch("DROP TABLE library_tags").unwrap();
+        drop(connection);
+        let repository = SqliteLibraryRepository::with_environment(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(XdgRootResolver),
+        );
+
+        assert_eq!(repository.export().unwrap_err().code(), "database_corrupt");
+    }
+
+    #[test]
+    fn multiple_state_revision_rows_are_database_corrupt() {
+        let temporary = tempdir().unwrap();
+        let repository = SqliteLibraryRepository::with_environment(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(XdgRootResolver),
+        );
+        repository
+            .import(&document(vec![entry("skills/review", None)]), false)
+            .unwrap();
+        let database = temporary.path().join("data/skilload/skilload.db");
+        Connection::open(&database)
+            .unwrap()
+            .execute("INSERT INTO state_revision (revision) VALUES (0)", [])
+            .unwrap();
+
+        assert_eq!(repository.export().unwrap_err().code(), "database_corrupt");
+    }
+
     struct BeforeFirstLockFailure;
 
     impl PersistenceHooks for BeforeFirstLockFailure {
@@ -1477,6 +1545,56 @@ mod tests {
         ));
         assert!(!data_directory.join("skilload.db").exists());
         assert!(!displaced_directory.join("skilload.db").exists());
+    }
+
+    struct FirstImportStagingReplacement {
+        replacement: PathBuf,
+    }
+
+    impl PersistenceHooks for FirstImportStagingReplacement {
+        fn after_first_staging_identity_check_before_publish(
+            &self,
+            database: &Path,
+        ) -> Result<(), AppError> {
+            let staging = fs::read_dir(database.parent().unwrap())
+                .unwrap()
+                .map(|entry| entry.unwrap().path())
+                .find(|path| {
+                    path.file_name().is_some_and(|name| {
+                        name.to_string_lossy().starts_with(".skilload-library-db-")
+                    })
+                })
+                .unwrap();
+            fs::remove_file(&staging).unwrap();
+            fs::hard_link(&self.replacement, &staging).unwrap();
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn first_import_reports_staging_identity_drift_after_publish_race() {
+        let temporary = tempdir().unwrap();
+        let replacement = temporary.path().join("replacement.db");
+        let database = temporary.path().join("data/skilload/skilload.db");
+        fs::write(&replacement, b"replacement database").unwrap();
+        let repository = SqliteLibraryRepository::with_hooks(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(XdgRootResolver),
+            Arc::new(FirstImportStagingReplacement {
+                replacement: replacement.clone(),
+            }),
+        );
+
+        let error = repository
+            .import(&document(vec![entry("skills/review", None)]), false)
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            AppError::InvalidState { state, .. } if state == "database_identity_drift"
+        ));
+        assert_eq!(fs::read(database).unwrap(), b"replacement database");
+        assert_eq!(fs::read(replacement).unwrap(), b"replacement database");
     }
     struct ExistingDatabaseReplacement {
         database: PathBuf,

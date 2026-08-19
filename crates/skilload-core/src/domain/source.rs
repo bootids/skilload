@@ -183,6 +183,9 @@ impl ResolvedSkill {
         if !is_lower_hex(&commit, 40) {
             return Err(AppError::validation("resolved_skill_commit", None));
         }
+        if source.ref_kind == RefKind::Commit && source.ref_value != commit {
+            return Err(AppError::validation("resolved_skill_commit_mismatch", None));
+        }
         if !integrity.starts_with("sha256:") || !is_lower_hex(&integrity[7..], 64) {
             return Err(AppError::validation("resolved_skill_integrity", None));
         }
@@ -239,6 +242,7 @@ fn validate_owner(value: &str) -> Result<(), AppError> {
 
 fn validate_repository(value: &str) -> Result<(), AppError> {
     if value.is_empty()
+        || value.len() > 100
         || !value.bytes().all(|byte| {
             byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'-' | b'.' | b'_')
         })
@@ -531,6 +535,51 @@ mod tests {
             ),
             Err(AppError::Validation { constraint, .. })
                 if constraint == "source_repository_display_mismatch"
+        ));
+    }
+
+    #[test]
+    fn portable_source_rejects_github_overlength_repository() {
+        let repository = "a".repeat(101);
+        assert!(matches!(
+            source_with(
+                "owner",
+                &repository,
+                &repository,
+                "skills/review",
+                RefKind::Branch,
+                "refs/heads/main",
+            ),
+            Err(AppError::Validation { constraint, .. }) if constraint == "source_repository"
+        ));
+    }
+
+    #[test]
+    fn immutable_source_requires_matching_resolved_commit() {
+        let source = source_with(
+            "owner",
+            "repository",
+            "Repository",
+            "skills/review",
+            RefKind::Commit,
+            &"a".repeat(40),
+        )
+        .unwrap();
+        let error = ResolvedSkill::new(
+            source,
+            42,
+            "b".repeat(40),
+            "sha256:0123456789012345678901234567890123456789012345678901234567890123".to_owned(),
+            "review".to_owned(),
+            "Description".to_owned(),
+            1,
+            10,
+        )
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            AppError::Validation { constraint, .. } if constraint == "resolved_skill_commit_mismatch"
         ));
     }
 
