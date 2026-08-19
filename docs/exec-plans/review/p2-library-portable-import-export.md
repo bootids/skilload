@@ -70,6 +70,7 @@ depends_on: [PLAN-0002]
 - [x] (2026-08-19 05:55Z) 实现提交 `4c6a6919921cabcbc29b11cfa255466993ad2adf` 已推送；local、origin branch 与 Draft PR #3 head 相同，PR 仍为 Draft。
 - [x] (2026-08-19 05:57Z) 已运行 `gh pr ready https://github.com/bootids/skilload/pull/3`，随后观察到 `isDraft: false` 与 `headRefOid: 47f22f8a1687d5e46b9d787503565e1badad141a`；该 SHA 等于已推送的 implementation/active-Plan HEAD。首次 review-state commit `b30afe3aa7a772f1ccf1885eb041006528f10c24` 推送后曾再次确认 GitHub/repository head 一致，本 Plan 保持 `review`。
 - [x] (2026-08-19 06:42Z) 已在 review 状态修复 PR #3 的七项实现反馈：首次 database publish 使用 no-clobber、首次 lock failure 清理、SQLite row decode 损坏分类，以及 portable source 的 repository 标点、已验证名称、Git path 和 Git ref 约束；修复与 preliminary review log 已由 `73d30857c5aa6281bec1bddf7004efe5f7e654c5` 推送，local/upstream/PR ready head 已核对为该 SHA。focused source（5）/SQLite（9）测试、workspace all-features locked tests（6、12、46）、格式、Clippy `-D warnings` 与 workspace build 均通过；待逐线程回复。
+- [x] (2026-08-19 06:51Z) 已在最终全量会话复读中核对 16 个 review thread 全部为 resolved；本轮七个实际问题均有 GitHub 回复和 `thread resolved: true`。source-path/ref 的初次批量 reply 请求超时后继续写入，重试产生了两条字节相同的回复；两条 URL 均已如实记录，未删除审计记录。
 - [ ] 收到明确人类合并授权后，完成预检、评审会话记录、completed 事务、必要检查、合并、默认分支更新和本地交付分支清理。
 
 ## Surprises & Discoveries
@@ -93,6 +94,8 @@ depends_on: [PLAN-0002]
   Evidence: 本机 `tempfile-3.27.0/src/file/mod.rs` 分别公开这两个 API；`first_import_does_not_replace_a_database_created_during_publish` 在 absent check 后创建外部 database，断言它保持字节不变且 import 返回 `database_identity_drift`。
 - Observation: portable import 直接反序列化 `SourceIdentity`/`ResolvedSkill`，因此必须在 domain constructor 重放原始 source identity、root-name、normalized path 和 Git ref 约束。
   Evidence: `SourceIdentity::deserialize` 和 `ResolvedSkill::deserialize` 都调用各自 `new`；`docs/product-specs/source-and-trust.md` 的 `SKL-SRC-002`/`SKL-SRC-007` 规定同一 canonical identity 与名称关系。
+- Observation: 七个 GitHub reply/resolve 的批量请求在 30 秒超时后仍继续执行，导致 source-path 与 source-ref 线程各出现两条相同回复。
+  Evidence: 最终 `list --all` 显示 `PRRT_kwDOT7YN2s6aXLAs` 的 `discussion_r3810692503`/`discussion_r3810696527` 与 `PRRT_kwDOT7YN2s6aXLAy` 的 `discussion_r3810693274`/`discussion_r3810698817` 内容字节相同，两个 thread 均为 resolved。
 
 ## Decision Log
 
@@ -154,7 +157,9 @@ P2 implementation 与完整验证已完成，PR #3 已于 2026-08-19 05:57Z 转�
 
 首次 review-state commit `b30afe3aa7a772f1ccf1885eb041006528f10c24` 推送后，PR #3 当时仍为 open、ready，`headRefOid`、local HEAD 与 origin branch 一致，且 `docs/exec-plans/review/p2-library-portable-import-export.md` 是唯一的 current Plan copy。
 
-2026-08-19 06:42Z 的 review remediation 已由 `73d30857c5aa6281bec1bddf7004efe5f7e654c5` 推送：first-import database publish 改为 `persist_noclobber`、creation identity 从 restrictive lock helper 传给 RAII cleanup guard、SQLite durable row decode 错误映射为 `database_corrupt`，并收紧 portable source 的 repository/name/path/ref 重验证。local、upstream 与 PR #3 ready head 已核对为该 SHA；focused source（5）和 SQLite（9）测试、workspace all-features locked tests（6、12、46）、格式、Clippy 和 build 均通过，GitHub thread 回复仍待本次 review workflow 完成。
+2026-08-19 06:42Z 的 review remediation 已由 `73d30857c5aa6281bec1bddf7004efe5f7e654c5` 推送：first-import database publish 改为 `persist_noclobber`、creation identity 从 restrictive lock helper 传给 RAII cleanup guard、SQLite durable row decode 错误映射为 `database_corrupt`，并收紧 portable source 的 repository/name/path/ref 重验证。local、upstream 与 PR #3 ready head 已核对为该 SHA；focused source（5）和 SQLite（9）测试、workspace all-features locked tests（6、12、46）、格式、Clippy 和 build 均通过；GitHub thread 回复于 06:51Z 完成。
+
+2026-08-19 06:51Z 的最终会话核对确认：所有 16 个 inline thread 均为 resolved；本轮七个问题的每个 source 都有相应的 pushed-fix reply。source-path/ref 的批量请求超时留下的重复回复已在 Review Conversation Log 保留两个 URL，未影响修复、验证或 thread 状态。
 
 ## Review Conversation Log
 
@@ -311,13 +316,13 @@ Problem: 首次 import 在 publish 前的 absent 检查与 `NamedTempFile::persi
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: 提交 `73d30857c5aa6281bec1bddf7004efe5f7e654c5` 已修改 `crates/skilload-core/src/adapters/sqlite_library.rs`，用 `persist_noclobber` 发布首次 database；destination 竞争映射为 `database_identity_drift`，并新增 publish-window race 注入测试。
 
 Evidence: `73d30857c5aa6281bec1bddf7004efe5f7e654c5` 已推送，local/upstream/PR #3 ready head 已核对为同一 SHA；`mise exec -- cargo test -p skilload-core --locked sqlite_library`（9 tests）、workspace all-features locked tests、Clippy 与 build 通过。
 
-GitHub outcome: 待回复；线程待解决。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_r3810687979；thread resolved: true。
 
 ### PRRC_kwDOT7YN2s7jHvvl — 可移植 repository 标点
 
@@ -327,13 +332,13 @@ Problem: `SourceIdentity` 将 owner 与 repository 共用仅允许连字符的�
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: 提交 `73d30857c5aa6281bec1bddf7004efe5f7e654c5` 已修改 `crates/skilload-core/src/domain/source.rs`，分离 canonical owner/repository component 校验并允许 repository 的 `.`/`_`；新增 root repository display 拼写的 portable round-trip test。
 
 Evidence: `73d30857c5aa6281bec1bddf7004efe5f7e654c5` 已推送，local/upstream/PR #3 ready head 已核对为同一 SHA；`mise exec -- cargo test -p skilload-core --locked source`（5 tests）、workspace all-features locked tests、Clippy 与 build 通过。
 
-GitHub outcome: 待回复；线程待解决。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_r3810688949；thread resolved: true。
 
 ### PRRC_kwDOT7YN2s7jHvvq — SQLite 行类型损坏诊断
 
@@ -343,13 +348,13 @@ Problem: 持久 SQLite schema 或 Library 列的错误 storage type 产生 `rusq
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: 提交 `73d30857c5aa6281bec1bddf7004efe5f7e654c5` 已修改 `crates/skilload-core/src/adapters/sqlite_library.rs` 的 SQLite error 映射，将 durable row decoding 的列类型、UTF-8、数值及 conversion error 分类为 `database_corrupt`；新增 BLOB column fixture。
 
 Evidence: `73d30857c5aa6281bec1bddf7004efe5f7e654c5` 已推送，local/upstream/PR #3 ready head 已核对为同一 SHA；`mise exec -- cargo test -p skilload-core --locked sqlite_library`（9 tests）、workspace all-features locked tests、Clippy 与 build 通过。
 
-GitHub outcome: 待回复；线程待解决。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_r3810689783；thread resolved: true。
 
 ### PRRC_kwDOT7YN2s7jHvvu — 已验证名称与来源关系
 
@@ -359,13 +364,13 @@ Problem: portable import 仅检查 `ResolvedSkill.name` 的独立语法，没有
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: 提交 `73d30857c5aa6281bec1bddf7004efe5f7e654c5` 已修改 `crates/skilload-core/src/domain/source.rs`，在构造 `ResolvedSkill` 时比较已验证 name 与 source 的非根末段或 root display 派生 segment；新增 root/non-root mismatch 回归测试。
 
 Evidence: `73d30857c5aa6281bec1bddf7004efe5f7e654c5` 已推送，local/upstream/PR #3 ready head 已核对为同一 SHA；`mise exec -- cargo test -p skilload-core --locked source`（5 tests）、workspace all-features locked tests、Clippy 与 build 通过。
 
-GitHub outcome: 待回复；线程待解决。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_r3810690645；thread resolved: true。
 
 ### PRRC_kwDOT7YN2s7jHvv2 — 首次 import 锁失败清理
 
@@ -375,13 +380,13 @@ Problem: 首次 import 在获取 `database.lock` 前创建 state/locks 后，锁
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: 提交 `73d30857c5aa6281bec1bddf7004efe5f7e654c5` 已修改 `crates/skilload-core/src/adapters/configuration.rs` 与 `crates/skilload-core/src/adapters/sqlite_library.rs`：restrictive lock 只在 `create_new` 成功时返回创建 identity，首次 import 在任何目录创建前安装 cleanup guard，并新增锁准备失败回归测试。
 
 Evidence: `73d30857c5aa6281bec1bddf7004efe5f7e654c5` 已推送，local/upstream/PR #3 ready head 已核对为同一 SHA；`mise exec -- cargo test -p skilload-core --locked sqlite_library`（9 tests）、workspace all-features locked tests、Clippy 与 build 通过。
 
-GitHub outcome: 待回复；线程待解决。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_r3810691591；thread resolved: true。
 
 ### PRRC_kwDOT7YN2s7jHvv_ — 可移植 source path 限制
 
@@ -391,13 +396,13 @@ Problem: 当前 source path 只拒绝空、绝对和 `.`/`..` segment，仍接�
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: 提交 `73d30857c5aa6281bec1bddf7004efe5f7e654c5` 已修改 `crates/skilload-core/src/domain/source.rs`，拒绝 control byte、反斜线和 `.git` path segment，同时保留 root source 的空 path；新增 hostile path 回归测试。
 
 Evidence: `73d30857c5aa6281bec1bddf7004efe5f7e654c5` 已推送，local/upstream/PR #3 ready head 已核对为同一 SHA；`mise exec -- cargo test -p skilload-core --locked source`（5 tests）、workspace all-features locked tests、Clippy 与 build 通过。
 
-GitHub outcome: 待回复；线程待解决。
+GitHub outcome: 批量请求超时后产生两条内容相同的回复 https://github.com/bootids/skilload/pull/3#discussion_r3810692503 与 https://github.com/bootids/skilload/pull/3#discussion_r3810696527；thread resolved: true。
 
 ### PRRC_kwDOT7YN2s7jHvwF — 可移植 branch/tag ref 限制
 
@@ -407,13 +412,13 @@ Problem: 当前 branch/tag suffix 只检查 slash 与 `.`/`..` segment，仍接�
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: 提交 `73d30857c5aa6281bec1bddf7004efe5f7e654c5` 已修改 `crates/skilload-core/src/domain/source.rs`，实现完整 Git ref-name suffix 规则并保留 namespace prefix；新增与 `git check-ref-format` 对齐的 malformed-ref 回归测试。
 
 Evidence: `73d30857c5aa6281bec1bddf7004efe5f7e654c5` 已推送，local/upstream/PR #3 ready head 已核对为同一 SHA；`mise exec -- cargo test -p skilload-core --locked source`（5 tests）、workspace all-features locked tests、Clippy 与 build 通过。
 
-GitHub outcome: 待回复；线程待解决。
+GitHub outcome: 批量请求超时后产生两条内容相同的回复 https://github.com/bootids/skilload/pull/3#discussion_r3810693274 与 https://github.com/bootids/skilload/pull/3#discussion_r3810698817；thread resolved: true。
 
 ## Context and Orientation
 
@@ -639,3 +644,5 @@ Library 是本机可搜索的来源元数据集合；在本交付中它只保存
 计划修订说明（2026-08-19 06:42Z）：PR #3 ready-review 发现七项现有 P2 implementation 缺口。本修订在 `review` 状态记录其 source-complete preliminary ledger，并实现 no-clobber database publish、first-lock cleanup、SQLite row corruption mapping 与完整 portable source revalidation；所有修复仍属于既有 Product Baseline，待提交、推送、GitHub 回复和线程关闭后再将记录收束为 resolved。
 
 计划修订说明（2026-08-19 06:45Z）：preliminary review fix/log 提交 `73d30857c5aa6281bec1bddf7004efe5f7e654c5` 已推送，local、upstream 与 PR #3 ready head 已核对。七项 open ledger entry 均已记录具体实现、回归测试和该 SHA；下一步仅为重新读取会话、逐源 GitHub 回复和关闭内联线程。
+
+计划修订说明（2026-08-19 06:51Z）：已重新读取完整 PR 会话并完成逐源 reconciliation。七项 fixed entry 已设为 resolved，记录 pushed implementation SHA、验证、每个回复 URL 和 resolved thread state；所有 16 个 inline thread 当前均为 resolved。两条 timeout-induced duplicate reply 作为真实 GitHub 审计结果保留并在相应条目中说明。
