@@ -1,7 +1,7 @@
 ---
 plan_id: PLAN-0003
 branch: codex/p2-library-portable-import-export
-pull_request: pending
+pull_request: https://github.com/bootids/skilload/pull/3
 status: plan
 depends_on: [PLAN-0002]
 ---
@@ -56,7 +56,7 @@ depends_on: [PLAN-0002]
 - [x] (2026-08-19 02:15Z) 在干净、已同步的 `main` 上完成 mise、GitHub 鉴权、远端抓取、Plan 状态、产品行为和当前 P1 实现核对；`main` 的 HEAD 是已合并 PR #2 的 `39c2fb88d1cd8eea6ee340efecfd64f5be0febd9`。
 - [x] (2026-08-19 02:15Z) 选择 `PLAN-0003`、直接依赖 `PLAN-0002`、文件 slug `p2-library-portable-import-export` 和分支 `codex/p2-library-portable-import-export`；没有开放 PR 或同名远端分支可复用。
 - [x] (2026-08-19 02:15Z) 记录 SQLite/Unicode 依赖证据，并在产品/CLI 设计中补充 Revision-1 文件传输接口澄清；尚未改动任何运行时代码。
-- [ ] 推送本计划与参考/澄清基线，创建或复用以 `main` 为基线的 Draft PR，把其 canonical HTTPS URL 写回 frontmatter 后再次提交推送。
+- [x] (2026-08-19 02:23Z) 已提交并推送规划基线 `b0eb0a4`，创建 Draft PR https://github.com/bootids/skilload/pull/3，并将其 canonical HTTPS URL 写回 frontmatter；下一步提交并推送该 metadata 记录。
 - [ ] 收到明确人类执行授权后，按 `execute-exec-plan` 预检 `PLAN-0002`、Draft PR、分支和工作树，移动本计划到 `active` 并完成下列实现里程碑。
 - [ ] 在代码、测试和同步文档均提交推送后，运行 `gh pr ready`，确认 `isDraft: false` 和 `headRefOid` 等于已推送实现 HEAD，再自动移动计划到 `review`。
 - [ ] 收到明确人类合并授权后，完成预检、评审会话记录、completed 事务、必要检查、合并、默认分支更新和本地交付分支清理。
@@ -296,3 +296,5 @@ Library 是本机可搜索的来源元数据集合；在本交付中它只保存
 `Application` 必须持有 `Arc<dyn ConfigurationStore>`、`Arc<dyn LibraryRepository>` 和 `Arc<dyn LibraryTransferStore>`，但除了 Library commands 不得打开 SQLite。`SqliteLibraryRepository` 只能使用 `StateRootResolver`/`Environment` 的有效 XDG roots，`PortableLibraryTransferStore` 只能处理传入的 native file path；CLI 不得接触 SQL、文件 transaction 或 Unicode table。JSON 序列化必须从 domain/application 结果投影，而不是直接序列化 SQLite 行或 error prose。
 
 计划修订说明（2026-08-19）：创建了 PLAN-0003 的初始计划、SQLite/Unicode 依赖参考和 Revision-1 文件传输接口澄清；没有开始实现。后续首次推送与 Draft PR 创建必须把 URL 和真实发布证据写回本计划。
+
+计划修订说明（2026-08-19）：初始规划基线推送后已创建 Draft PR #3，并记录其 canonical URL；此 metadata 提交必须单独推送，以保持分支、PR 和 frontmatter 一致。
