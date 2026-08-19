@@ -2,7 +2,7 @@
 plan_id: PLAN-0002
 branch: codex/p1-config-foundation
 pull_request: https://github.com/bootids/skilload/pull/2
-status: review
+status: completed
 depends_on: [PLAN-0001]
 ---
 
@@ -73,7 +73,7 @@ The deliberately narrow development command surface is important. Building all 5
 - [x] (2026-08-18) Implemented R7 through R10 in pushed remediation commit `c3977fe5653118487ec0801e3bb6f1cfec749e28`, retained the documented R11 no-fix disposition, replied to every source, and resolved every handled inline thread. The final `pr_threads.cjs list --all` reconciliation reports all eleven actual-problem threads R1 through R11 resolved.
 - [x] (2026-08-18) Pushed in-scope R12 through R14 parser/error-contract remediations in `9135de47b7f7141621b7ef77a2291b9f76227eef` with focused and full locked validation passing, replied to every source, and resolved every handled inline thread. The final `pr_threads.cjs list --all` reconciliation reports all fourteen actual-problem threads R1 through R14 resolved.
 - [x] (2026-08-19) 已分类并完成 R15 与 R16 的在范围内修复，修复提交 `450ae3f4148a8d924f26977c4ebeab932c26d2ce` 已推送：创建后的根绑定会被保留并在重命名前重验，竞争创建目录会先恢复 `0700` 再继续遍历。两个精确回归和完整锁定格式、Clippy、测试（37 个）与构建门禁均通过；已回复两个来源、关闭两个线程，并完成全部 16 个线程的最终核对。
-- [ ] After a later explicit human merge prompt, use `merge-exec-plan` to pass preflight, complete and push the Plan, merge, update local `main`, and delete the local delivery branch.
+- [x] (2026-08-19) 收到明确合并授权后完成只读预检：`mise install`、GitHub 鉴权、干净且已推送的交付分支、`origin/main` 祖先关系、唯一匹配且以 `main` 为基线的 PR #2、`PLAN-0001` 依赖、分支范围、当前 CI、`git diff --check` 与评审会话均通过。`pr_threads.cjs list --all` 将 16 个计划记录与 16 个已解决内联线程逐一对应；三个顶层 `@codex` 触发评论和四个非空审查正文均不构成未记录问题。现将本计划归档为 `completed`；该归档仅在 PR 合入 `main` 后成为默认分支上的正式记录。
 
 ## Surprises & Discoveries
 
@@ -149,6 +149,8 @@ Review remediation added four in-scope protections: recursive XDG root creation 
 
 Review remediation in `9135de47b7f7141621b7ef77a2291b9f76227eef` preserves JSON parser error envelopes when unknown options surround an identifiable configuration leaf, rejects clustered JSON/meta flags, and redacts every unknown configuration-key value. `mise exec -- cargo fmt --all --check`, `mise exec -- cargo clippy --workspace --all-targets --all-features -- -D warnings`, `mise exec -- cargo test --workspace --all-features --locked` (35 tests: 19 core, six CLI unit, 10 CLI integration), `mise exec -- cargo build --workspace --all-features --locked`, and `git diff --check` passed. The corresponding GitHub replies and closure results are recorded in R12 through R14 below; final reconciliation remains a merge preflight requirement.
 2026-08-19 的审查修复已在 `450ae3f4148a8d924f26977c4ebeab932c26d2ce` 推送：配置写入路径保留创建后 XDG 根目录的身份绑定，并在重命名前重新验证；因此同名根目录被重命名并重建时会在持久化前中止。竞争创建者赢得某一目录组件时也会恢复 `0700`。新增的精确回归和完整锁定工作区门禁共通过 37 个测试；R15 与 R16 均已回复并关闭，最终完整会话核对确认 16 个线程全部解决、无未记录问题来源。
+
+2026-08-19 的最终合并预检确认：交付分支 `codex/p1-config-foundation` 的 HEAD `c69467de8610bd627160ef39faeff8ff69c1dc51` 与远端一致，`origin/main` 是其祖先，PR [#2](https://github.com/bootids/skilload/pull/2) 保持开放、非草稿、以 `main` 为基线且处于 `CLEAN`/`MERGEABLE` 状态。`ubuntu-24.04` 和 `macos-15` 当前 CI 均成功；`PLAN-0001` 已在 `origin/main` 完成；`git diff --check` 通过。最新 `pr_threads.cjs list --all` 显示 16 个内联线程全部已解决，并与 R1 至 R16 的来源、处置和状态逐一对应；三个顶层评论仅为 `@codex` 触发，四个非空审查正文均为自动审查样板，未产生额外问题。本次 completed 归档提交推送后仍须以其 SHA 重新核验必需检查和可变 PR 门禁；只有 PR 合入 `main` 后，归档才成为默认分支上的正式交付记录。
 
 ## Review Conversation Log
 
@@ -709,3 +711,5 @@ Plan revision note: created on 2026-08-18 to turn the completed product/architec
 Plan revision note (2026-08-18): follow-up review remediation in `c3977fe5653118487ec0801e3bb6f1cfec749e28` fixes R7 through R10 and records the R11 no-fix decision. Every actual problem source from the full PR conversation is now represented by R1 through R11 with its disposition, evidence, GitHub reply, and resolved thread state; the informational `@codex` top-level comment and boilerplate review bodies raised no separate problem.
 
 Plan revision note (2026-08-19): 已记录并推送 R15、R16 的修复提交 `450ae3f4148a8d924f26977c4ebeab932c26d2ce`、精确回归和完整验证证据。两个来源均已在 GitHub 回复并关闭；最终 `pr_threads.cjs list --all` 核对确认 16 个内联线程全部解决、所有线程来源已记录，且没有新增需要处理的顶层评论或审查正文问题。
+
+Plan revision note (2026-08-19): 收到人类明确合并授权后，已完成 `docs/PLANS.md` 所要求的只读预检，并将本计划从 `review/` 移至 `completed/`、将前置状态改为 `completed`。记录了当前交付头、依赖、CI、分支范围与完整 GitHub 会话的逐项核验结果；合入前若任何重复门禁、必需检查、队列或合并动作失败，必须依照恢复规则还原到 `review`。
