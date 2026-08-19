@@ -1,6 +1,6 @@
 # CLI, JSON, Testing, and Release Design
 
-Status: planned design for the 0.1 CLI MVP. It implements `SKL-CLI-*`, `SKL-PROD-002`, and `SKL-PROD-004` through `SKL-PROD-007`.
+Status: partially implemented design for the 0.1 CLI MVP. `PLAN-0002` implements the `0.0.1` configuration slice for `SKL-CLI-002`, `SKL-CLI-003`, and `SKL-CLI-011`; the remaining CLI, release, and compatibility design remains planned.
 
 ## Behavior Traceability
 
@@ -12,6 +12,8 @@ Status: planned design for the 0.1 CLI MVP. It implements `SKL-CLI-*`, `SKL-PROD
 ## CLI Composition
 
 Use `clap` derive definitions in `crates/skilload-cli` as the single command schema. Help, parser tests, manager asset contract tests, and operation identifiers derive from or are checked against that schema so command lists cannot drift.
+
+The current `0.0.1` schema intentionally registers only the real `config get|set|unset|list` leaves plus text help/version. It uses the same `clap` schema for parsing and help, has no aliases or generated help subcommand, treats unknown future domain names as usage errors, and must not scaffold the remaining canonical leaves before their application behavior exists.
 
 The canonical tree is:
 
@@ -130,7 +132,7 @@ Treat every repository-controlled, path/filesystem-derived, environment-derived,
 
 JSON uses a standards-compliant serializer over original valid string domain values, not their human-display form. JSON escapes its required string control characters. Every native path, whether valid UTF-8 or not, uses the `PathValue` object above; its display member uses the same encoder without outer quotes and its base64 member preserves exact bytes. Debug and error rendering use the terminal-safe field encoder, so a validation failure cannot reintroduce hostile bytes outside a preview.
 
-Do not write persistent logs by default. `--debug` (or a documented environment equivalent) writes redacted diagnostics to stderr. An explicit debug-log destination, if P1 adds it, belongs under XDG state and must be opt-in.
+Do not write persistent logs by default. `--debug` (or a documented environment equivalent) writes redacted diagnostics to stderr. An explicit debug-log destination, if a later delivery adds it, belongs under XDG state and must be opt-in.
 
 ## Test Architecture
 
@@ -158,9 +160,9 @@ Real GitHub and real Claude/Codex smoke tests are explicit, credential-aware job
 
 ## Toolchain and Build
 
-The later P1 foundation adds a root Cargo workspace, committed `Cargo.lock`, `rust-toolchain.toml`, and `mise.toml`. mise pins Rust and any Node/npm/pnpm used only for repository tooling; the released product has no Node runtime dependency.
+The P1 foundation provides a root Cargo workspace, committed `Cargo.lock`, `rust-toolchain.toml`, and `mise.toml`. mise pins Rust and any Node/npm/pnpm used only for repository tooling; the released product has no Node runtime dependency.
 
-The binary links SQLite with FTS5 and an HTTPS client suitable for GitHub. Its required external runtime executables are system `git`, system `ssh` only for SSH Git transport, and the selected Agent CLI only for additive/repair/functional Agent operations. Exact-owned removal-only operations need no Agent executable. `gh` remains optional. Build metadata exposes product version, Git commit, target triple, and manager asset version without embedding build-machine paths or timestamps that prevent reproducibility.
+The current configuration binary intentionally links neither SQLite/FTS5 nor an HTTPS client and executes no external program. The later full 0.1 binary links SQLite with FTS5 and an HTTPS client suitable for GitHub. Its required external runtime executables are system `git`, system `ssh` only for SSH Git transport, and the selected Agent CLI only for additive/repair/functional Agent operations. Exact-owned removal-only operations need no Agent executable. `gh` remains optional. Build metadata exposes product version, Git commit, target triple, and manager asset version without embedding build-machine paths or timestamps that prevent reproducibility.
 
 ## Release Matrix and Provenance
 

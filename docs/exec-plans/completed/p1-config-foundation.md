@@ -1,0 +1,719 @@
+---
+plan_id: PLAN-0002
+branch: codex/p1-config-foundation
+pull_request: https://github.com/bootids/skilload/pull/2
+status: completed
+depends_on: [PLAN-0001]
+---
+
+# Establish the Rust foundation and versioned configuration
+
+This delivery creates the first executable skilload slice without pretending that the full 0.1 CLI exists. A user will be able to run a `0.0.1` development binary, inspect the three supported configuration keys, set or unset their values through human or JSON output, and observe strict schema, path, idempotence, XDG, and no-network behavior. The result is visible through real `skilload config get|set|unset|list` commands and an offline test matrix; every other product command remains absent rather than appearing as a stub.
+
+This ExecPlan is a living document. As work proceeds, the `Progress`, `Surprises & Discoveries`, `Decision Log`, `Outcomes & Retrospective`, and `Review Conversation Log` sections must be kept current. Maintain this document in accordance with `docs/PLANS.md`.
+
+## Delivery Metadata
+
+This is the first implementation delivery after the completed documentation baseline `PLAN-0001`. That predecessor is present with `completed` status on `main` and defines the product and architecture inputs used here. This Plan owns one development vertical slice and one Draft Pull Request. It intentionally does not create SQLite state, source acquisition, Trust, Library, workspace/global deployment, cache content, doctor, manager assets, release archives, or placeholders for those operations.
+
+The branch begins with `pull_request: pending`. After the initial planning commit is pushed and its Draft Pull Request is opened, replace that value with the canonical HTTPS URL, record the publication evidence in `Progress`, commit, and push again. No implementation may begin until a later human prompt explicitly authorizes the `execute-exec-plan` workflow.
+
+## Product Baseline
+
+This delivery fully implements and verifies four atomic Revision 1 behaviors.
+
+* `SKL-CLI-002` Revision 1 in `docs/product-specs/cli-contract.md` requires no-argument invocation to print top-level help, exit zero, and create no file or network request.
+* `SKL-CLI-003` Revision 1 in `docs/product-specs/cli-contract.md` forbids aliases, removed commands, hidden UI/server surfaces, and stub subcommands. The current development schema contains only real configuration leaves plus text meta invocations; representative `add`, `rm`, `use`, `init`, `claude`, `codex`, `tui`, `web`, `collection`, and not-yet-implemented canonical domain commands remain usage errors with no state change.
+* `SKL-OPS-006` Revision 1 in `docs/product-specs/cache-and-operations.md` defines a required version-1 `config.toml` whose only configurable keys are `cache_limit_bytes`, `agents.claude.executable`, and `agents.codex.executable`. The cache value is a positive integer through 9,223,372,036,854,775,807; its absent default is 536,870,912. An Agent value is a nonempty valid-UTF-8 absolute path after current-directory-independent lexical normalization, is stored without probing or executing it, and when absent reports no override plus the fixed basename `claude` or `codex`. Unknown fields, wrong types, unsupported schema versions, relative paths, and invalid numbers fail without rewrite. Repeated set/unset operations are idempotent.
+* `SKL-CLI-011` Revision 1 in `docs/product-specs/cli-contract.md` exposes exactly those keys through `config get|set|unset|list`. It requires human and JSON projections, API-v1 `DecimalU64` for the cache value, API-v1 `PathValue` for configured executable paths, strict type/schema validation, no secret handling, and the common successful `changed`/`unchanged` outcomes.
+
+The implementation must demonstrate the current revisions exactly, then update product-spec status prose without changing the behavior text or revision numbers. `docs/product-specs/README.md` currently says every behavior is planned; execution must make that statement accurate for a partially implemented product. `docs/product-specs/cli-contract.md` and `docs/product-specs/cache-and-operations.md` must identify the four behaviors above as implemented and leave all others planned.
+
+Several other Revision 1 specifications constrain this slice without becoming completed acceptance claims. The implementation uses the four-root validation rules from `SKL-OPS-001`, lazy and offline behavior from `SKL-OPS-005` and `SKL-OPS-008`, safe streams and permissions from `SKL-OPS-009`, and the applicable JSON, error, idempotence, human encoding, and evolution rules from `SKL-CLI-004`, `SKL-CLI-005`, `SKL-CLI-007`, `SKL-CLI-009`, and `SKL-CLI-012`. Those broader IDs remain planned because their acceptance spans commands and domains not present in this delivery. The cache-quota enforcement portions of `SKL-CACHE-003` also remain planned even though configuration stores its limit and default.
+
+The development package version is `0.0.1`. This follows the incomplete-artifact constraint in `SKL-PROD-005` without claiming the complete `0.1.0` command surface, platform matrix, or distribution behavior. Cargo package metadata uses Apache-2.0 and the repository license, preserving but not completing the release-archive acceptance in `SKL-PROD-007`.
+
+## Design and Architecture Inputs
+
+`ARCHITECTURE.md` requires a root Cargo workspace with reusable `skilload-core` and thin `skilload-cli` crates, inward dependencies, presentation-neutral application results, native paths retained as bytes until the CLI boundary, and no CLI-owned filesystem policy. This delivery creates that shape and only the configuration modules needed now. It must not add a second direct filesystem path from command handlers or create dormant modules that return not-implemented errors.
+
+`docs/design-docs/application-and-persistence.md` owns the configuration document, XDG roots, application facade, ports/adapters, and lazy creation approach. In particular, all four effective application roots are resolved before any skilload state access: an XDG home is used only when nonempty and absolute, otherwise the corresponding absolute `HOME` fallback is used; the appended `skilload` roots are lexically normalized, existing prefixes are resolved without creating missing components, and every pair must be non-equal and non-ancestral even through symlink aliases. A query over absent state is an in-memory default view and creates nothing. A successful configuration mutation creates only the configuration root and the operational lock path it needs.
+
+`docs/design-docs/cli-json-and-release.md` owns command parsing and rendering. Use one `clap` schema, disable its automatic `help` subcommand, register no alias, and define only the four implemented configuration leaves. No-argument invocation renders current top-level help successfully. `--help` and `--version` are conventional text-only meta invocations and reject `--json`. `--json` and `--no-color` are global presentation flags for configuration leaves and may appear before or after the nested command.
+
+`docs/product-specs/api-v1.md` fixes the machine shape. The four operation identifiers and data/outcome pairs are:
+
+    config.get    -> ConfigEntryData,    observed
+    config.set    -> ConfigEntryData,    changed | unchanged
+    config.unset  -> ConfigEntryData,    changed | unchanged
+    config.list   -> ConfigEntriesData,  observed
+
+`ConfigEntry` has required `key`, `configured`, `value`, `default_value`, and `default_command` fields. Cache entries use nullable `DecimalU64` `value`, non-null default `"536870912"`, and null command. Agent entries use nullable `PathValue` `value`, null default value, and the non-null fixed command. List order is cache, Claude, then Codex. Every response has one API-v1 success or error envelope and JSON stdout contains no other byte.
+
+Exact selected external versions and primary sources are recorded in `docs/references/rust-foundation-versions.md`. The implementation uses Rust 1.97.1 with edition 2024; direct crate requirements begin at `clap 4.6.6`, `serde 1.0.229`, `serde_json 1.0.151`, `toml 1.1.4`, `thiserror 2.0.20`, `base64 0.23.1`, and `tempfile 3.27.0`; CLI tests use `assert_cmd 2.2.2` and `predicates 3.1.4`. Commit the exact resolution in `Cargo.lock`. No Node, SQLite, HTTP, Git, Agent, async runtime, telemetry, or logging dependency belongs in this delivery.
+
+## Purpose / Big Picture
+
+The repository currently contains only specifications and design documents. This change gives later domain Plans a real, tested inward-facing Rust structure and gives users one complete product slice rather than a scaffold. In an isolated home, a user can inspect defaults without creating files, persist a cache limit or absolute Agent executable override, receive the same meaning in human and JSON modes, repeat the operation without rewriting state, and return to defaults by unsetting it.
+
+The deliberately narrow development command surface is important. Building all 50 final parser leaves now would violate the no-placeholder rule because their application operations do not exist. This Plan proves the architecture with a real vertical slice and lets later Plans add a command only with its implementation and acceptance.
+
+## Progress
+
+- [x] (2026-08-18 12:22Z) Established a clean, up-to-date `main` baseline, verified mise and GitHub authentication, audited all Plan states and the documentation-only implementation, selected `PLAN-0002`, and created `codex/p1-config-foundation`.
+- [x] (2026-08-18 12:22Z) Verified current Rust, crate, standard-library locking, and CI action inputs against primary sources; recorded them in `docs/references/rust-foundation-versions.md` and authored this self-contained `plan`-status delivery.
+- [x] (2026-08-18 13:09Z) Committed and pushed the initial planning baseline as `c21211b0d1aa55e2c422d6d5929bf65457fb5a91`, opened Draft PR https://github.com/bootids/skilload/pull/2, wrote its canonical URL into frontmatter, and published this metadata evidence; awaiting a later explicit execution trigger.
+- [x] (2026-08-18 13:26Z) Received explicit execution authorization, reran `mise install` and GitHub/Draft-PR preflight, confirmed `PLAN-0001` is completed on `origin/main`, and entered `active` before implementation.
+- [x] (2026-08-18 13:49Z) Implemented the locked Rust workspace, root CI matrix, strict configuration domain/application/filesystem adapter, four real CLI leaves, API-v1 JSON and safe human projections, 15 core unit/adapter tests, five CLI unit tests, and six isolated CLI integration tests.
+- [x] (2026-08-18 13:54Z) Pushed implementation commit `05ad0c9ae39f244d4287194249b09e29bb56ecff`; [CI run 32144984316](https://github.com/bootids/skilload/actions/runs/32144984316) passed its `ubuntu-24.04` and `macos-15` jobs, including locked format, Clippy, and test checks.
+- [x] (2026-08-18 13:56Z) With the active implementation at `5faf8ff8a5f06087e572e0c8c20e63ebc0f85b36`, ran `gh pr ready https://github.com/bootids/skilload/pull/2` and observed `isDraft: false` plus the same `headRefOid`; CI run 32145189606 also passed both required jobs for that exact head.
+- [x] (2026-08-18 13:56Z) Created the review-state change that moves this sole Plan copy to `docs/exec-plans/review/` and sets `status: review`.
+- [x] (2026-08-18) Classified all six inline review concerns in the Review Conversation Log. R1 preserves the documented literal-native-path interpretation; R2 through R6 are ordinary in-scope remediations. Focused core and CLI regressions, locked workspace tests, format, Clippy, build, and diff checks passed; remediation commit `3417b8a2c914b0ed9c16259f969fbc2ba9546031` is pushed before reviewer replies.
+- [x] (2026-08-18) Replied to R1 through R6 from pushed remediation head `3417b8a2c914b0ed9c16259f969fbc2ba9546031`; the final `pr_threads.cjs list --all` reconciliation reports all six inline threads resolved.
+- [x] (2026-08-18) Implemented R7 through R10 in pushed remediation commit `c3977fe5653118487ec0801e3bb6f1cfec749e28`, retained the documented R11 no-fix disposition, replied to every source, and resolved every handled inline thread. The final `pr_threads.cjs list --all` reconciliation reports all eleven actual-problem threads R1 through R11 resolved.
+- [x] (2026-08-18) Pushed in-scope R12 through R14 parser/error-contract remediations in `9135de47b7f7141621b7ef77a2291b9f76227eef` with focused and full locked validation passing, replied to every source, and resolved every handled inline thread. The final `pr_threads.cjs list --all` reconciliation reports all fourteen actual-problem threads R1 through R14 resolved.
+- [x] (2026-08-19) 已分类并完成 R15 与 R16 的在范围内修复，修复提交 `450ae3f4148a8d924f26977c4ebeab932c26d2ce` 已推送：创建后的根绑定会被保留并在重命名前重验，竞争创建目录会先恢复 `0700` 再继续遍历。两个精确回归和完整锁定格式、Clippy、测试（37 个）与构建门禁均通过；已回复两个来源、关闭两个线程，并完成全部 16 个线程的最终核对。
+- [x] (2026-08-19) 收到明确合并授权后完成只读预检：`mise install`、GitHub 鉴权、干净且已推送的交付分支、`origin/main` 祖先关系、唯一匹配且以 `main` 为基线的 PR #2、`PLAN-0001` 依赖、分支范围、当前 CI、`git diff --check` 与评审会话均通过。`pr_threads.cjs list --all` 将 16 个计划记录与 16 个已解决内联线程逐一对应；三个顶层 `@codex` 触发评论和四个非空审查正文均不构成未记录问题。现将本计划归档为 `completed`；该归档仅在 PR 合入 `main` 后成为默认分支上的正式记录。
+
+## Surprises & Discoveries
+
+- Observation: The default branch contains one completed documentation Plan and no Cargo manifest, source file, test runner, or open Pull Request; all 123 runtime behavior IDs remain planned.
+  Evidence: `rg --files` listed only governance/product/design/reference documents and `gh pr list --state all` listed only merged PR #1.
+- Observation: A partial parser containing all final command names would immediately conflict with `SKL-CLI-003` because every accepted leaf must dispatch to real behavior.
+  Evidence: `SKL-CLI-001` requires each accepted path to reach an operation, while `SKL-CLI-003` rejects scaffold-only subcommands.
+- Observation: Rust 1.97.1 already includes standard-library cross-process file locks, so the first mutation lock needs no extra crate.
+  Evidence: the official `std::fs::File` documentation marks `lock`, `try_lock`, and `unlock` stable since Rust 1.89.
+- Observation: The mise-installed Rust 1.97.1 toolchain initially lacked Clippy even though `rust-toolchain.toml` names it as a component.
+  Evidence: `mise exec -- cargo clippy` reported that `cargo-clippy` was not installed; `mise exec -- rustup component add clippy` installed it under the same pinned toolchain, after which the warning-free workspace lint passed.
+- Observation: macOS resolves temporary-directory paths through `/private/var/...`, so XDG root tests must compare canonical existing prefixes rather than the textual temporary-directory spelling.
+  Evidence: the XDG resolver's filesystem-identity check returned the canonical `/private/var/...` path for a `/var/...` temporary fixture.
+- Observation: GitHub forced the pinned `jdx/mise-action` SHA from deprecated Node.js 20 onto Node.js 24 and emitted a warning, but both CI jobs passed.
+  Evidence: CI run 32144984316 emitted the same Node.js warning for `ubuntu-24.04` and `macos-15`; the exact action pin remains verified and its warning is captured in `docs/references/rust-foundation-versions.md`.
+- Observation: Canonical path spelling does not prove XDG-root separation for bind mounts or equivalent aliases; pairwise device/inode identity plus relative suffix ancestry is required.
+  Evidence: The new `filesystem_alias_identities_reject_equal_or_nested_application_roots` regression fixture reaches the alias branch with distinct path spellings and a shared filesystem identity.
+- Observation: `DirBuilder::recursive(true)` cannot recover from a restrictive umask because a missing parent can be created without owner search permission before the builder descends into it; syncing only the final configuration directory does not persist its entry in a newly created parent.
+  Evidence: `first_mutation_creates_nested_xdg_roots_under_restrictive_umask` runs the real binary with `umask 0177`, creates previously absent configuration and state roots, persists `config.toml`, and verifies every created component is mode `0700`; the full locked workspace suite passed 34 tests.
+- Observation: 旧的根重验虽构造了刷新后的绑定，却通过 `Result<(), AppError>` 丢弃它；初始创建的应用根因此不能成为后续重验的身份锚点。
+  Evidence: `writes_reject_recreated_configuration_root_after_initial_binding` 在暂存后替换同名配置根，修复后返回错误且两个目录均未得到 `config.toml`。
+
+## Decision Log
+
+- Decision: Make the first implementation delivery a complete configuration vertical slice plus the Rust workspace, not a full parser scaffold or a database-only layer.
+  Rationale: Users can observe and accept the slice independently, while every exposed product leaf has real behavior and later domains can reuse the core/application/CLI boundaries.
+  Date/Author: 2026-08-18 / Codex
+- Decision: Treat `SKL-CLI-002`, `SKL-CLI-003`, `SKL-OPS-006`, and `SKL-CLI-011` as the only completed product IDs in this PR.
+  Rationale: Broader XDG, cache, JSON, error, idempotence, and offline behaviors span absent operations; implementing their mechanisms for configuration does not prove their complete acceptance.
+  Date/Author: 2026-08-18 / Codex
+- Decision: Version the development crates and binary as `0.0.1` and expose only `config get|set|unset|list` plus text help/version.
+  Rationale: The product specification reserves `0.1.0` for the complete CLI and explicitly forbids stubs. Unknown future commands are safer than misleading placeholders.
+  Date/Author: 2026-08-18 / Codex
+- Decision: Pin Rust 1.97.1 in mise and rustup metadata, use edition 2024, select the minimal direct crate set recorded in the Rust reference, and commit `Cargo.lock`.
+  Rationale: This is the deferred foundation decision from the design documents, uses current supported inputs, and makes local/CI resolution repeatable without Node.
+  Date/Author: 2026-08-18 / Codex
+- Decision: Use a typed strict TOML model and canonical full-document replacement; when the final configured key is unset, retain a valid version-only file if a file already existed, but do not create a file for an absent-state unset.
+  Rationale: The schema requires `version = 1`, comments are explicitly not preserved, and this distinguishes a real mutation from an absent no-op while keeping every existing document valid.
+  Date/Author: 2026-08-18 / Codex
+- Decision: Resolve and compare all four XDG application roots for every state-bearing config operation, even though only config and state-lock paths are used.
+  Rationale: The architecture forbids reading any skilload state before proving root separation; doing this in the shared adapter prevents a later domain from weakening the invariant.
+  Date/Author: 2026-08-18 / Codex
+- Decision: Use standard-library advisory file locking with a two-second bounded acquisition, optimistic no-op reads, re-read/revalidation under the lock for actual writes, and same-directory atomic replacement.
+  Rationale: This prevents lost updates and partial documents without creating operational state for an absent idempotent no-op or adding a locking dependency.
+  Date/Author: 2026-08-18 / Codex
+- Decision: Compare the raw configuration baseline beneath the lock and retry the application mutation on a stale baseline.
+  Rationale: Two concurrent setters for different keys can then serialize and retain both updates, while an externally changed invalid document is never rewritten from a stale in-memory view.
+  Date/Author: 2026-08-18 / Codex
+- Decision: Reject `--json` without a configuration operation and with text-only help/version, while accepting `--no-color` as a no-op presentation choice.
+  Rationale: API-v1 has no operation identifier or envelope for meta invocations, and a JSON flag must not create an undocumented response shape.
+  Date/Author: 2026-08-18 / Codex
+- Decision: Treat a whitespace-delimited trailing option token in an Agent executable setting as command-line intent, but preserve an absolute filesystem path whose name merely contains spaces.
+  Rationale: This rejects inputs such as `/usr/bin/claude --version` without needlessly rejecting valid native path names.
+  Date/Author: 2026-08-18 / Codex
+- Decision: Create missing application-directory components one at a time, retain the configuration-created chain, and sync its parent entries after the configuration-file rename.
+  Rationale: Each new component must regain mode `0700` before traversal continues under a restrictive umask. A durable initial `config.toml` also requires first syncing its own directory after rename, then each newly created directory's parent from the innermost entry toward the existing anchor.
+  Date/Author: 2026-08-18 / Codex
+- Decision: 让 `StateRootResolver::revalidate` 返回刷新后的 `ResolvedRoots`，并将新绑定穿过实际写入路径；将成功和竞争的目录创建统一到同一个验证与权限恢复步骤。
+  Rationale: 根目录在首次创建后必须被绑定为身份锚点，且 `AlreadyExists` 竞争路径必须与创建成功路径在下降前满足相同的 `0700` 权限不变量。
+  Date/Author: 2026-08-19 / Codex
+
+## Outcomes & Retrospective
+
+The implementation now provides a `0.0.1` Rust binary with only `config get|set|unset|list`, text help/version, strict version-1 TOML validation, all-four-root XDG validation, lock-protected atomic writes, and API-v1/human result projections. It deliberately leaves every non-configuration domain absent rather than exposing a placeholder command. The product-spec index, owning specifications, architecture, and two affected design documents now identify exactly the four implemented Revision 1 behaviors and continue to mark all remaining behavior planned.
+
+Local acceptance on 2026-08-18 passed `mise exec -- cargo fmt --all --check`, `mise exec -- cargo clippy --workspace --all-targets --all-features -- -D warnings`, `mise exec -- cargo test --workspace --all-features --locked` (26 tests: 15 core, five CLI-unit, six CLI-integration), `mise exec -- cargo build --workspace --all-features --locked`, and `git diff --check`. An isolated manual run printed `skilload 0.0.1`, returned the three ordered default configuration entries as one JSON document, changed the cache and Claude settings, returned the padded `PathValue`, and after mutation left only the config document plus the state lock hierarchy; data and cache roots remained absent. [CI run 32144984316](https://github.com/bootids/skilload/actions/runs/32144984316) passed the same locked format, lint, and test matrix on Ubuntu 24.04 and macOS 15.
+
+Review outcome: PR [#2](https://github.com/bootids/skilload/pull/2) is ready for human review. The ready transaction used implementation head `5faf8ff8a5f06087e572e0c8c20e63ebc0f85b36`, which [CI run 32145189606](https://github.com/bootids/skilload/actions/runs/32145189606) passed on both required runners. The Product Baseline remains Revision 1 of `SKL-CLI-002`, `SKL-CLI-003`, `SKL-OPS-006`, and `SKL-CLI-011`. This review-state commit records lifecycle metadata only; a later explicit merge authorization must complete the review-conversation preflight and final archive transition.
+
+Review remediation on 2026-08-18 closes five valid in-scope defects: newly used app directories explicitly regain mode `0700`; embedded NUL is rejected from both raw and TOML executable inputs; parser diagnostics never echo malformed user input; known malformed JSON configuration leaves emit one API-v1 `usage_error` envelope; and XDG separation compares existing-directory device/inode identities as well as path ancestry. The full locked workspace suite passes 31 tests (18 core, six CLI unit, seven CLI integration). Remediation commit `3417b8a2c914b0ed9c16259f969fbc2ba9546031` is pushed, each review concern has a reply, and the final full conversation reconciliation reports all six inline threads resolved.
+
+Review remediation added four in-scope protections: recursive XDG root creation now repairs each newly created component before descent and parent-syncs newly created configuration-directory entries after the file replacement; invalid native bytes for a numeric setting no longer become `PathValue`; and unrepresentable TOML versions become an `invalid_state` envelope rather than an invalid API-v1 `SchemaDetails` payload. `mise exec -- cargo fmt --all --check`, `mise exec -- cargo clippy --workspace --all-targets --all-features -- -D warnings`, `mise exec -- cargo test --workspace --all-features --locked` (34 tests: 19 core, six CLI unit, nine CLI integration), `mise exec -- cargo build --workspace --all-features --locked`, and `git diff --check` passed in remediation commit `c3977fe5653118487ec0801e3bb6f1cfec749e28`. Final reconciliation records replies and resolved state for all eleven actual-problem threads R1 through R11.
+
+Review remediation in `9135de47b7f7141621b7ef77a2291b9f76227eef` preserves JSON parser error envelopes when unknown options surround an identifiable configuration leaf, rejects clustered JSON/meta flags, and redacts every unknown configuration-key value. `mise exec -- cargo fmt --all --check`, `mise exec -- cargo clippy --workspace --all-targets --all-features -- -D warnings`, `mise exec -- cargo test --workspace --all-features --locked` (35 tests: 19 core, six CLI unit, 10 CLI integration), `mise exec -- cargo build --workspace --all-features --locked`, and `git diff --check` passed. The corresponding GitHub replies and closure results are recorded in R12 through R14 below; final reconciliation remains a merge preflight requirement.
+2026-08-19 的审查修复已在 `450ae3f4148a8d924f26977c4ebeab932c26d2ce` 推送：配置写入路径保留创建后 XDG 根目录的身份绑定，并在重命名前重新验证；因此同名根目录被重命名并重建时会在持久化前中止。竞争创建者赢得某一目录组件时也会恢复 `0700`。新增的精确回归和完整锁定工作区门禁共通过 37 个测试；R15 与 R16 均已回复并关闭，最终完整会话核对确认 16 个线程全部解决、无未记录问题来源。
+
+2026-08-19 的最终合并预检确认：交付分支 `codex/p1-config-foundation` 的 HEAD `c69467de8610bd627160ef39faeff8ff69c1dc51` 与远端一致，`origin/main` 是其祖先，PR [#2](https://github.com/bootids/skilload/pull/2) 保持开放、非草稿、以 `main` 为基线且处于 `CLEAN`/`MERGEABLE` 状态。`ubuntu-24.04` 和 `macos-15` 当前 CI 均成功；`PLAN-0001` 已在 `origin/main` 完成；`git diff --check` 通过。最新 `pr_threads.cjs list --all` 显示 16 个内联线程全部已解决，并与 R1 至 R16 的来源、处置和状态逐一对应；三个顶层评论仅为 `@codex` 触发，四个非空审查正文均为自动审查样板，未产生额外问题。本次 completed 归档提交推送后仍须以其 SHA 重新核验必需检查和可变 PR 门禁；只有 PR 合入 `main` 后，归档才成为默认分支上的正式交付记录。
+
+完成归档提交 `d9164a6bed00fc99196898d237f796685f021ed8` 推送后，`gh pr checks https://github.com/bootids/skilload/pull/2 --required` 返回 `no required checks reported on the 'codex/p1-config-foundation' branch`（退出码 1）。该返回明确表示必需检查集合为空，按本仓库合并流程计作已通过的门禁，因此不启动必需检查观察器；合并前仍须重新核验 PR 的可变状态、头提交和完整会话。
+
+## Review Conversation Log
+
+### R1 — Ambiguous multiword native executable paths
+
+Source: inline thread `PRRT_kwDOT7YN2s6aIrou`, comment `PRRC_kwDOT7YN2s7iyGw4`, [review comment](https://github.com/bootids/skilload/pull/2#discussion_r3804785720) by `chatgpt-codex-connector`.
+
+Problem: The review asks configuration validation to reject every multiword executable value, including a literal absolute path such as `/usr/bin/claude version`.
+
+Disposition: no-fix.
+
+Status: resolved.
+
+Resolution: The current validator rejects the unambiguous trailing-option command form, such as `/usr/bin/claude --version`, but retains a valid absolute UTF-8 native path whose filename contains spaces or shell-metacharacter bytes. `SKL-OPS-006` requires a lexical filesystem path without probing or requiring it to exist, and the configuration value is not passed to a shell. At this boundary, a quoted command spelling and a legitimate absent pathname with spaces are indistinguishable; rejecting the latter would narrow the required native-path domain. The existing Plan Decision Log records this choice.
+
+Evidence: `SKL-OPS-006` Revision 1 in `docs/product-specs/cache-and-operations.md` requires a nonempty valid-UTF-8 absolute filesystem path, while `crates/skilload-core/src/domain/configuration.rs` rejects trailing option-shaped arguments without executing or probing the path. The existing `executable_values_are_utf8_absolute_paths_without_probing` regression covers the unambiguous option form; `mise exec -- cargo test --workspace --all-features --locked` passed 31 tests. The no-fix disposition is recorded in pushed commit `3417b8a2c914b0ed9c16259f969fbc2ba9546031`.
+
+GitHub outcome: [Reply](https://github.com/bootids/skilload/pull/2#discussion_r3805287364); thread resolved: true.
+
+### R2 — Restrictive umask can leave created roots inaccessible
+
+Source: inline thread `PRRT_kwDOT7YN2s6aIro9`, comment `PRRC_kwDOT7YN2s7iyGxI`, [review comment](https://github.com/bootids/skilload/pull/2#discussion_r3804785736) by `chatgpt-codex-connector`.
+
+Problem: `DirBuilderExt::mode(0o700)` is subject to the caller's umask, so first-mutation directory creation can leave an application or lock root without owner search permission.
+
+Disposition: fixed.
+
+Status: resolved.
+
+Resolution: `ensure_restrictive_directory` now applies `set_permissions(0o700)` after validating either an existing or newly created real application directory, before nested locks or staging files are opened. `restrictive_directories_restore_owner_search_permission` creates a mode-`0600` directory and proves the helper restores `0700`.
+
+Evidence: `mise exec -- cargo test -p skilload-core --lib --locked` passed 18 tests, including the new permission regression; `mise exec -- cargo clippy --workspace --all-targets --all-features -- -D warnings`, `mise exec -- cargo fmt --all --check`, `mise exec -- cargo test --workspace --all-features --locked`, and `mise exec -- cargo build --workspace --all-features --locked` passed. Remediation commit `3417b8a2c914b0ed9c16259f969fbc2ba9546031`.
+
+GitHub outcome: [Reply](https://github.com/bootids/skilload/pull/2#discussion_r3805290520); thread resolved: true.
+
+### R3 — NUL-containing executable paths are accepted
+
+Source: inline thread `PRRT_kwDOT7YN2s6aIrpD`, comment `PRRC_kwDOT7YN2s7iyGxR`, [review comment](https://github.com/bootids/skilload/pull/2#discussion_r3804785745) by `chatgpt-codex-connector`.
+
+Problem: A TOML string containing an embedded NUL passes UTF-8 and absolute-path validation even though it cannot be a usable native filesystem path or process argument.
+
+Disposition: fixed.
+
+Status: resolved.
+
+Resolution: Shared `validate_executable_raw` now rejects an embedded NUL before constructing the normalized native path, so the rule applies to both application-set `OsString` values and TOML-loaded strings.
+
+Evidence: `executable_values_are_utf8_absolute_paths_without_probing` covers raw NUL input and `strict_toml_rejects_wrong_types_and_invalid_configured_paths` covers TOML `\u0000`; the focused core suite passed 18 tests and the full locked workspace suite passed 31. Remediation commit `3417b8a2c914b0ed9c16259f969fbc2ba9546031`.
+
+GitHub outcome: [Reply](https://github.com/bootids/skilload/pull/2#discussion_r3805293475); thread resolved: true.
+
+### R4 — Raw clap diagnostics can render hostile parser input
+
+Source: inline thread `PRRT_kwDOT7YN2s6aIrpN`, comment `PRRC_kwDOT7YN2s7iyGxd`, [review comment](https://github.com/bootids/skilload/pull/2#discussion_r3804785757) by `chatgpt-codex-connector`.
+
+Problem: `clap::Error::print` writes malformed invocation text directly to stderr, bypassing the terminal-safe human renderer.
+
+Disposition: fixed.
+
+Status: resolved.
+
+Resolution: `main.rs` now renders generated help/version through stdout but replaces every non-meta clap parse failure with a fixed `usage_error` diagnostic that contains no parser-provided field.
+
+Evidence: `parser_failures_are_terminal_safe_and_preserve_json_configuration_operations` passes a combined ESC/OSC/BEL/newline unknown command and asserts the exact fixed stderr line; `help_and_absent_queries_are_offline_and_filesystem_inert` exercises explicit `--help` and `--version` through the same parse branch. The focused CLI package and full locked workspace suite passed. Remediation commit `3417b8a2c914b0ed9c16259f969fbc2ba9546031`.
+
+GitHub outcome: [Reply](https://github.com/bootids/skilload/pull/2#discussion_r3805299074); thread resolved: true.
+
+### R5 — Known malformed JSON leaves lack an API-v1 error envelope
+
+Source: inline thread `PRRT_kwDOT7YN2s6aIrpY`, comment `PRRC_kwDOT7YN2s7iyGxs`, [review comment](https://github.com/bootids/skilload/pull/2#discussion_r3804785772) by `chatgpt-codex-connector`.
+
+Problem: A malformed invocation that still identifies `config get|set|unset|list` with `--json` emits clap prose instead of one `usage_error` envelope on stdout.
+
+Disposition: fixed.
+
+Status: resolved.
+
+Resolution: `args::json_configuration_operation` recognizes only an attempted supported configuration leaf after stripping known presentation flags. On parse failure, `main.rs` emits the normal API-v1 `usage_error` envelope for that operation; unidentifiable invocations retain the fixed human usage diagnostic.
+
+Evidence: The args unit regression covers global flag placement and unknown leaves; `parser_failures_are_terminal_safe_and_preserve_json_configuration_operations` asserts `config.set`, exit 2, one JSON stdout value, and no state creation. The full locked workspace suite passed 31 tests. Remediation commit `3417b8a2c914b0ed9c16259f969fbc2ba9546031`.
+
+GitHub outcome: [Reply](https://github.com/bootids/skilload/pull/2#discussion_r3805301994); thread resolved: true.
+
+### R6 — Filesystem aliases beyond symlinks can overlap XDG roots
+
+Source: inline thread `PRRT_kwDOT7YN2s6aIrph`, comment `PRRC_kwDOT7YN2s7iyGx4`, [review comment](https://github.com/bootids/skilload/pull/2#discussion_r3804785784) by `chatgpt-codex-connector`.
+
+Problem: String ancestry after canonicalization does not reject bind-mount or equivalent filesystem aliases whose resolved spellings differ.
+
+Disposition: fixed.
+
+Status: resolved.
+
+Resolution: XDG resolution records device/inode identities for every existing canonical directory prefix. `ensure_disjoint` rejects a shared identity whose remaining suffixes are equal or nested, and revalidation compares the original anchor identity before freshly checking all alias pairs.
+
+Evidence: `filesystem_alias_identities_reject_equal_or_nested_application_roots` exercises distinct aliases with the same identity; `revalidation_detects_a_recreated_root_identity` proves same-spelling replacement is rejected. The focused core suite passed 18 tests and the full locked workspace suite passed 31. Remediation commit `3417b8a2c914b0ed9c16259f969fbc2ba9546031`.
+
+GitHub outcome: [Reply](https://github.com/bootids/skilload/pull/2#discussion_r3805305012); thread resolved: true.
+
+### R7 — Recursive root creation fails under a restrictive umask
+
+Source: inline thread `PRRT_kwDOT7YN2s6aK4hw`, comment `PRRC_kwDOT7YN2s7i1VSr`, [review comment](https://github.com/bootids/skilload/pull/2#discussion_r3805631659) by `chatgpt-codex-connector`.
+
+Problem: Recursive `DirBuilder` creation can create an absent XDG base without owner search permission under a restrictive umask, then fail before creating its `skilload` child.
+
+Disposition: fixed.
+
+Status: resolved.
+
+Resolution: `ensure_restrictive_directory` now finds the nearest existing real directory, creates each missing component with `fs::create_dir`, applies mode `0700` before descending, and retains the existing final-directory mode repair.
+
+Evidence: `first_mutation_creates_nested_xdg_roots_under_restrictive_umask` runs the real binary with `umask 0177`, creates absent configuration/state bases and children, persists the configuration, and verifies `0700` on all five created components. `mise exec -- cargo test -p skilload-core --lib --locked` passed 19 tests; the locked workspace suite passed 34. Remediation commit `c3977fe5653118487ec0801e3bb6f1cfec749e28`.
+
+GitHub outcome: [Reply](https://github.com/bootids/skilload/pull/2#discussion_r3805776776); thread resolved: true.
+
+### R8 — Newly created directory entries are not parent-synced
+
+Source: inline thread `PRRT_kwDOT7YN2s6aK4h1`, comment `PRRC_kwDOT7YN2s7i1VS0`, [review comment](https://github.com/bootids/skilload/pull/2#discussion_r3805631668) by `chatgpt-codex-connector`.
+
+Problem: After an initial configuration write, syncing the new configuration directory persists its file entries but does not persist that directory's own entry in every newly created parent.
+
+Disposition: fixed.
+
+Status: resolved.
+
+Resolution: `write_document` retains the configuration directories created during the mutation. After staging, syncing, renaming, and syncing `config_root`, it syncs every created directory's parent from innermost to outermost before reporting success.
+
+Evidence: The restrictive-umask integration regression exercises the first-write creation path; `failpoints_preserve_old_bytes_before_rename_and_sync_before_after_failure` still proves the post-sync hook is reached only after the replacement path. The focused core suite passed 19 tests and the locked workspace suite passed 34. Remediation commit `c3977fe5653118487ec0801e3bb6f1cfec749e28`.
+
+GitHub outcome: [Reply](https://github.com/bootids/skilload/pull/2#discussion_r3805779320); thread resolved: true.
+
+### R9 — Non-UTF-8 numeric input is labeled as a host path
+
+Source: inline thread `PRRT_kwDOT7YN2s6aK4h8`, comment `PRRC_kwDOT7YN2s7i1VS_`, [review comment](https://github.com/bootids/skilload/pull/2#discussion_r3805631679) by `chatgpt-codex-connector`.
+
+Problem: Invalid native bytes for the scalar `cache_limit_bytes` value become `ValidationDetails.path`, falsely claiming the scalar is a host filesystem path.
+
+Disposition: fixed.
+
+Status: resolved.
+
+Resolution: `validate_cache_limit_raw` now returns the established scalar constraint with `path: None` when raw native bytes are not UTF-8; executable path validation retains a `PathValue` diagnostic.
+
+Evidence: `scalar_and_schema_validation_remain_api_v1_representable` asserts the core error has no path, and `json_meta_and_invalid_native_path_errors_are_safe` asserts the real CLI emits a null JSON path for the same raw input. The locked workspace suite passed 34. Remediation commit `c3977fe5653118487ec0801e3bb6f1cfec749e28`.
+
+GitHub outcome: [Reply](https://github.com/bootids/skilload/pull/2#discussion_r3805782497); thread resolved: true.
+
+### R10 — Schema error can exceed API-v1 UInt
+
+Source: inline thread `PRRT_kwDOT7YN2s6aK4iB`, comment `PRRC_kwDOT7YN2s7i1VTG`, [review comment](https://github.com/bootids/skilload/pull/2#discussion_r3805631686) by `chatgpt-codex-connector`.
+
+Problem: A TOML schema version above 9,007,199,254,740,991 can reach `SchemaDetails.found_version`, although API-v1 defines that JSON field as `UInt` with that maximum.
+
+Disposition: fixed.
+
+Status: resolved.
+
+Resolution: `ConfigDocument::from_toml` now rejects a nonnegative TOML schema version above `9_007_199_254_740_991` as `invalid_version` before constructing a schema-version error.
+
+Evidence: `scalar_and_schema_validation_remain_api_v1_representable` covers the domain bound; `out_of_range_schema_versions_keep_json_details_within_api_v1` asserts the real CLI returns `invalid_state` without a `found_version` field and leaves the document unchanged. The locked workspace suite passed 34. Remediation commit `c3977fe5653118487ec0801e3bb6f1cfec749e28`.
+
+GitHub outcome: [Reply](https://github.com/bootids/skilload/pull/2#discussion_r3805785221); thread resolved: true.
+
+### R11 — No-op mutations are not lock-revalidated
+
+Source: inline thread `PRRT_kwDOT7YN2s6aK4iH`, comment `PRRC_kwDOT7YN2s7i1VTM`, [review comment](https://github.com/bootids/skilload/pull/2#discussion_r3805631692) by `chatgpt-codex-connector`.
+
+Problem: The review asks an optimistic no-op setter to acquire a lock and revalidate after observing that its requested state already matches.
+
+Disposition: no-fix.
+
+Status: resolved.
+
+Resolution: Retain the current load-linearized no-op. `Application::mutate` returns `unchanged` only after a successful read of the requested state, so an overlapping writer can be ordered after that read. A second read or lock cannot guarantee the state remains unchanged until process return because another writer may commit immediately after it; it would only create state and contention for the lazy idempotent path.
+
+Evidence: `SKL-CLI-007` requires a mutation whose desired state is already satisfied to return `unchanged` without rewriting state. The existing Decision Log records bounded locking for actual writes and optimistic no-op reads; `Application::mutate` uses `ConfigurationStore::replace` only when the desired document differs from the observed document. `repeated_mutations_preserve_file_identity_and_final_unset_keeps_schema_document` verifies that unchanged setters preserve file identity; the locked workspace suite passed 34. The no-fix assessment is recorded in commit `c3977fe5653118487ec0801e3bb6f1cfec749e28`. No implementation change is warranted.
+
+GitHub outcome: [Reply](https://github.com/bootids/skilload/pull/2#discussion_r3805787684); thread resolved: true.
+
+### R12 — JSON parser errors lose an identifiable leaf behind an unknown option
+
+Source: inline thread `PRRT_kwDOT7YN2s6aL8Ny`, comment `PRRC_kwDOT7YN2s7i24TA`, [review comment](https://github.com/bootids/skilload/pull/2#discussion_r3806037184) by `chatgpt-codex-connector`.
+
+Problem: A malformed JSON invocation with an unrecognized option before or between `config` and a supported leaf falls back to a human diagnostic instead of the leaf's one API-v1 `usage_error` envelope.
+
+Disposition: fixed.
+
+Status: resolved.
+
+Resolution: `crates/skilload-cli/src/args.rs` now removes option-shaped tokens while recognizing the otherwise identifiable supported `config get|set|unset|list` pair, so `main.rs` returns the leaf's API-v1 parser `usage_error`. Pushed remediation commit `9135de47b7f7141621b7ef77a2291b9f76227eef` includes unit coverage for both unknown-option positions and end-to-end parser coverage for `config.list`.
+
+Evidence: `mise exec -- cargo test -p skilload-cli --all-features --locked` passed 16 tests (six CLI unit and 10 integration), including `json_parser_failures_preserve_identifiable_configuration_operations` and `parser_failures_are_terminal_safe_and_preserve_json_configuration_operations`. Full validation passed: `mise exec -- cargo fmt --all --check`, `mise exec -- cargo clippy --workspace --all-targets --all-features -- -D warnings`, `mise exec -- cargo test --workspace --all-features --locked` (35 tests), `mise exec -- cargo build --workspace --all-features --locked`, and `git diff --check`.
+
+GitHub outcome: [Reply](https://github.com/bootids/skilload/pull/2#discussion_r3809200868); thread resolved: true.
+
+### R13 — Clustered help/version flags bypass JSON-meta rejection
+
+Source: inline thread `PRRT_kwDOT7YN2s6aL8N2`, comment `PRRC_kwDOT7YN2s7i24TF`, [review comment](https://github.com/bootids/skilload/pull/2#discussion_r3806037189) by `chatgpt-codex-connector`.
+
+Problem: `--json -hV` reaches clap's successful text-help path because the pre-parse JSON-meta guard recognizes only standalone `-h` and `-V` tokens.
+
+Disposition: fixed.
+
+Status: resolved.
+
+Resolution: `crates/skilload-cli/src/args.rs` now treats a nonempty short cluster containing only clap's `h` and `V` meta flags as a text meta invocation before parsing. Pushed remediation commit `9135de47b7f7141621b7ef77a2291b9f76227eef` covers `-hV` and `-Vh` in the args unit test and the real-binary contract test, which require exit 2 and empty stdout.
+
+Evidence: `mise exec -- cargo test -p skilload-cli --all-features --locked` passed 16 tests, including `json_is_rejected_only_for_text_meta_invocations` and `json_meta_and_invalid_native_path_errors_are_safe`. Full validation passed: `mise exec -- cargo fmt --all --check`, `mise exec -- cargo clippy --workspace --all-targets --all-features -- -D warnings`, `mise exec -- cargo test --workspace --all-features --locked` (35 tests), `mise exec -- cargo build --workspace --all-features --locked`, and `git diff --check`.
+
+GitHub outcome: [Reply](https://github.com/bootids/skilload/pull/2#discussion_r3809201392); thread resolved: true.
+
+### R14 — Unknown configuration-key diagnostics echo credential-shaped input
+
+Source: inline thread `PRRT_kwDOT7YN2s6aL8N3`, comment `PRRC_kwDOT7YN2s7i24TK`, [review comment](https://github.com/bootids/skilload/pull/2#discussion_r3806037194) by `chatgpt-codex-connector`.
+
+Problem: The unknown-key usage error serializes and human-renders the rejected key verbatim, so a credential accidentally supplied as a key can be retained in JSON or terminal output.
+
+Disposition: fixed.
+
+Status: resolved.
+
+Resolution: `crates/skilload-core/src/domain/configuration.rs` now constructs unknown-key `AppError::Usage` errors without a `value`, and `crates/skilload-core/src/error.rs` makes that omission the standard usage constructor behavior. Pushed remediation commit `9135de47b7f7141621b7ef77a2291b9f76227eef` adds `unknown_configuration_keys_redact_credential_shaped_values`, proving JSON and human output omit the credential-shaped fixture while preserving the argument name and fixed supported-key list.
+
+Evidence: `mise exec -- cargo test -p skilload-cli --all-features --locked` passed 16 tests, and `mise exec -- cargo test -p skilload-core --lib --locked` passed 19 tests. Full validation passed: `mise exec -- cargo fmt --all --check`, `mise exec -- cargo clippy --workspace --all-targets --all-features -- -D warnings`, `mise exec -- cargo test --workspace --all-features --locked` (35 tests), `mise exec -- cargo build --workspace --all-features --locked`, and `git diff --check`.
+
+GitHub outcome: [Reply](https://github.com/bootids/skilload/pull/2#discussion_r3809201961); thread resolved: true.
+
+### R15 — 新建配置根目录未纳入身份绑定
+
+Source: inline thread `PRRT_kwDOT7YN2s6aUPZI`, comment `PRRC_kwDOT7YN2s7jDWG1`, [review comment](https://github.com/bootids/skilload/pull/2#discussion_r3809305013) by `chatgpt-codex-connector`.
+
+Problem: 初始加载时配置应用目录不存在，`write_document` 创建该目录后仍以创建前的最近既有祖先进行重验；若同名目录在暂存或落盘前被替换，现有绑定无法检测身份漂移。
+Disposition: fixed.
+
+Status: resolved.
+
+Resolution: `StateRootResolver::revalidate` 现在返回刷新后的 `ResolvedRoots`；`write_document` 在创建配置根目录后保留该绑定，并在暂存文件重命名前以该绑定再次重验。新建根目录因而成为身份锚点；其后同名目录被替换会返回结构化环境错误，且不会持久化配置。
+
+Evidence: 新增 `writes_reject_recreated_configuration_root_after_initial_binding`：它在暂存文件创建后重命名并重建配置根，断言变更失败且新旧目录均没有 `config.toml`。该精确回归以及 `raced_directory_entries_restore_owner_search_permission` 均通过。完整门禁 `mise exec -- cargo fmt --all --check`、`mise exec -- cargo clippy --workspace --all-targets --all-features -- -D warnings`、`mise exec -- cargo test --workspace --all-features --locked`（37 个测试）和 `mise exec -- cargo build --workspace --all-features --locked` 均通过；`git diff --check` 通过。修复代码提交 `450ae3f4148a8d924f26977c4ebeab932c26d2ce` 已推送。
+
+GitHub outcome: [Reply](https://github.com/bootids/skilload/pull/2#discussion_r3809367065); thread resolved: true.
+
+### R16 — 竞争创建分支未恢复目录权限
+
+Source: inline thread `PRRT_kwDOT7YN2s6aUPZK`, comment `PRRC_kwDOT7YN2s7jDWG5`, [review comment](https://github.com/bootids/skilload/pull/2#discussion_r3809305017) by `chatgpt-codex-connector`.
+
+Problem: 两个首次写入在严格 `umask` 下竞争创建缺失层级时，后到进程的 `AlreadyExists` 分支只验证目录类型而不恢复 `0700`，随后可能无法遍历该中间目录并失败。
+Disposition: fixed.
+
+Status: resolved.
+
+Resolution: `ensure_restrictive_directory` 现在将成功创建和 `AlreadyExists` 的竞争创建统一经由 `create_restrictive_directory` 处理：完成真实目录验证后，两个分支都会立即调用 `restrict_directory_permissions`，再继续创建下一层；因此均遵守当前用户 `0700` 不变量。
+
+Evidence: 新增 `raced_directory_entries_restore_owner_search_permission`，它通过实际 `AlreadyExists` 分支将模式为 `0600` 的竞争目录恢复为 `0700`。该精确回归以及 `writes_reject_recreated_configuration_root_after_initial_binding` 均通过。完整门禁 `mise exec -- cargo fmt --all --check`、`mise exec -- cargo clippy --workspace --all-targets --all-features -- -D warnings`、`mise exec -- cargo test --workspace --all-features --locked`（37 个测试）和 `mise exec -- cargo build --workspace --all-features --locked` 均通过；`git diff --check` 通过。修复代码提交 `450ae3f4148a8d924f26977c4ebeab932c26d2ce` 已推送。
+
+GitHub outcome: [Reply](https://github.com/bootids/skilload/pull/2#discussion_r3809368385); thread resolved: true.
+
+## Context and Orientation
+
+The repository root is `/Users/yangxuhui/Projects/Products/skilload`. At Plan creation, it contains no `Cargo.toml`, `Cargo.lock`, `mise.toml`, `rust-toolchain.toml`, `crates/`, `tests/`, or CI workflow. `ARCHITECTURE.md` describes those paths as planned. `skilload-core` is the inward library that owns validation, use cases, ports, and filesystem adapters. `skilload-cli` is the outward adapter that owns arguments, human rendering, JSON serialization, and exit status.
+
+A configuration document is the UTF-8 TOML file at the resolved config application root's `config.toml`. Its model is:
+
+    version = 1
+    cache_limit_bytes = 1073741824
+
+    [agents.claude]
+    executable = "/opt/claude/bin/claude"
+
+    [agents.codex]
+    executable = "/opt/codex/bin/codex"
+
+Only `version` is required. Omit unset settings and omit an empty Agent table. The serializer writes stable LF text with `version` first, then cache, Claude, and Codex in that order, and one trailing newline. A document containing any other key/table, a duplicate, unsupported version, wrong type, zero/negative/overflow cache value, or invalid executable path is invalid and is never rewritten implicitly.
+
+The four base environment variables are `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME`, and `XDG_CACHE_HOME`. Their fallbacks are respectively `$HOME/.config`, `$HOME/.local/share`, `$HOME/.local/state`, and `$HOME/.cache`. Append `skilload` after choosing each absolute base. A relative or empty XDG value behaves as absent; a fallback requires an absolute nonempty `HOME`. Lexically remove `.` and process `..` without consulting the current directory or crossing the absolute root. Resolve the longest existing prefix through filesystem identity, append missing suffix components, and reject inaccessible, changing, equal, nested, or aliased effective roots before opening `config.toml`.
+
+`DecimalU64` is a canonical unsigned decimal JSON string, not a JSON number. `PathValue` has `display` and `bytes_base64`. On supported Unix hosts, encode exact `OsStr` bytes with padded RFC 4648 standard base64. The display string uses the product's injective terminal-safe encoding without outer quotes: escape backslash and double quote, use visible `\n`/`\r`/`\t`, encode other C0 controls U+0000-U+001F, DEL U+007F, C1 controls U+0080-U+009F, U+2028, U+2029, U+061C, U+200E-U+200F, U+202A-U+202E, and U+2066-U+2069 as uppercase `\u{XXXX}` padded to four through six digits, and encode each invalid UTF-8 byte as uppercase `\xHH`. Human output adds the surrounding quotes for every path/data field. Never use lossy UTF-8 conversion.
+
+The applicable API-v1 error details remain typed. `UsageDetails` carries nullable argument/value/path plus required expected strings; `ValidationDetails` carries a constraint and nullable source/source-path/native-path fields; `EnvironmentDetails` carries the environment variable, nullable native path, and reason; `BusyDetails` carries lock domain and waited milliseconds; `SchemaDetails` carries domain, found version, and supported version; `InvalidStateDetails` carries domain, observed state, and expected states; and `InternalDetails` carries a nonempty incident ID. Usage errors exit 2, environment/validation/schema preconditions use their cataloged exit 4 or 6, busy exits 5, and internal invariant failures exit 6. A known configuration leaf in JSON mode returns its typed error envelope. A parser failure before any operation identifier exists, including an unknown subcommand or JSON combined with help/version, uses conventional usage stderr and exit 2 rather than fabricating an operation.
+
+## Plan of Work
+
+### Milestone 1: Create the locked Rust workspace
+
+Add root `Cargo.toml`, `Cargo.lock`, `mise.toml`, and `rust-toolchain.toml`. The workspace uses resolver 3, edition 2024, `rust-version = "1.97.1"`, shared version `0.0.1`, Apache-2.0, `publish = false`, and forbids unsafe code. Extend `.gitignore` with only the Rust `/target/` output while preserving the existing `.agents/` entry.
+
+Create `crates/skilload-core` as a library and `crates/skilload-cli` as the binary package named `skilload`. Put dependency versions in `[workspace.dependencies]` and enable only needed features: `clap` derive/std/help/usage/error-context/suggestions without color or automatic extras; `serde` derive; `toml` parse/display/serde/std without order-preserving maps; the other selected crates use their standard feature set. Add no placeholder module or command.
+
+Add `.github/workflows/ci.yml` with read-only contents permission and a matrix over `ubuntu-24.04` and `macos-15`. Pin checkout and mise actions to the immutable commits recorded in the Rust reference. Each job runs mise installation, format checking, warning-free Clippy over all targets/features, and locked workspace tests. At this milestone, `mise install` followed by `mise exec -- cargo test --workspace --locked` must compile both crates even before the later behavior tests are filled in.
+
+### Milestone 2: Implement configuration domain, application, and storage
+
+In `crates/skilload-core/src/domain/configuration.rs`, define exact keys, typed values, ordered entries, schema version, default cache limit, configured/default distinction, lexical Agent-path validation, and mutation outcomes. Keep native paths as `PathBuf`/`OsString` values; do not base64-encode or format them in core.
+
+In `crates/skilload-core/src/application/configuration.rs` and `src/lib.rs`, expose one application facade for the four use cases. Queries return presentation-neutral typed data. Mutations validate input before persistent staging, compare the desired document with the loaded model, and return `Changed` or `Unchanged` without rendering.
+
+In `crates/skilload-core/src/ports/configuration.rs`, define focused environment/root/configuration-store/lock boundaries rather than exposing `std::fs` to the application service. In `src/adapters/xdg.rs` and `src/adapters/configuration.rs`, implement the production Unix filesystem adapters. Reads over absent state return defaults and create nothing. Writes optimistically detect no-ops, create `state/locks/config.lock` only when a real mutation must be serialized, acquire a bounded exclusive standard-library lock, re-resolve roots and re-read state, then stage a mode-0600 file in the config directory, sync it, atomically rename it to `config.toml`, and sync the parent. Created application/lock directories use mode 0700. Never follow a final config-file symlink or replace a non-regular file.
+
+Use failpoint-capable small internal filesystem operations so tests can prove that failure before rename preserves the old bytes, failure after rename returns only after the new file and directory are synced, stale root identity aborts, and leftover staging files are recognizable and removable without adopting them. This is a single-file atomic replacement, not the multi-resource journal that later deployment Plans implement.
+
+In `crates/skilload-core/src/error.rs`, define typed errors and the relevant stable API-v1 details rather than a string map. This slice needs usage/unsupported argument, validation, invalid/overlapping environment roots, bounded busy, schema-newer/migration-required, invalid-state, and internal-invariant categories. Preserve native paths in details. Filesystem access failure while resolving or using an XDG-controlled prefix reports the applicable environment-path category and path; it must not fabricate a database, workspace, or Agent target.
+
+### Milestone 3: Implement the real CLI and output contracts
+
+In `crates/skilload-cli/src/args.rs`, define the four real leaves and global presentation flags. Disable aliases and the generated help subcommand. Parse cache numbers and executable values as raw inputs so the application can return the correct typed validation without losing non-UTF-8 path bytes. Reject `--json` with help/version before operation dispatch. A missing top-level subcommand prints current help to stdout and returns zero.
+
+In `crates/skilload-cli/src/json.rs`, define closed initial producer structs for the API-v1 envelope, `ConfigEntryData`, `ConfigEntriesData`, applicable details variants, `DecimalU64`, and `PathValue`. Serialize exactly once to stdout with one trailing newline and never print progress there. The default cache get JSON must be structurally equal to:
+
+    {
+      "api_version": 1,
+      "operation": "config.get",
+      "ok": true,
+      "result": {
+        "outcome": "observed",
+        "data": {
+          "schema_version": 1,
+          "entry": {
+            "key": "cache_limit_bytes",
+            "configured": false,
+            "value": null,
+            "default_value": "536870912",
+            "default_command": null
+          }
+        }
+      }
+    }
+
+In `crates/skilload-cli/src/human.rs`, implement one terminal-safe field encoder and concise English configuration rendering. Static layout may use raw spaces/newlines; values and paths use the safe quoted encoder. This first binary emits no ANSI styling, so `--no-color` is accepted and outputs the same bytes. Diagnostics go only to stderr and normal execution writes no persistent log.
+
+In `crates/skilload-cli/src/main.rs`, compose the real environment and filesystem adapters, dispatch exactly one application use case, select human or JSON rendering, and map typed errors to the API-v1 exit categories. Do not inspect Git, run a child process, read stdin, contact a network, or initialize any absent root for help/version/query operations.
+
+### Milestone 4: Prove behavior and synchronize documentation
+
+Add core unit/adapter tests and CLI integration tests under the owning crates. Tests must cover the exact number/path/schema boundaries, all XDG fallback and overlap cases, symlink aliases, no-op inode/mtime stability, concurrent different-key setters, atomic-write failure points, restrictive permissions, invalid native bytes in error paths, and terminal-control fixtures. Integration tests run the compiled binary under fully isolated environment roots and assert stdout, stderr, exit, and complete filesystem snapshots.
+
+Update `ARCHITECTURE.md` to describe the now-present workspace and implemented configuration path while continuing to label SQLite and all other domains planned. Update the status/current-state prose in `docs/design-docs/application-and-persistence.md` and `docs/design-docs/cli-json-and-release.md` without weakening their future design. Update the product-spec index and the two owning product specifications to mark only the four baseline IDs implemented. Do not change behavior text or revisions unless implementation uncovers a real semantic decision; if that happens, stop and obtain the required product decision.
+
+Finish by recording exact test counts, CI URLs/results, dependency resolution, and observable transcripts in this Plan. Commit and push all active implementation and evidence. Mark the Draft PR ready, verify `isDraft: false` and `headRefOid` equal the pushed implementation head, then move this file to `docs/exec-plans/review/`, set `status: review`, record the ready evidence, commit, and push.
+
+## Concrete Steps
+
+Work from `/Users/yangxuhui/Projects/Products/skilload`. After explicit execution authorization, first use the repository's `execute-exec-plan` skill. It must verify `PLAN-0001` is completed on `main`, the PR is Draft, the branch matches frontmatter, and the worktree is clean; then it moves this file to `active/` and pushes that lifecycle commit before code changes.
+
+Install and verify the pinned toolchain:
+
+    mise install
+    mise exec -- rustc --version
+    mise exec -- cargo --version
+
+Expect Rust `1.97.1`. Create the workspace and source files described above with reviewable patches, then generate and commit the lockfile through the mise-resolved Cargo:
+
+    mise exec -- cargo generate-lockfile
+    mise exec -- cargo metadata --locked --format-version 1
+
+Run the local acceptance suite repeatedly:
+
+    mise exec -- cargo fmt --all --check
+    mise exec -- cargo clippy --workspace --all-targets --all-features -- -D warnings
+    mise exec -- cargo test --workspace --all-features --locked
+    mise exec -- cargo build --workspace --all-features --locked
+    git diff --check
+
+The formatter, Clippy, tests, build, and whitespace check must all exit zero. `cargo test` must name and pass the unit/adapter/integration cases described in `Validation and Acceptance`; record the final counts here rather than predicting them.
+
+Use a disposable directory to exercise the binary. Assign every XDG root separately so the overlap check is meaningful:
+
+    tmp="$(mktemp -d)"
+    export HOME="$tmp/home"
+    export XDG_CONFIG_HOME="$tmp/config"
+    export XDG_DATA_HOME="$tmp/data"
+    export XDG_STATE_HOME="$tmp/state"
+    export XDG_CACHE_HOME="$tmp/cache"
+    mkdir -p "$HOME"
+    bin="$PWD/target/debug/skilload"
+
+First prove that meta and query invocations create nothing:
+
+    "$bin"
+    "$bin" --version
+    "$bin" config list --json
+    find "$tmp" -mindepth 1 -print
+
+The first two commands exit zero with text. The JSON command emits one API-v1 object containing the three ordered unconfigured entries. `find` prints only the explicitly created `home` directory; no XDG application root exists.
+
+Then exercise persistent values:
+
+    "$bin" config set cache_limit_bytes 1073741824 --json
+    "$bin" config set agents.claude.executable /opt/claude/bin/claude --json
+    "$bin" config get agents.claude.executable --json
+    "$bin" config list
+    "$bin" config unset agents.claude.executable --json
+
+The first two responses are `changed`, the get returns a padded-base64 `PathValue` for the exact absolute bytes, list shows the same state in English without control bytes, and unset returns `changed` with `configured: false`, null value, and default command `claude`. Only `$XDG_CONFIG_HOME/skilload/config.toml` and the required state lock hierarchy exist; data and cache roots remain absent.
+
+Capture the config file identity and bytes, repeat an already-satisfied set and unset, and require `unchanged` with identical bytes, inode, and modification time. Exercise values `1` and `9223372036854775807` successfully; reject `0`, negative input, and `9223372036854775808` without a diff. Reject a relative or invalid-UTF-8 Agent path without creating or rewriting the document.
+
+Before review, inspect every changed file:
+
+    git status --short
+    git diff --stat main...HEAD
+    git diff main...HEAD
+    git diff --check
+
+Commit only scoped implementation, tests, synchronized documentation, this living Plan, the reference, toolchain manifests, lockfile, and CI. Push them, wait for the workflow, and record its URL and result. Then perform the ready/review transaction exactly as required by `docs/PLANS.md`.
+
+## Validation and Acceptance
+
+Acceptance for `SKL-CLI-002` runs the binary with no arguments under an isolated empty home. It exits zero, writes current help to stdout, writes no required diagnostic, opens no network capability, and leaves every XDG root absent. `--help` has the same no-state property; `--version` reports `skilload 0.0.1`.
+
+Acceptance for `SKL-CLI-003` extracts every current `clap` leaf and obtains exactly four: `config.get`, `config.set`, `config.unset`, and `config.list`. The schema has no automatic `help` command, alias, hidden TUI/server command, or domain placeholder. Each representative removed/unknown invocation exits 2, makes no state change, and cannot route to another action.
+
+Acceptance for `SKL-OPS-006` proves the absent/default, set, get, list, unset, schema, and validation behavior for all three keys. Boundary tests accept cache limits 1 and 9,223,372,036,854,775,807 and reject zero, negative, overflow, signs/whitespace or non-decimal forms not accepted by the argument grammar. Agent path tests accept an absolute valid-UTF-8 value after lexical normalization, never require the target to exist, and reject empty, relative, current-directory-dependent, multiword command intent, and invalid-UTF-8 values without rewrite. Unknown fields/tables/types, missing/older/newer versions, duplicate keys, a config symlink, and a non-regular file all preserve bytes and receive typed errors. Unsetting the final key in an existing file leaves canonical `version = 1`; unsetting from absent state creates nothing.
+
+Acceptance for `SKL-CLI-011` validates golden human and JSON output for every command and both mutation outcomes. Every JSON document decodes once, has the correct operation/data type, required nullable fields, sorted entries, decimal string, and padded exact-byte path. `--json` with closed stdin never reads or hangs. Help/version with `--json` exit 2 before dispatch. Human fixtures containing quote, backslash, newline, carriage return, tab, ESC/CSI/OSC, BEL, DEL/C1, U+2028/U+2029, U+061C and the listed bidi controls, plus invalid path bytes, emit only the injective visible escapes from the product contract.
+
+Supporting adapter acceptance covers unset, empty, relative, and absolute values for every XDG variable; invalid fallback `HOME`; CWD independence; all equal/nested pairs among four effective roots; two spellings through one symlink; inaccessible/changing prefixes; and final mutation revalidation. Every rejection happens before config/state access or creation. An absent list/get is byte-for-byte filesystem inert. A real mutation creates mode-0700 owned directories and a mode-0600 regular config file on macOS/Linux, never data/cache/Agent/workspace paths. Two concurrent setters for different keys serialize without lost updates; a bounded lock contender returns typed `busy`. Injected failure at each stage yields either the complete prior document or complete new document, never truncated TOML.
+
+The normal dependency graph must contain no HTTP, Git, SQLite, Agent, telemetry, or Node runtime. CI must pass on its pinned Linux and macOS runners. This Plan does not claim arm64/x86_64 release artifacts, the final 50-leaf parser, full API-v1 error coverage, or any domain beyond configuration.
+
+## Idempotence and Recovery
+
+`mise install`, Cargo generation with an unchanged manifest, formatting, linting, tests, builds, and query scenarios are safe to repeat. Use disposable XDG/HOME roots for manual acceptance. Never reuse a developer's real configuration directory and never delete an unfamiliar path.
+
+Configuration reads never create. A detected no-op returns before staging. A real write uses one persistent lock, re-reads after acquiring it, stages in the destination directory, and replaces only after validation and sync. A crash before rename leaves the old file authoritative; a recognizable same-directory temp may be removed only when it is not the active locked stage. A crash after rename leaves the complete new file. Root or baseline identity drift aborts and retries from a fresh read; it never follows the drift.
+
+An invalid/unsupported document is preserved byte-for-byte. Revision 1 has no silent migration. The implementation may report an older schema as `migration_required` and a newer schema as `schema_newer`, but neither path rewrites. Do not invent a reset, repair, or force option.
+
+On workflow rerun, reconcile and reuse this branch, Plan, reference, and Draft PR. If material scope exceeds the configuration vertical slice, return to planning and split an independently acceptable later Plan rather than adding a second Plan to this PR or exposing stubs.
+
+If `gh pr ready` fails, keep the Plan `active` and the PR Draft. If ready conversion succeeds but the review move, commit, or push fails, run `gh pr ready <pull_request> --undo`, verify `isDraft: true`, and restore/keep the Plan in `active` before retrying. If review reveals materially incomplete scope, first return the PR to Draft and verify it, move the Plan back to `active`, record and push the reason, then resume only through `execute-exec-plan`. If publishing that reverse transaction fails, restore `review` and ready state.
+
+After explicit merge authorization, if any required check, repeated gate, queue attempt, or merge fails before GitHub reports `MERGED`, restore this Plan to `review`, record the failure, and push. A `completed` declaration becomes the official archive only after the merge enters `main`.
+
+## Artifacts and Notes
+
+Planning baseline on 2026-08-18:
+
+    $ git status --short --branch
+    ## main...origin/main
+
+    $ git rev-list --left-right --count main...origin/main
+    0       0
+
+    $ find docs/exec-plans -maxdepth 2 -type f -print
+    docs/exec-plans/completed/p0-product-architecture-baseline.md
+    ...status-directory .gitkeep files...
+
+    $ gh pr list --state all
+    #1 merged: docs: establish skilload product and architecture baseline
+
+The only predecessor is `PLAN-0001`. No implementation or open delivery exists to reuse. Current external version evidence and action commit pins are retained in `docs/references/rust-foundation-versions.md` rather than only in this Plan or chat.
+
+Implementation evidence on 2026-08-18:
+
+    $ mise exec -- rustc --version
+    rustc 1.97.1 (8bab26f4f 2026-07-14)
+
+    $ mise exec -- cargo test --workspace --all-features --locked
+    15 core tests passed; 5 CLI unit tests passed; 6 CLI integration tests passed.
+
+    $ target/debug/skilload config list --json
+    {"api_version":1,"operation":"config.list","ok":true,...}
+
+    $ target/debug/skilload config set cache_limit_bytes 1073741824 --json
+    {"api_version":1,"operation":"config.set","ok":true,"result":{"outcome":"changed",...}}
+
+    $ gh run view 32144984316
+    CI succeeded: ubuntu-24.04 and macos-15 passed format, Clippy, and locked tests.
+
+    $ gh pr view https://github.com/bootids/skilload/pull/2 --json isDraft,headRefOid
+    {"isDraft":false,"headRefOid":"5faf8ff8a5f06087e572e0c8c20e63ebc0f85b36"}
+
+    $ gh run view 32145189606
+    CI succeeded: ubuntu-24.04 and macos-15 passed for implementation head 5faf8ff.
+
+    $ find "$tmp" -mindepth 1 -print
+    .../home
+    .../config/skilload/config.toml
+    .../state/skilload/locks/config.lock
+
+## Interfaces and Dependencies
+
+In `crates/skilload-core/src/domain/configuration.rs`, define these semantic interfaces, refining field visibility without changing meaning:
+
+    pub const CONFIG_SCHEMA_VERSION: u16 = 1;
+    pub const DEFAULT_CACHE_LIMIT_BYTES: u64 = 536_870_912;
+
+    pub enum ConfigKey {
+        CacheLimitBytes,
+        ClaudeExecutable,
+        CodexExecutable,
+    }
+
+    pub enum ConfigValue {
+        CacheLimitBytes(u64),
+        Executable(NativePath),
+    }
+
+    pub struct ConfigEntry {
+        pub key: ConfigKey,
+        pub configured: bool,
+        pub value: Option<ConfigValue>,
+        pub default_value: Option<u64>,
+        pub default_command: Option<&'static str>,
+    }
+
+    pub struct ConfigEntries {
+        pub schema_version: u16,
+        pub entries: [ConfigEntry; 3],
+    }
+
+    pub enum MutationOutcome {
+        Changed,
+        Unchanged,
+    }
+
+`NativePath` owns a native `PathBuf` and exposes no lossy string conversion. `ConfigKey` iteration is fixed in API order. Cache input validates in checked `u64` space but caps persistent TOML at `i64::MAX`. Executable input remains `OsString` until core has rejected invalid UTF-8, then validates and stores an absolute normalized path without filesystem probing.
+
+In `crates/skilload-core/src/ports/configuration.rs`, define:
+
+    pub trait Environment {
+        fn var_os(&self, key: &str) -> Option<OsString>;
+    }
+
+    pub trait StateRootResolver {
+        fn resolve(&self, environment: &dyn Environment) -> Result<ResolvedRoots, AppError>;
+        fn revalidate(&self, roots: &ResolvedRoots) -> Result<(), AppError>;
+    }
+
+    pub trait ConfigurationStore {
+        fn load(&self) -> Result<LoadedConfig, AppError>;
+        fn replace(
+            &self,
+            expected: &ConfigBaseline,
+            desired: &ConfigDocument,
+        ) -> Result<StoreOutcome, AppError>;
+    }
+
+`LoadedConfig` contains the validated `ConfigDocument` plus an opaque `ConfigBaseline` carrying exactly the file/root identity evidence needed by `replace`; absent state has an explicit absent baseline. The store owns serialization, locking, revalidation, staging, permissions, sync, and atomic replacement. The application never receives a file handle or path to mutate directly.
+
+The public `Application` facade provides:
+
+    pub fn config_get(&self, key: ConfigKey) -> Result<ConfigEntry, AppError>;
+    pub fn config_list(&self) -> Result<ConfigEntries, AppError>;
+    pub fn config_set(
+        &self,
+        key: ConfigKey,
+        raw_value: OsString,
+    ) -> Result<ConfigMutation, AppError>;
+    pub fn config_unset(&self, key: ConfigKey) -> Result<ConfigMutation, AppError>;
+
+`ConfigMutation` carries `MutationOutcome` and the post-operation `ConfigEntry`. `AppError` carries a stable code and typed details with native paths; it contains no terminal prose assembled by core. The CLI adds English messages and maps exit categories.
+
+At the workspace root, declare compatible direct requirements using the exact starting versions in the Rust reference, then treat committed `Cargo.lock` as the executable dependency snapshot. `skilload-core` depends on `serde`, `toml`, `thiserror`, and `tempfile`. `skilload-cli` depends on `skilload-core`, `clap`, `serde`, `serde_json`, and `base64`. CLI integration tests additionally use `assert_cmd`, `predicates`, and `tempfile`. No other direct dependency is authorized by this Plan without a recorded discovery and Decision Log entry.
+
+Plan revision note: created on 2026-08-18 to turn the completed product/architecture baseline into the smallest real implementation slice. It selects the Rust foundation and exact current direct inputs, fully scopes four Revision 1 behaviors, forbids placeholder domain commands, and defines the application, storage, CLI, validation, documentation, and lifecycle evidence needed for an independently reviewable delivery. The same day, initial commit `c21211b0d1aa55e2c422d6d5929bf65457fb5a91` was pushed, Draft PR https://github.com/bootids/skilload/pull/2 was opened, and its canonical URL plus publication evidence were recorded before the required metadata push. Execution completed on the same day: implementation head `5faf8ff8a5f06087e572e0c8c20e63ebc0f85b36` passed CI, the PR was made ready, and this Plan moved to `review` pending human review and a later explicit merge authorization.
+
+Plan revision note (2026-08-18): follow-up review remediation in `c3977fe5653118487ec0801e3bb6f1cfec749e28` fixes R7 through R10 and records the R11 no-fix decision. Every actual problem source from the full PR conversation is now represented by R1 through R11 with its disposition, evidence, GitHub reply, and resolved thread state; the informational `@codex` top-level comment and boilerplate review bodies raised no separate problem.
+
+Plan revision note (2026-08-19): 已记录并推送 R15、R16 的修复提交 `450ae3f4148a8d924f26977c4ebeab932c26d2ce`、精确回归和完整验证证据。两个来源均已在 GitHub 回复并关闭；最终 `pr_threads.cjs list --all` 核对确认 16 个内联线程全部解决、所有线程来源已记录，且没有新增需要处理的顶层评论或审查正文问题。
+
+Plan revision note (2026-08-19): 收到人类明确合并授权后，已完成 `docs/PLANS.md` 所要求的只读预检，并将本计划从 `review/` 移至 `completed/`、将前置状态改为 `completed`。记录了当前交付头、依赖、CI、分支范围与完整 GitHub 会话的逐项核验结果；合入前若任何重复门禁、必需检查、队列或合并动作失败，必须依照恢复规则还原到 `review`。
+
+Plan revision note (2026-08-19): 已记录归档提交后的空必需检查集：`gh pr checks --required` 明确报告没有必需检查；按流程将其作为已通过门禁，并保留合并前重新核验 PR 可变状态、头提交与评审会话的要求。
