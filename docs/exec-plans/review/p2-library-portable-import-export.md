@@ -859,7 +859,7 @@ GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_
 
 ### PRRC_kwDOT7YN2s7jPSnG — export staging publish race
 
-Source: 内联评论 `PRRC_kwDOT7YN2s7jPSnG`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3812436422)；线程 `PRRT_kwDOT7YN2s6acRkl`，当前未解决。
+Source: 内联评论 `PRRC_kwDOT7YN2s7jPSnG`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3812436422)；线程 `PRRT_kwDOT7YN2s6acRkl`，当前已解决。
 
 Problem: export 在最终 staging inode 检查后仍可能以被替换的 staging entry 执行 `renameat`，报错前已经覆盖旧 output。
 
@@ -875,7 +875,7 @@ GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_
 
 ### PRRC_kwDOT7YN2s7jPSnV — first-import staging publish race
 
-Source: 内联评论 `PRRC_kwDOT7YN2s7jPSnV`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3812436437)；线程 `PRRT_kwDOT7YN2s6acRk0`，当前未解决。
+Source: 内联评论 `PRRC_kwDOT7YN2s7jPSnV`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3812436437)；线程 `PRRT_kwDOT7YN2s6acRk0`，当前已解决。
 
 Problem: first import 在 final staging inode check 后可将替换 entry 发布为 `skilload.db`，随后才报告 identity drift。
 
@@ -891,7 +891,7 @@ GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_
 
 ### PRRC_kwDOT7YN2s7jPSnk — first-lock clone cleanup
 
-Source: 内联评论 `PRRC_kwDOT7YN2s7jPSnk`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3812436452)；线程 `PRRT_kwDOT7YN2s6acRk_`，当前未解决。
+Source: 内联评论 `PRRC_kwDOT7YN2s7jPSnk`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3812436452)；线程 `PRRT_kwDOT7YN2s6acRk_`，当前已解决。
 
 Problem: 新建 `database.lock` 后若 cleanup handle 的 `try_clone` 失败，cleanup guard 尚未登记该 lock，导致首次 import 的 pre-COMMIT rollback 遗留 lock/state 目录。
 
@@ -907,7 +907,7 @@ GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_
 
 ### PRRC_kwDOT7YN2s7jPSnr — database error native path
 
-Source: 内联评论 `PRRC_kwDOT7YN2s7jPSnr`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3812436459)；线程 `PRRT_kwDOT7YN2s6acRlE`，当前未解决。
+Source: 内联评论 `PRRC_kwDOT7YN2s7jPSnr`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3812436459)；线程 `PRRT_kwDOT7YN2s6acRlE`，当前已解决。
 
 Problem: database creation/publication/durability I/O error 将 native database path lossy-render 到 `InvalidStateDetails.expected`，违反 API-v2 对状态标签与 `PathValue` 的分工。
 
@@ -923,7 +923,7 @@ GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_
 
 ### PRRC_kwDOT7YN2s7jPSn1 — human import conflict details
 
-Source: 内联评论 `PRRC_kwDOT7YN2s7jPSn1`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3812436469)；线程 `PRRT_kwDOT7YN2s6acRlO`，当前未解决。
+Source: 内联评论 `PRRC_kwDOT7YN2s7jPSn1`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3812436469)；线程 `PRRT_kwDOT7YN2s6acRlO`，当前已解决。
 
 Problem: human-mode Library import 对 `ConflictDetails` 只显示计数，遗漏 JSON 中已有的 conflict alias/name 和 rejected canonical source。
 
@@ -939,7 +939,7 @@ GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_
 
 ### PRRC_kwDOT7YN2s7jPSoC — existing database final sync drift
 
-Source: 内联评论 `PRRC_kwDOT7YN2s7jPSoC`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3812436482)；线程 `PRRT_kwDOT7YN2s6acRlX`，当前未解决。
+Source: 内联评论 `PRRC_kwDOT7YN2s7jPSoC`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3812436482)；线程 `PRRT_kwDOT7YN2s6acRlX`，当前已解决。
 
 Problem: existing import 最后一次 database sync 后没有重验 live path/held descriptor identity，且随后 parent sync 重新按 path 打开目录；被替换 generation 仍可能报告 `changed`。
 
@@ -955,7 +955,7 @@ GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_
 
 ### PRRC_kwDOT7YN2s7jPSoX — first-import sidecar rollback
 
-Source: 内联评论 `PRRC_kwDOT7YN2s7jPSoX`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3812436503)；线程 `PRRT_kwDOT7YN2s6acRln`，当前未解决。
+Source: 内联评论 `PRRC_kwDOT7YN2s7jPSoX`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3812436503)；线程 `PRRT_kwDOT7YN2s6acRln`，当前已解决。
 
 Problem: first-import staging rollback 只清理主 database temp file；SQLite `-journal`、`-wal` 或 `-shm` sidecar 可使新建目录非空，破坏 pre-COMMIT absent-footprint guarantee。
 
@@ -971,7 +971,7 @@ GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_
 
 ### PRRC_kwDOT7YN2s7jPSog — SQLite contention result
 
-Source: 内联评论 `PRRC_kwDOT7YN2s7jPSog`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3812436512)；线程 `PRRT_kwDOT7YN2s6acRlu`，当前未解决。
+Source: 内联评论 `PRRC_kwDOT7YN2s7jPSog`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3812436512)；线程 `PRRT_kwDOT7YN2s6acRlu`，当前已解决。
 
 Problem: SQLite `DatabaseBusy`/`DatabaseLocked` 被投影为 `invalid_state`，且 connection 采用默认而非 Library 的两秒 bounded wait，正常 transient contention 失去 `busy` 语义。
 
@@ -987,7 +987,7 @@ GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_
 
 ### PRRC_kwDOT7YN2s7jPSom — number ceiling early stop
 
-Source: 内联评论 `PRRC_kwDOT7YN2s7jPSom`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3812436518)；线程 `PRRT_kwDOT7YN2s6acRl0`，当前未解决。
+Source: 内联评论 `PRRC_kwDOT7YN2s7jPSom`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3812436518)；线程 `PRRT_kwDOT7YN2s6acRl0`，当前已解决。
 
 Problem: JSON scanner 在检查 128-byte number ceiling 前遍历完整 numeric token，未在第 129 byte 立即停止。
 
