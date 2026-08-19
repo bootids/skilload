@@ -111,7 +111,7 @@ Revision 2 的 `SKL-CLI-004`、`SKL-CLI-005` 与 `SKL-CLI-012` 以 API-v2 curren
 - [x] (2026-08-20) 在 `review` 状态完成四项 ordinary remediation：reversible export/database publication exchange、GitHub owner grammar、SQLite commit-failure sidecar ownership；新增 focused regressions，并通过 core 94 tests、fmt、Clippy、locked workspace tests（11、12、94）、build、CLI import/export smoke 与 diff check。
 - [ ] (2026-08-20) `PRRC_kwDOT7YN2s7jWsuw` 仍等待人类决定：需要可证明的跨 macOS/Linux create-and-hold directory primitive，或明确调整首次 import 在目录创建 race 下的 absent-root/foreign-path 保证；该 inline thread 必须保持 open。
 - [x] (2026-08-20) 四个 fixed source 已使用 `752c0f77b24a5300dffe7edcca952809688fdc1f` 的实现/验证证据逐一回复并在 reply 成功后关闭；`PRRC_kwDOT7YN2s7jWsuw` 已收到 exact decision question，保持 blocked/open。
-- [x] (2026-08-20) 已在 `review` 状态完成四个新 ordinary remediation 的本地实现与验证：SQLite persistence exits 的 FD-bound sidecar tracking、孤立 `-journal`/`-wal`/`-shm` 拒绝、direct `linkat` first-import publish 与 fallible tag sort；新增回归并通过 core 98 tests、fmt、Clippy、locked workspace tests（11、12、98）、build 与实际 CLI dry-run/import/export round trip。四个 source 仍为 fixed/open，待完整 diff 检查、preliminary commit/push、逐源回复并关闭。
+- [x] (2026-08-20) 四个 ordinary remediation 已由 `282fd97dcd04dea37d0ff30848ecd26be603937f` 推送并逐源回复、关闭；最终读取确认 10 条 top-level trigger 均为 `@codex`、96 个 review body 无独立问题、75 个 inline source 全部有 Plan heading，74 个已解决。唯一 `PRRC_kwDOT7YN2s7jWsuw` 因未决 create-and-hold 方向维持 pending/blocked/open。
 - [ ] 收到明确人类合并授权后，完成预检、评审会话记录、completed 事务、必要检查、合并、默认分支更新和本地交付分支清理。
 
 ## Surprises & Discoveries
@@ -332,7 +332,7 @@ P2 implementation 与完整验证已完成，PR #3 已于 2026-08-19 05:57Z 转�
 
 2026-08-20 的 reply reconciliation 显示 9 条 top-level trigger 与 90 个 review body 没有新增独立问题；71 个 inline source 全部在 Review Conversation Log 中有 heading。四个本轮 fixed source 已回复并 `thread resolved: true`；唯一 `PRRT_kwDOT7YN2s6ahTLF` 以 exact decision question 回复，保持 `pending`/`blocked` 与 open 状态。最终 documentation commit 推送后仍需再次全量读取会话和 PR head。
 
-2026-08-20 的最新 ordinary remediation 已在本地完成：`database_exists` 拒绝 orphaned sidecar，first-import staging 在 SQLite error/rollback path 记录 held sidecar，live database 仅由 direct `linkat` 发布，`PortableLibraryDocument` 的 tag sort 传播 validation error。`application-and-persistence.md` 与 Rust/SQLite reference 已同步直接发布协议。core 98 tests、format、Clippy、locked workspace tests（11、12、98）、build 和双隔离 XDG CLI dry-run/import/export byte-identical round trip 均通过；下一步为完整 diff check、preliminary code/ledger commit、push 与四个 source 的 GitHub reply/closure。
+2026-08-20 的最新 ordinary remediation 已由 `282fd97dcd04dea37d0ff30848ecd26be603937f` 推送：`database_exists` 拒绝 orphaned sidecar，first-import staging 在 SQLite error/rollback path 记录 held sidecar，live database 仅由 direct `linkat` 发布，`PortableLibraryDocument` 的 tag sort 传播 validation error；`application-and-persistence.md` 与 Rust/SQLite reference 已同步。core 98 tests、format、Clippy、locked workspace tests（11、12、98）、build 和双隔离 XDG CLI dry-run/import/export byte-identical round trip 均通过。最终会话读取显示 10 条 top-level trigger 均为 `@codex`、96 个 review body 均为空或通用自动化文字、75 个 inline source 均有 Plan heading；四个 fixed thread 均已回复并 resolved，directory identity source 仍按缺少人类决定保持 pending/blocked/open。
 
 ## Review Conversation Log
 
@@ -1475,67 +1475,67 @@ GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_
 
 ### PRRC_kwDOT7YN2s7jcs0L — first-import 全路径 sidecar cleanup
 
-Source: 内联评论 `PRRC_kwDOT7YN2s7jcs0L`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3815951627)；线程 `PRRT_kwDOT7YN2s6alUok`，当前未解决。
+Source: 内联评论 `PRRC_kwDOT7YN2s7jcs0L`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3815951627)；线程 `PRRT_kwDOT7YN2s6alUok`，当前已解决。
 
 Problem: `FirstImportStaging` 仅在显式 `transaction.commit()` 返回 error 后记录 SQLite sidecar；`initialize_schema`、transaction/apply 写入或 pre-COMMIT rollback 路径的 sidecar 可遗留在本调用创建的目录中，阻止 pre-COMMIT absent-root recovery。
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: `crates/skilload-core/src/adapters/sqlite_library.rs` 现将 `FirstImportStaging::record_owned_sidecars` 放在 staging connection、schema、transaction/additions 的 SQLite error exit、successful additions 后的 pre-COMMIT rollback window 与 commit error；它仅以 `O_NOFOLLOW` held FD/identity 记录 `-journal`、`-wal`、`-shm`，Drop 只删除仍匹配的 entry。`first_import_staging_removes_recorded_sqlite_sidecars` 与既有 pre-COMMIT cleanup/foreign-sidecar regressions 保持该所有权边界。
 
-Evidence: 本地 `mise exec -- cargo test -p skilload-core --lib` 通过 98 tests；`cargo fmt --all --check`、workspace Clippy、locked workspace tests（11、12、98）、workspace build 与实际 CLI round trip 均通过。待本轮 preliminary commit/push 后记录 SHA。
+Evidence: 修复提交 `282fd97dcd04dea37d0ff30848ecd26be603937f` 已推送；`mise exec -- cargo test -p skilload-core --lib` 通过 98 tests，`cargo fmt --all --check`、workspace Clippy、locked workspace tests（11、12、98）、workspace build、`git diff --check` 与实际 CLI round trip 均通过。
 
-GitHub outcome: 尚未回复；thread resolved: false。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_r3816825331；thread resolved: true。
 
 ### PRRC_kwDOT7YN2s7jcs0U — orphaned SQLite sidecar detection
 
-Source: 内联评论 `PRRC_kwDOT7YN2s7jcs0U`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3815951636)；线程 `PRRT_kwDOT7YN2s6alUor`，当前未解决。
+Source: 内联评论 `PRRC_kwDOT7YN2s7jcs0U`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3815951636)；线程 `PRRT_kwDOT7YN2s6alUor`，当前已解决。
 
 Problem: `database_exists` 在 `skilload.db` 缺失时直接返回 false，不检查同目录 `-journal`、`-wal` 或 `-shm`；export/dry-run 因而可能把残留 generation 报为 empty，实际 import 也可能在其旁发布新的 main database。
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: `crates/skilload-core/src/adapters/sqlite_library.rs` 的 absent `skilload.db` 分支现在以 no-follow metadata 检查 `-journal`、`-wal`、`-shm`；任一存在都返回现有 `database_corrupt`。因此 export、dry-run 与实际 import 均不会把残留 generation 当作 empty Library 或发布新的 main database；`orphaned_database_sidecars_are_not_an_empty_library` 覆盖三种 suffix。
 
-Evidence: 本地 `mise exec -- cargo test -p skilload-core --lib` 通过 98 tests；`cargo fmt --all --check`、workspace Clippy、locked workspace tests（11、12、98）、workspace build 与实际 CLI round trip 均通过。待本轮 preliminary commit/push 后记录 SHA。
+Evidence: 修复提交 `282fd97dcd04dea37d0ff30848ecd26be603937f` 已推送；`mise exec -- cargo test -p skilload-core --lib` 通过 98 tests，`cargo fmt --all --check`、workspace Clippy、locked workspace tests（11、12、98）、workspace build、`git diff --check` 与实际 CLI round trip 均通过。
 
-GitHub outcome: 尚未回复；thread resolved: false。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_r3816826631；thread resolved: true。
 
 ### PRRC_kwDOT7YN2s7jcs0d — atomic first-import publication
 
-Source: 内联评论 `PRRC_kwDOT7YN2s7jcs0d`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3815951645)；线程 `PRRT_kwDOT7YN2s6alUov`，当前未解决。
+Source: 内联评论 `PRRC_kwDOT7YN2s7jcs0d`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3815951645)；线程 `PRRT_kwDOT7YN2s6alUov`，当前已解决。
 
 Problem: first import 在 publish 前把 zero-byte `FirstImportPublicationGuard` 创建为 authoritative `skilload.db`；进程终止或断电落在 guard 与 exchange 之间会把先前 absent Library 留为不可恢复的空 live database，且并发无锁读取可观察到该中间状态。
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: `crates/skilload-core/src/adapters/sqlite_library.rs` 已删除 `FirstImportPublicationGuard`、随机 publication link 与 `RenameFlags::EXCHANGE`；held staging inode 直接经 `linkat` 创建 absent `skilload.db`，target collision 返回 identity drift 并保留 foreign target。link 后与 final identity check 后的 replacement 只会保留 replacement，`first_import_publishes_a_committed_database_without_an_empty_guard` 证明 live name 首次出现即带 SQLite header；`docs/design-docs/application-and-persistence.md` 与 `docs/references/rust-sqlite-unicode-library-foundation.md` 同步该协议。
 
-Evidence: 本地 `mise exec -- cargo test -p skilload-core --lib` 通过 98 tests；`cargo fmt --all --check`、workspace Clippy、locked workspace tests（11、12、98）、workspace build 与实际 CLI round trip 均通过。待本轮 preliminary commit/push 后记录 SHA。
+Evidence: 修复提交 `282fd97dcd04dea37d0ff30848ecd26be603937f` 已推送；`mise exec -- cargo test -p skilload-core --lib` 通过 98 tests，`cargo fmt --all --check`、workspace Clippy、locked workspace tests（11、12、98）、workspace build、`git diff --check` 与实际 CLI round trip 均通过。
 
-GitHub outcome: 尚未回复；thread resolved: false。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_r3816827844；thread resolved: true。
 
 ### PRRC_kwDOT7YN2s7jcs0f — fallible tag sort
 
-Source: 内联评论 `PRRC_kwDOT7YN2s7jcs0f`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3815951647)；线程 `PRRT_kwDOT7YN2s6alUox`，当前未解决。
+Source: 内联评论 `PRRC_kwDOT7YN2s7jcs0f`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3815951647)；线程 `PRRT_kwDOT7YN2s6alUox`，当前已解决。
 
 Problem: `PortableLibraryDocument::sort_deterministically` 是 public fallible API，却在 comparator 中对 `normalize_tag` 使用 `expect`；外部 `LibraryRepository` 或直接 caller 提供 invalid tag 时，`serialize_for_transfer` 可能 panic 而非返回 `AppError`。
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: `crates/skilload-core/src/domain/library.rs` 现在在 mutation 前为全部 tags 预计算 fallible comparison key，再稳定重排 original tag strings；invalid tag 返回 validation error 且 document 保持不变。`sorting_invalid_tags_returns_validation_error_without_mutating_document` 与 `transfer_serialization_propagates_invalid_tag_validation` 覆盖 direct sort 和 transfer serialization。
 
-Evidence: 本地 `mise exec -- cargo test -p skilload-core --lib` 通过 98 tests；`cargo fmt --all --check`、workspace Clippy、locked workspace tests（11、12、98）、workspace build 与实际 CLI round trip 均通过。待本轮 preliminary commit/push 后记录 SHA。
+Evidence: 修复提交 `282fd97dcd04dea37d0ff30848ecd26be603937f` 已推送；`mise exec -- cargo test -p skilload-core --lib` 通过 98 tests，`cargo fmt --all --check`、workspace Clippy、locked workspace tests（11、12、98）、workspace build、`git diff --check` 与实际 CLI round trip 均通过。
 
-GitHub outcome: 尚未回复；thread resolved: false。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_r3816829354 和 https://github.com/bootids/skilload/pull/3#discussion_r3816830459；首次 reply request client timeout 后完成，retry 留下第二条相同审计回复；thread resolved: true。
 
 ## Context and Orientation
 
@@ -1823,3 +1823,5 @@ Library 是本机可搜索的来源元数据集合；在本交付中它只保存
 计划修订说明（2026-08-20）：再次完整读取 PR #3 后发现四个新的 ordinary P2 implementation 缺口；它们均未改变 Product Baseline，已在 Review Conversation Log 以 fixed/open 记录具体代码路径、验证和 GitHub 状态。directory identity source 仍因缺少人类产品/architecture 选择保持 pending/blocked；本轮只处理四项普通修复。
 
 计划修订说明（2026-08-20）：四个新 inline source 的 ordinary remediation 已在 `review` 状态完成本地代码、回归、设计/reference 同步与全量验证。first-import 发布改为 direct `linkat`，sidecar 与 tag error 边界按当前 Product Baseline 收紧；未改变命令、API schema、行为 revision 或 acceptance scope。四项保持 fixed/open，等待 preliminary commit/push 后才回复和关闭；directory identity source 继续 blocked/open。
+
+计划修订说明（2026-08-20）：修复提交 `282fd97dcd04dea37d0ff30848ecd26be603937f` 推送后，四个 fixed thread 均获得具体 commit/validation reply 并确认 `isResolved: true`；tag source 的 timeout-induced duplicate reply URL 已如实保留。最终 reconciliation 覆盖全部 10 条 top-level trigger、96 个 review body 与 75 个 inline source；没有未记录或未回答的非 blocked 问题。唯一 directory identity source 保持 pending/blocked/open，等待明确的人类产品/architecture 决定。
