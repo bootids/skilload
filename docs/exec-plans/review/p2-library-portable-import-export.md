@@ -84,6 +84,7 @@ Revision 2 的 `SKL-CLI-004`、`SKL-CLI-005` 与 `SKL-CLI-012` 以 API-v2 curren
 - [x] (2026-08-19 10:17Z) 已通过 focused core（61 tests）和 CLI（9 unit、12 integration）测试，以及 `cargo fmt --all --check`、workspace Clippy `-D warnings`、workspace all-features locked tests、build；隔离 CLI smoke 验证 API-v2 dry-run/import/export 和 `library_input_limit_exceeded` details。
 - [x] (2026-08-19 10:21Z) 已检查完整 staged diff、`git diff --check`，并将代码、测试、产品/API/设计/reference 文档和 preliminary review ledger 以 `03b4aa0de8b05963b0c5a2a3ce7b798684d3a92c` 推送；local/upstream/Draft PR #3 head 已核对为同一 SHA。
 - [x] (2026-08-19 10:23Z) 已执行 `gh pr ready https://github.com/bootids/skilload/pull/3`，确认 `isDraft: false`、`headRefOid: 73f5634a5b9871bb635f5bf8c4fd36ea81bee816` 与已推送 active Plan HEAD 相同；本文件随 review-state commit 移入 `review/`，随后必须重新读取完整 PR 会话并逐源回复/关闭九个线程。
+- [x] (2026-08-19 10:32Z) 已重新读取完整 PR 会话：4 条 top-level trigger、41 个 review body 和 32 个 inline thread 没有新增独立问题；全部 32 个 thread 为 resolved，九个新 source 均已回复、关闭并写入 Review Conversation Log。
 - [ ] 收到明确人类合并授权后，完成预检、评审会话记录、completed 事务、必要检查、合并、默认分支更新和本地交付分支清理。
 
 ## Surprises & Discoveries
@@ -216,6 +217,8 @@ P2 implementation 与完整验证已完成，PR #3 已于 2026-08-19 05:57Z 转�
 
 
 2026-08-19 10:23Z 已完成 active-to-ready 的 GitHub 事务：PR #3 为 open、ready，`headRefOid` 等于完整 remediation/active-Plan evidence commit `73f5634a5b9871bb635f5bf8c4fd36ea81bee816`。本 review-state commit 只移动本 Plan 并记录 ready evidence；九个新 review source 仍保持 open，下一步由 `address-pr-threads` 在 review 状态重新获取会话、回复并关闭。
+
+2026-08-19 10:32Z 的最终 conversation reconciliation 确认：4 条 top-level `@codex` trigger 和 5 个非空 bot review body 只触发 inline review，不含新的独立问题；32 个 inline thread 均为 resolved，Plan 的 32 个 source heading 与 GitHub thread 一一对应。九项本轮 remediation 均引用 code commit `03b4aa0de8b05963b0c5a2a3ce7b798684d3a92c`、验证和 reply URL；本条 review documentation commit 推送后将再次核对 PR head。
 ## Review Conversation Log
 
 
@@ -589,147 +592,147 @@ GitHub outcome: 批量请求在客户端超时后继续写入，产生两条内�
 
 ### PRRC_kwDOT7YN2s7jLbul — 首次数据库发布绑定 data directory
 
-Source: 内联评论 `PRRC_kwDOT7YN2s7jLbul`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3811425189)；线程 `PRRT_kwDOT7YN2s6aZqw3`，当前未解决。
+Source: 内联评论 `PRRC_kwDOT7YN2s7jLbul`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3811425189)；线程 `PRRT_kwDOT7YN2s6aZqw3`，当前已解决。
 
 Problem: final root revalidation 后，`persist_noclobber(&database)` 仍按路径重新解析 data directory；同账号进程替换该目录可让首次数据库发布逃离已验证的 XDG identity。
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: `crates/skilload-core/src/adapters/sqlite_library.rs` 新增持有 no-follow data-directory descriptor 和 `renameat_with(..., RenameFlags::NOREPLACE)`；首次 staging 的 cleanup 也通过 held descriptor 删除同 inode entry。publish 前后重验 directory identity，`DataDirectoryReplacement` fixture 证明 replacement 后不会在新旧目录发布 database。
 
 Evidence: `03b4aa0de8b05963b0c5a2a3ce7b798684d3a92c` 已推送；`first_import_rejects_a_replaced_data_directory_before_publish`、core 61 tests、workspace fmt/Clippy/all-features locked test/build 和隔离 CLI smoke 均通过。
 
-GitHub outcome: 未回复；thread resolved: false。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_r3812150222；thread resolved: true。
 
 ### PRRC_kwDOT7YN2s7jLbus — schema version 行完整性
 
-Source: 内联评论 `PRRC_kwDOT7YN2s7jLbus`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3811425196)；线程 `PRRT_kwDOT7YN2s6aZqw6`，当前未解决。
+Source: 内联评论 `PRRC_kwDOT7YN2s7jLbus`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3811425196)；线程 `PRRT_kwDOT7YN2s6aZqw6`，当前已解决。
 
 Problem: `schema_info` 缺少 version row 时 `query_row` 被映射为 `invalid_state`，并且多行 version 被静默忽略；两种 durable schema 损坏都应进入 `database_corrupt`。
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: `crates/skilload-core/src/adapters/sqlite_library.rs` 的 `singleton_i64` 要求 `schema_info` 恰有一条可解码 version；缺失、额外或错误类型均返回 `database_corrupt`。新增 `missing_schema_version_row_is_database_corrupt` 与 `multiple_schema_version_rows_are_database_corrupt`。
 
 Evidence: `03b4aa0de8b05963b0c5a2a3ce7b798684d3a92c` 已推送；core 61 tests（含两个 cardinality fixture）和 workspace gates 均通过。
 
-GitHub outcome: 未回复；thread resolved: false。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_r3812152604；thread resolved: true。
 
 ### PRRC_kwDOT7YN2s7jLbuu — repository display 与 canonical identity
 
-Source: 内联评论 `PRRC_kwDOT7YN2s7jLbuu`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3811425198)；线程 `PRRT_kwDOT7YN2s6aZqw8`，当前未解决。
+Source: 内联评论 `PRRC_kwDOT7YN2s7jLbuu`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3811425198)；线程 `PRRT_kwDOT7YN2s6aZqw8`，当前已解决。
 
 Problem: `SourceIdentity::new` 只拒绝空 `repository_display`，允许其 ASCII-lowercased repository identity 与 canonical `repository` 不同，进而让 root Skill 的 derived name 依赖伪造 display spelling。
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: `crates/skilload-core/src/domain/source.rs` 在 `SourceIdentity::new` 要求 `repository_display.eq_ignore_ascii_case(repository)`，并新增 `portable_source_rejects_mismatched_repository_display`。
 
 Evidence: `03b4aa0de8b05963b0c5a2a3ce7b798684d3a92c` 已推送；core 61 tests 证明 root Skill 不能从不相关 display spelling 导出 name。
 
-GitHub outcome: 未回复；thread resolved: false。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_r3812154556；thread resolved: true。
 
 ### PRRC_kwDOT7YN2s7jLbu1 — partial directory 创建清理
 
-Source: 内联评论 `PRRC_kwDOT7YN2s7jLbu1`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3811425205)；线程 `PRRT_kwDOT7YN2s6aZqxA`，当前未解决。
+Source: 内联评论 `PRRC_kwDOT7YN2s7jLbu1`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3811425205)；线程 `PRRT_kwDOT7YN2s6aZqxA`，当前已解决。
 
 Problem: `ensure_restrictive_directory` 在创建多个祖先后若后续 create/open/restrict 失败，会在结果返回前丢失已创建 descriptor，导致 pre-COMMIT failure 遗留调用创建的空 state directory。
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: `crates/skilload-core/src/adapters/configuration.rs` 将 `ensure_restrictive_directory` 的创建过程包入 failure cleanup：任何后续 create/open/restrict/hook error 都按 held descriptor 与 device/inode 逆序删除空、仍属本调用的目录。新增 `restrictive_directory_rolls_back_partial_created_prefix`。
 
 Evidence: `03b4aa0de8b05963b0c5a2a3ce7b798684d3a92c` 已推送；core 61 tests（含 partial-prefix rollback fixture）和 workspace gates 均通过。
 
-GitHub outcome: 未回复；thread resolved: false。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_r3812158967；thread resolved: true。
 
 ### PRRC_kwDOT7YN2s7jLbvB — Library import limit API 表示
 
-Source: 内联评论 `PRRC_kwDOT7YN2s7jLbvB`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3811425217)；线程 `PRRT_kwDOT7YN2s6aZqxH`，当前未解决。
+Source: 内联评论 `PRRC_kwDOT7YN2s7jLbvB`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3811425217)；线程 `PRRT_kwDOT7YN2s6aZqxH`，当前已解决。
 
 Problem: six 个 Library import JSON ceiling 当前均返回 `agent_input_limit_exceeded`，但 API-v1 将该 code 保留给 `agent-project-input-v1`，并禁止对不同条件复用 code。
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: 新增 `docs/product-specs/api-v2.md`，将 current CLI producer 统一切换为 `api_version: 2`，并定义 `library_input_limit_exceeded` → `LimitDetails`；`AppError::LibraryInputLimit` 只由六个 Library scanner ceiling 构造。`api-v1.md` 保留为历史 contract，`SKL-LIB-010` 升为 Revision 4、相关 CLI IDs 升为 Revision 2。
 
 Evidence: `03b4aa0de8b05963b0c5a2a3ce7b798684d3a92c` 已推送；`api_v2_library_limit_uses_its_dedicated_code`、scanner regressions 和隔离 CLI smoke 返回 `library_input_limit_exceeded`、`library_import_number_bytes`、`129`/`128` 与 input `PathValue`。
 
-GitHub outcome: 未回复；thread resolved: false，待逐源回复和关闭。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_r3812161254；thread resolved: true。
 
 ### PRRC_kwDOT7YN2s7jLbvG — database lock descriptor identity
 
-Source: 内联评论 `PRRC_kwDOT7YN2s7jLbvG`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3811425222)；线程 `PRRT_kwDOT7YN2s6aZqxK`，当前未解决。
+Source: 内联评论 `PRRC_kwDOT7YN2s7jLbvG`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3811425222)；线程 `PRRT_kwDOT7YN2s6aZqxK`，当前已解决。
 
 Problem: 既有 lock 的 `symlink_metadata` 与 `open_restrictive_lock` 之间发生 file replacement 时，no-follow 打开的 descriptor 未与已检查 inode 比较；两个进程可能在不同 inode 上分别持锁并并发写同一数据库。
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: `crates/skilload-core/src/adapters/configuration.rs` 将 inspected path、opened descriptor 和 expected device/inode 绑定，并在取得 advisory lock 后再次比较；existing 与 `AlreadyExists` race branch 均覆盖。新增 `lock_rejects_replacement_after_path_inspection`。
 
 Evidence: `03b4aa0de8b05963b0c5a2a3ce7b798684d3a92c` 已推送；core 61 tests 的 replacement fixture 保留外部 lock 并返回 `lock_path_identity_drift`。
 
-GitHub outcome: 未回复；thread resolved: false。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_r3812163765；thread resolved: true。
 
 ### PRRC_kwDOT7YN2s7jLbvM — 持久 tag comparison key 损坏
 
-Source: 内联评论 `PRRC_kwDOT7YN2s7jLbvM`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3811425228)；线程 `PRRT_kwDOT7YN2s6aZqxP`，当前未解决。
+Source: 内联评论 `PRRC_kwDOT7YN2s7jLbvM`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3811425228)；线程 `PRRT_kwDOT7YN2s6aZqxP`，当前已解决。
 
 Problem: `load_tags` 只读取 display 并重新计算 key，未验证数据库中规范 Unicode comparison key；损坏 key 因而被 export/import 接受而不是作为 corruption 拒绝。
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: `crates/skilload-core/src/adapters/sqlite_library.rs` 的 `load_tags` 同时读取 `comparison_key` 与 display，以固定 Unicode-15.1 normalizer 验证两者都为 canonical stored value；mismatch 返回 `database_corrupt`。新增 `malformed_tag_comparison_key_is_database_corrupt`。
 
 Evidence: `03b4aa0de8b05963b0c5a2a3ce7b798684d3a92c` 已推送；core 61 tests（含 comparison-key corruption fixture）和 workspace gates 均通过。
 
-GitHub outcome: 未回复；thread resolved: false。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_r3812166952；thread resolved: true。
 
 ### PRRC_kwDOT7YN2s7jLbvS — staging inode 发布验证
 
-Source: 内联评论 `PRRC_kwDOT7YN2s7jLbvS`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3811425234)；线程 `PRRT_kwDOT7YN2s6aZqxS`，当前未解决。
+Source: 内联评论 `PRRC_kwDOT7YN2s7jLbvS`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3811425234)；线程 `PRRT_kwDOT7YN2s6aZqxS`，当前已解决。
 
 Problem: export 最终 `renameat` 只按 staging filename 发布；同账号进程在 write/sync 后替换该 directory entry 时，可发布与已 sync descriptor 不同的内容。
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: `crates/skilload-core/src/adapters/portable_library.rs` 以 `fstat` 与 parent-descriptor-relative `statat(..., SYMLINK_NOFOLLOW)` 在 rename 前后验证 held staging inode；drift 不报告成功，且 `NamedTempFile` cleanup 不会删除未知 replacement。新增 `export_reports_staging_replacement_after_identity_check`。
 
 Evidence: `03b4aa0de8b05963b0c5a2a3ce7b798684d3a92c` 已推送；core 61 tests 的 staging replacement fixture 返回 `validation_failed` 而非 success。
 
-GitHub outcome: 未回复；thread resolved: false。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_r3812172488；thread resolved: true。
 
 ### PRRC_kwDOT7YN2s7jLbvc — native output path typed error
 
-Source: 内联评论 `PRRC_kwDOT7YN2s7jLbvc`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3811425244)；线程 `PRRT_kwDOT7YN2s6aZqxb`，当前未解决。
+Source: 内联评论 `PRRC_kwDOT7YN2s7jLbvc`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3811425244)；线程 `PRRT_kwDOT7YN2s6aZqxb`，当前已解决。
 
 Problem: export staging/write/sync/rename failure 把可能含 invalid UTF-8 bytes 的 native output path 以 lossy `.display()` 写入 `InvalidStateDetails.expected`，既丢失 PathValue bytes 又滥用 logical state-label field。
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: `crates/skilload-core/src/adapters/portable_library.rs` 的 `export_io` 改为 `AppError::Validation` 并携带原始 `NativePath`，JSON 由 API-v2 `ValidationDetails.path: PathValue` 投影；不再将 lossy path display 放入 `InvalidStateDetails.expected`。新增 core 与 CLI JSON native-byte fixtures。
 
 Evidence: `03b4aa0de8b05963b0c5a2a3ce7b798684d3a92c` 已推送；`export_io_uses_a_typed_native_output_path`、`api_v2_error_paths_preserve_native_bytes` 和 workspace gates 均通过。
 
-GitHub outcome: 未回复；thread resolved: false。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_r3812175152；thread resolved: true。
 
 ## Context and Orientation
 
@@ -974,3 +977,5 @@ Library 是本机可搜索的来源元数据集合；在本交付中它只保存
 计划修订说明（2026-08-19 10:21Z）：preliminary remediation commit `03b4aa0de8b05963b0c5a2a3ce7b798684d3a92c` 已推送，local/upstream/Draft PR head 均为该 SHA。九项 open ledger entry 都已记录该 SHA 和对应验证；下一步执行 ready/review 原子事务，再重新读取完整 GitHub 会话并逐源回复/关闭。
 
 计划修订说明（2026-08-19 10:23Z）：在所有 remediation、测试、产品/API/设计/reference 和 active Plan evidence 均已推送后，`gh pr ready` 返回 `isDraft: false` 且 `headRefOid` 与 `73f5634a5b9871bb635f5bf8c4fd36ea81bee816` 一致。本 commit 将唯一 Plan copy 移至 `review/`、设置 `status: review` 并记录 ready evidence；下一步重新执行完整 PR 会话 reconciliation。
+
+计划修订说明（2026-08-19 10:32Z）：review-state 下重新读取完整 GitHub 会话后，九个 remediation thread 均已使用具体 code SHA、验证和中文说明回复，并在 reply 成功后逐个关闭。最终列表显示 32 个 thread 全部 resolved、32 个 Plan source 全部覆盖、无新 top-level/review-body 问题；本次最终 Review Conversation Log commit 推送后再进行一次全量核对。
