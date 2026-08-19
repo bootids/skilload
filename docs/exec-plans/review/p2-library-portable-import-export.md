@@ -49,7 +49,7 @@ Revision 2 的 `SKL-CLI-004`、`SKL-CLI-005` 与 `SKL-CLI-012` 以 API-v2 curren
 
 `docs/design-docs/cli-json-and-release.md` 规定每个已注册叶子只映射一个应用请求，CLI 不自行编排仓库调用；本分支已将可移植传输参数澄清为 `--input <PATH>`、`--output <PATH>`，使文件中只有可导入数据，而命令结果仍保留正常 API-v2 信封。`docs/design-docs/application-and-persistence.md` 还要求 P2 以 no-follow、nonblocking input descriptor 维持 scanner resource bound、以 staging database 避免首次失败发布 partial state，并区分 rename 前与 rename 后的 export sync failure。`docs/references/rust-sqlite-unicode-library-foundation.md` 记录了本交付的依赖事实：使用无默认特性的 `rusqlite 0.40.2` 加 `bundled`，以及精确 `unicode-normalization =0.1.23`；后者的表是 Unicode 15.1.0，而当前较新版本是 Unicode 17.0.0，不能使用。
 
-本轮 `review` 内 ordinary remediation 继续遵守这些输入：完整 portable document 的 encoder/validation 同时强制 entry 与 byte transfer ceiling；`ResolvedSkill` 只接受正 evidence count；SQLite adapter 验证 tags table 的唯一 cascade foreign key，并在 first staging `Connection::open` 后、任何 configure/SQL 前以 narrowly audited `SQLITE_FCNTL_HAS_MOVED` FFI 检验 connection 实际 inode；transfer adapter 在 final parent sync 后再次绑定 held staging FD 与 output entry。它们只修复已写明的 P2 atomic transfer、durable corruption、并发和可移植闭环，不触发 review-to-active 逆向事务。
+本轮 `review` 内 ordinary remediation 继续遵守这些输入：完整 portable document 的 encoder/validation 同时强制 entry 与 byte transfer ceiling；`ResolvedSkill` 只接受正 evidence count；SQLite adapter 验证 tags table 的唯一 cascade foreign key、将 foreign-key parent-key mismatch 归类为损坏，并在 first staging 与 existing import/export/dry-run `Connection::open` 后、任何 configure/SQL 前以 narrowly audited `SQLITE_FCNTL_HAS_MOVED` FFI 检验 connection 实际 inode；transfer adapter 和 first import 都在 publication-link hook 后、rename 前重验 held staging FD，first import 在全部 sync 后重验 live database entry。`LibraryImportOperation` 以领域 `Observed` outcome 表达 dry-run，CLI 只投影该结果。它们只修复已写明的 P2 atomic transfer、durable corruption、并发、presentation-neutral outcome 与可移植闭环，不触发 review-to-active 逆向事务。
 
 ## Purpose / Big Picture
 
@@ -105,6 +105,7 @@ Revision 2 的 `SKL-CLI-004`、`SKL-CLI-005` 与 `SKL-CLI-012` 以 API-v2 curren
 - [x] (2026-08-19 13:39Z) 已在 `review` 状态完成五项 ordinary remediation 及产品/架构/设计/reference 同步：first-staging SQLite connection 的 post-open inode 验证、positive resolved evidence、combined 10,000-entry transfer ceiling、tags foreign-key schema corruption 与 export final-sync output revalidation。focused core 83 tests、`cargo fmt --all --check`、workspace Clippy `-D warnings`、locked all-features workspace tests（11、12、83）和 workspace build 均通过；待审阅 diff、推送 preliminary commit、逐 thread reply/resolve。
 - [x] (2026-08-19 13:40Z) code 与 preliminary Review Conversation Log commit `8cec7fd1d1e4c79c801215e23af54095e1f83bf5` 已推送；local、upstream 与 open/ready PR #3 的 `headRefOid` 均为该 SHA。六个 source 保持 open，下一步重新读取会话、逐一回复并关闭 inline thread。
 - [x] (2026-08-19 13:45Z) 已重新获取完整会话：7 条 top-level trigger、70 个 review body 与 57 个 inline thread 中，top-level 仅为 `@codex`，所有非空 review body 都是无独立问题的 generic automation；57 个实际 source 与 57 个 Plan heading 完全对应、无 missing/stale source、无 unresolved thread。六个本轮 source 均已有 GitHub reply URL 和 `thread resolved: true`，待提交并推送最终 Review Conversation Log reconciliation。
+- [x] (2026-08-19 14:47Z) 已完整读取 PR #3 的 8 条 top-level trigger、71 个 review body 与 66 个 inline thread；57 个既有 source 已 resolved，新增 9 个 source 已在下方台账以 fixed/open 逐一登记。九项均为当前 Product Baseline 的 ordinary review remediation：完成 first-import/export publication 和最终 sync identity revalidation、foreign-sidecar preservation、foreign-key mismatch 损坏分类、directory rollback guard、read-only SQLite connection binding、领域 dry-run outcome 与 CLI product-spec status 同步。focused core（89）与 CLI（1）测试、workspace fmt/Clippy/all-features locked tests（11、12、89）/build，以及实际 CLI dry-run smoke 均通过；待检查 diff、创建并推送 preliminary code/ledger commit，再逐线程回复和关闭。
 - [ ] 收到明确人类合并授权后，完成预检、评审会话记录、completed 事务、必要检查、合并、默认分支更新和本地交付分支清理。
 
 ## Surprises & Discoveries
@@ -151,6 +152,11 @@ Revision 2 的 `SKL-CLI-004`、`SKL-CLI-005` 与 `SKL-CLI-012` 以 API-v2 curren
   Evidence: `domain::library::tests::transfer_encoding_rejects_valid_metadata_beyond_the_import_ceiling` 构造该有效 fixture，并在 1.43 秒内确认 shared deterministic encoder 返回 `library_portable_document_bytes`。
 - Observation: bundled SQLite 的 Unix VFS 在非空 main database 进入写 journal 前会自动调用 `SQLITE_FCNTL_HAS_MOVED`，因此 existing-database ABA open 后还原 pathname 时写入返回 `SQLITE_READONLY_DBMOVED` 而不是提交到被替换 inode；zero-length first-import staging 则因 `dbSize == 0` 跳过该内部检查，必须在任意 SQL 前显式验证 connection。
   Evidence: locked `libsqlite3-sys 0.38.2/sqlite3.c` 的 `databaseIsUnmoved`（63747–63763）与 journal-open call site（65474）；本机 ABA probe 对两个非空 database 返回 `ReadOnly` extended code 1032，A/B entry count 均保持 1。
+
+- Observation: SQLite 只在写 journal 前自动执行 nonempty database 的 moved check；read-only export/dry-run 因而不能依赖该写时保护。
+  Evidence: `export_rejects_a_read_only_database_aba_open` 在 open 窗口将 connection 指向 B、随后恢复 pathname A；新的显式 `SQLITE_FCNTL_HAS_MOVED` check 在任意 SQL 前返回 `database_identity_drift`，focused core 89 tests 通过。
+- Observation: staging basename 的 `-journal`、`-wal` 与 `-shm` 名称不能证明 sidecar 是本调用创建的。
+  Evidence: `first_import_precommit_failure_preserves_foreign_staging_sidecar` 在 pre-COMMIT failure 前创建同名 foreign `-shm`，Drop 保留该文件且不删除含它的 data directory。
 
 ## Decision Log
 
@@ -240,11 +246,20 @@ Revision 2 的 `SKL-CLI-004`、`SKL-CLI-005` 与 `SKL-CLI-012` 以 API-v2 curren
 - Decision: export 最终 rename error 独立按 held inode 清理 publication link 和原 staging entry。
   Rationale: `linkat` 已可能创建两个指向 held inode 的随机名称；仅删除原名称会遗留完整 portable 文件，删除不匹配名称又会破坏 unknown replacement。
   Date/Author: 2026-08-19 / Codex
-- Decision: 对 first-import staging 的 post-open ABA 只在 `sqlite_library.rs` 的窄 helper 中调用 bundled SQLite `sqlite3_file_control(..., SQLITE_FCNTL_HAS_MOVED, ...)`；core crate 维持 `deny(unsafe_code)`，仅该具备安全论证的 helper 局部允许 FFI。
-  Rationale: `rusqlite` 没有安全的 connection-file identity API，且 empty staging 不会触发 SQLite 在首个写入前的自动 moved check。helper 在任何 configure/SQL 前以 SQLite 自身持有的 main-file handle 检验 pathname；局部审计边界比放宽全 crate 或依赖可替换 `/dev/fd` pathname 更小、更可验证。
+- Decision: 对 first staging、existing import、export 与 dry-run 的 SQLite connection 都只在 `sqlite_library.rs` 的窄 helper 中调用 bundled `sqlite3_file_control(..., SQLITE_FCNTL_HAS_MOVED, ...)`；core crate 维持 `deny(unsafe_code)`，仅该具备安全论证的 helper 局部允许 FFI。
+  Rationale: `rusqlite` 没有安全的 connection-file identity API；empty staging 跳过 SQLite 的自动 moved check，read-only connection 也不会进入写 journal 路径。helper 在任何 configure/SQL 前以 SQLite 自身持有的 main-file handle 检验 pathname；局部审计边界比放宽全 crate 或依赖可替换 `/dev/fd` pathname 更小、更可验证。
   Date/Author: 2026-08-19 / Codex
 - Decision: 将 positive `ResolvedSkill` counts 与完整 10,000-entry transfer ceiling 视为 Revision 3/4 已有的可移植证据/唯一 transfer-format 闭环澄清，不增加行为 revision。
   Rationale: valid source 必含非空 `SKILL.md`，零 entry/byte count 不是可解析的 resolved evidence；P2 import scanner 已拒绝第 10,001 entry，先前只在单次输入而未在 combined durable document 强制该同一上限，使本二进制能够产生自身拒绝的 export。修复使用既有 `validation_failed` constraint，不新增 API code、字段或命令。
+  Date/Author: 2026-08-19 / Codex
+- Decision: pre-COMMIT cleanup 只删除以 held identity 证明由本调用持有的 staging/publication/lock/directory entry；不再依据 SQLite sidecar basename 推断所有权。
+  Rationale: 同账户外部进程可在随机 basename 下创建 regular sidecar，双次 `statat` 只能证明它未再替换，不能证明是本调用创建。保留未知 sidecar 比删除外部文件更符合路径所有权不变量。
+  Date/Author: 2026-08-19 / Codex
+- Decision: `LibraryImportOperation` 使用三态领域 `LibraryImportOutcome`，由 repository 产生 `Observed` dry-run outcome，presentation adapter 不得从 result data 重算。
+  Rationale: future CLI/TUI/Web interface 必须复用 application result；将 outcome 写入 domain operation 防止第二个 adapter 错误报告 `unchanged`，且不改变 API-v2 既有 `observed` wire semantics。
+  Date/Author: 2026-08-19 / Codex
+- Decision: 本轮九项 source 保持 `review` 内 ordinary remediation，不执行 review-to-active 逆向事务。
+  Rationale: 每项修复实现现有 Product Baseline 已明确的 no-foreign-mutation、durable corruption、pre-COMMIT cleanup、presentation-neutral outcome 或 current-producer status；没有扩展命令、行为 revision、API schema 或 acceptance scope。
   Date/Author: 2026-08-19 / Codex
 
 ## Outcomes & Retrospective
@@ -1209,6 +1224,150 @@ Evidence: `export_rejects_an_output_replaced_before_final_parent_sync`、focused
 
 GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_r3813520501；thread resolved: true。
 
+### PRRC_kwDOT7YN2s7jUpXX — 首次导入最终数据库身份复验
+
+Source: 内联评论 `PRRC_kwDOT7YN2s7jUpXX`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3813840343)；线程 `PRRT_kwDOT7YN2s6af6FC`，当前未解决。
+
+Problem: 首次导入在发布 `skilload.db` 后同步 data directory 与新建目录时，没有再次比较 `database_name` 和 held staging FD；同账户替换已发布 database 后命令可能报告 `changed`。
+
+Disposition: fixed
+
+Status: open
+
+Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 的首次导入成功路径于 `sync_created_directory_entries` 后再次 revalidate held data directory 并比较 `database_name` 与 held staging FD；新 hook regression `first_import_rejects_a_database_replaced_after_final_sync` 确认 foreign replacement 不会被报告为 `changed`。本轮 preliminary remediation commit 待创建。
+
+Evidence: `first_import_rejects_a_database_replaced_after_final_sync`；`mise exec -- cargo test -p skilload-core --all-features --locked`（89 passed）、workspace fmt/Clippy/all-features locked tests/build 均通过。
+
+GitHub outcome: 待回复；thread resolved: false。
+
+### PRRC_kwDOT7YN2s7jUpXh — staging sidecar 所有权
+
+Source: 内联评论 `PRRC_kwDOT7YN2s7jUpXh`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3813840353)；线程 `PRRT_kwDOT7YN2s6af6FJ`，当前未解决。
+
+Problem: 未发布 staging 的 Drop 会把 cleanup 时首次看到的同名 regular journal/WAL/SHM 当作本调用所有；外部进程可在此前创建该文件并被错误 unlink。
+
+Disposition: fixed
+
+Status: open
+
+Resolution: 已删除 `FirstImportStaging::Drop` 对 basename-derived sidecar 的 cleanup；Drop 只按 held identity 清理 staging/publication entry，未知 sidecar 保留。`first_import_precommit_failure_preserves_foreign_staging_sidecar` 验证 foreign `-shm` 不被 unlink。本轮 preliminary remediation commit 待创建。
+
+Evidence: `first_import_precommit_failure_preserves_foreign_staging_sidecar`；`mise exec -- cargo test -p skilload-core --all-features --locked`（89 passed）与 workspace gates 通过。
+
+GitHub outcome: 待回复；thread resolved: false。
+
+### PRRC_kwDOT7YN2s7jUpXr — foreign-key mismatch 损坏分类
+
+Source: 内联评论 `PRRC_kwDOT7YN2s7jUpXr`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3813840363)；线程 `PRRT_kwDOT7YN2s6af6FP`，当前未解决。
+
+Problem: `library_entries.canonical_source` 丢失 parent key 时，`PRAGMA foreign_key_check` 可能产生 `foreign key mismatch` SQL error；现有映射会错误返回 `invalid_state` 而不是 `database_corrupt`。
+
+Disposition: fixed
+
+Status: open
+
+Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 的 `database_error` 中将 `foreign key mismatch` 的 `SqliteFailure`/`SqlInputError` 映射为 `database_corrupt`。`foreign_key_parent_key_mismatch_is_database_corrupt` 以损坏 parent key fixture 验证 recovery category。本轮 preliminary remediation commit 待创建。
+
+Evidence: `foreign_key_parent_key_mismatch_is_database_corrupt`；`mise exec -- cargo test -p skilload-core --all-features --locked`（89 passed）与 workspace gates 通过。
+
+GitHub outcome: 待回复；thread resolved: false。
+
+### PRRC_kwDOT7YN2s7jUpX0 — export publication link 最终身份复验
+
+Source: 内联评论 `PRRC_kwDOT7YN2s7jUpX0`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3813840372)；线程 `PRRT_kwDOT7YN2s6af6FV`，当前未解决。
+
+Problem: export 创建并验证 `.skilload-publish-*.tmp` 后，最终 rename 前没有再次验证该 source entry；替换 publication link 可能覆盖 requested output。
+
+Disposition: fixed
+
+Status: open
+
+Resolution: 已在 `crates/skilload-core/src/adapters/portable_library.rs` 的 `publish_staging` 中于 `after_publication_link_before_rename` 后重新验证 parent 和 held staging FD/publication entry，再执行 rename。`export_rejects_a_replaced_publication_link_before_rename` 确认旧 output 与 foreign replacement 保持不变。本轮 preliminary remediation commit 待创建。
+
+Evidence: `export_rejects_a_replaced_publication_link_before_rename`；`mise exec -- cargo test -p skilload-core --all-features --locked`（89 passed）与 workspace gates 通过。
+
+GitHub outcome: 待回复；thread resolved: false。
+
+### PRRC_kwDOT7YN2s7jUpX8 — 数据库 publication link 最终身份复验
+
+Source: 内联评论 `PRRC_kwDOT7YN2s7jUpX8`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3813840380)；线程 `PRRT_kwDOT7YN2s6af6Fa`，当前未解决。
+
+Problem: 首次导入创建并验证 `.skilload-db-publish-*.tmp` 后，no-clobber rename 前没有最终验证 publication entry；替换该 link 可能将 foreign database 发布为 `skilload.db`。
+
+Disposition: fixed
+
+Status: open
+
+Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 的 first-import publication path 中于 publication-link hook 后重验 data directory 和 held publication entry，再运行 no-clobber rename。`first_import_rejects_a_replaced_publication_link_before_rename` 确认 foreign replacement 不会发布为 `skilload.db`。本轮 preliminary remediation commit 待创建。
+
+Evidence: `first_import_rejects_a_replaced_publication_link_before_rename`；`mise exec -- cargo test -p skilload-core --all-features --locked`（89 passed）与 workspace gates 通过。
+
+GitHub outcome: 待回复；thread resolved: false。
+
+### PRRC_kwDOT7YN2s7jUpYG — 新建目录即时清理登记
+
+Source: 内联评论 `PRRC_kwDOT7YN2s7jUpYG`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3813840390)；线程 `PRRT_kwDOT7YN2s6af6Fi`，当前未解决。
+
+Problem: `create_dir` 成功后、`CreatedDirectory` 加入调用者 cleanup list 前，打开、检查或限制新目录失败会遗留 pre-COMMIT directory footprint。
+
+Disposition: fixed
+
+Status: open
+
+Resolution: 已在 `crates/skilload-core/src/adapters/configuration.rs` 添加 `PendingCreatedDirectory` rollback guard；identity 一经取得即登记，open/metadata/permission failure 仅删除仍匹配的 directory。`created_directory_rolls_back_when_opening_it_fails` 注入 open failure 并确认路径恢复 absent。本轮 preliminary remediation commit 待创建。
+
+Evidence: `created_directory_rolls_back_when_opening_it_fails`；`mise exec -- cargo test -p skilload-core --all-features --locked`（89 passed）与 workspace gates 通过。
+
+GitHub outcome: 待回复；thread resolved: false。
+
+### PRRC_kwDOT7YN2s7jUpYK — read-only SQLite 连接身份绑定
+
+Source: 内联评论 `PRRC_kwDOT7YN2s7jUpYK`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3813840394)；线程 `PRRT_kwDOT7YN2s6af6Fl`，当前未解决。
+
+Problem: export/dry-run 的 read-only existing database connection 没有检查 SQLite 实际 main-file inode；open 期间 ABA replacement 可让 metadata 检查的是 A、读取的是 B。
+
+Disposition: fixed
+
+Status: open
+
+Resolution: 已把 `open_existing_database` 收束为 repository instance path，在 pathname open 后、configure/SQL 前调用既有 `verify_sqlite_connection_identity`。`export_rejects_a_read_only_database_aba_open` 验证 read-only ABA connection 被拒绝。本轮 preliminary remediation commit 待创建。
+
+Evidence: `export_rejects_a_read_only_database_aba_open`；`mise exec -- cargo test -p skilload-core --all-features --locked`（89 passed）与 workspace gates 通过。
+
+GitHub outcome: 待回复；thread resolved: false。
+
+### PRRC_kwDOT7YN2s7jUpYW — 应用层 dry-run outcome
+
+Source: 内联评论 `PRRC_kwDOT7YN2s7jUpYW`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3813840406)；线程 `PRRT_kwDOT7YN2s6af6Fv`，当前未解决。
+
+Problem: `LibraryImportOperation` 对 dry-run 返回 `Unchanged`，仅 CLI 通过 `data.dry_run` 重算为 `observed`；其他 presentation adapter 会投影错误 outcome。
+
+Disposition: fixed
+
+Status: open
+
+Resolution: 已在 `crates/skilload-core/src/domain/library.rs` 定义 `LibraryImportOutcome::{Observed, Changed, Unchanged}`，由 SQLite repository 返回；`crates/skilload-cli/src/main.rs` 直接投影 `operation.outcome`，不再读取 `data.dry_run` 重算结果。`dry_run_is_inert_and_first_import_round_trips` 与 CLI contract regression 覆盖该边界。本轮 preliminary remediation commit 待创建。
+
+Evidence: focused core 89 tests、`library_import_export_is_portable_atomic_and_inert_when_dry_run`（1 passed）和实际 CLI `library import --dry-run --json` smoke 均观察到 `observed` 且 XDG roots 仍 absent。
+
+GitHub outcome: 待回复；thread resolved: false。
+
+### PRRC_kwDOT7YN2s7jUpYj — CLI product-spec 实现状态
+
+Source: 内联评论 `PRRC_kwDOT7YN2s7jUpYj`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3813840419)；线程 `PRRT_kwDOT7YN2s6af6F2`，当前未解决。
+
+Problem: `docs/product-specs/README.md` 已声明 API-v2 cutover，`docs/product-specs/cli-contract.md` 的 status 仍称除 P1 三项外全部 planned；同优先级产品规格对 `SKL-CLI-004`/`005`/`012` Revision 2 的实现状态冲突。
+
+Disposition: fixed
+
+Status: open
+
+Resolution: 已更新 `docs/product-specs/cli-contract.md` status，明确 `PLAN-0003` 已实现 API-v2 current-producer 的 `SKL-CLI-004`/`005`/`012` Revision 2；未改变行为正文或 revision。本轮 preliminary remediation commit 待创建。
+
+Evidence: `docs/product-specs/README.md` 与本 Plan Product Baseline 已声明同一 cutover；workspace gates 通过。
+
+GitHub outcome: 待回复；thread resolved: false。
+
 ## Context and Orientation
 
 
@@ -1411,6 +1570,13 @@ Library 是本机可搜索的来源元数据集合；在本交付中它只保存
         pub conflicts: Vec<SourceIdentity>,
     }
 
+    pub enum LibraryImportOutcome { Observed, Changed, Unchanged }
+
+    pub struct LibraryImportOperation {
+        pub outcome: LibraryImportOutcome,
+        pub data: LibraryImportResult,
+    }
+
     pub trait LibraryTransferStore: Send + Sync {
         fn read_import(&self, input: &NativePath) -> Result<PortableLibraryDocument, AppError>;
         fn write_export(&self, output: &NativePath, document: &PortableLibraryDocument) -> Result<(), AppError>;
@@ -1474,3 +1640,5 @@ Library 是本机可搜索的来源元数据集合；在本交付中它只保存
 计划修订说明（2026-08-19 13:40Z）：code/preliminary ledger commit `8cec7fd1d1e4c79c801215e23af54095e1f83bf5` 已推送，并已核对 local、upstream 与 ready PR head 一致。每个 fixed source 现引用该 SHA 和测试；no-fix source 记录无代码改动及同一 preliminary evidence。下一步重新读取会话、回复每个 source、关闭可关闭 thread，再提交最终 reconciliation。
 
 计划修订说明（2026-08-19 13:45Z）：六个本轮 source 的 disposition/status、pushed code evidence、验证、GitHub reply URL 和 resolved state 已最终同步。final pre-documentation fetch 验证所有 57 个 actual problem source 均有 Plan heading，且没有未解决 thread、top-level 问题或 review-body 问题；本 documentation commit 推送后必须再次完整读取会话和 PR head。
+
+计划修订说明（2026-08-19 14:47Z）：完整会话重读发现九个新的 open inline source。它们均在当前 `review` Product Baseline 内：本修订已完成代码、回归、产品状态/架构/设计/reference 同步，focused core（89）、CLI contract（1）、workspace fmt/Clippy/all-features locked tests（11、12、89）/build 与实际 CLI dry-run smoke 均通过。下方九项 ledger entry 保持 fixed/open，待检查 diff、创建并推送 preliminary code/ledger commit 后才回复并关闭对应 GitHub thread。

@@ -159,11 +159,7 @@ fn dispatch(
                     dry_run,
                 })
                 .map(|operation| Projection::LibraryImport {
-                    outcome: if operation.data.dry_run {
-                        "observed"
-                    } else {
-                        operation.outcome.as_str()
-                    },
+                    outcome: operation.outcome.as_str(),
                     data: operation.data,
                 })
                 .map_err(|error| ("library.import", error)),

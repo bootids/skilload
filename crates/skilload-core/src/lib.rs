@@ -13,7 +13,8 @@ pub use domain::configuration::{
 };
 pub use domain::library::{
     LIBRARY_FORMAT_VERSION, LibraryExportOperation, LibraryExportRequest, LibraryImportOperation,
-    LibraryImportRequest, LibraryImportResult, PortableLibraryDocument, PortableLibraryEntry,
+    LibraryImportOutcome, LibraryImportRequest, LibraryImportResult, PortableLibraryDocument,
+    PortableLibraryEntry,
 };
 pub use domain::source::{RefIntent, RefKind, ResolvedSkill, SourceIdentity};
 pub use error::{AppError, Conflict};

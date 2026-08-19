@@ -396,6 +396,16 @@ fn publish_staging(
         cleanup_staging_if_owned(staging, parent, &staging_name);
         return Err(error);
     }
+    if let Err(error) = parent.revalidate(output) {
+        cleanup_staging_if_owned(staging, parent, &publication_name);
+        cleanup_staging_if_owned(staging, parent, &staging_name);
+        return Err(error);
+    }
+    if let Err(error) = verify_staging_identity(staging, parent, &publication_name, output) {
+        cleanup_staging_if_owned(staging, parent, &publication_name);
+        cleanup_staging_if_owned(staging, parent, &staging_name);
+        return Err(error);
+    }
     if let Err(error) = renameat(
         &parent.directory,
         &publication_name,
@@ -1364,6 +1374,54 @@ mod tests {
             fs::write(self.output.join("preserve"), b"external directory").unwrap();
             Ok(())
         }
+    }
+
+    struct PublicationLinkReplacement {
+        replacement: PathBuf,
+    }
+
+    impl TransferWriteHooks for PublicationLinkReplacement {
+        fn after_publication_link_before_rename(
+            &self,
+            output_parent: &Path,
+        ) -> Result<(), AppError> {
+            let publication = fs::read_dir(output_parent)
+                .unwrap()
+                .map(|entry| entry.unwrap().path())
+                .find(|path| {
+                    path.file_name().is_some_and(|name| {
+                        name.to_string_lossy().starts_with(".skilload-publish-")
+                    })
+                })
+                .unwrap();
+            fs::remove_file(&publication).unwrap();
+            fs::hard_link(&self.replacement, publication).unwrap();
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn export_rejects_a_replaced_publication_link_before_rename() {
+        let temporary = tempdir().unwrap();
+        let output_parent = temporary.path().join("output");
+        let output = NativePath::new(output_parent.join("library.json"));
+        let replacement = temporary.path().join("replacement.json");
+        fs::create_dir(&output_parent).unwrap();
+        fs::write(output.as_path(), b"old output").unwrap();
+        fs::write(&replacement, b"replacement bytes").unwrap();
+        let store = PortableLibraryTransferStore::with_write_hooks(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(XdgRootResolver),
+            Arc::new(PublicationLinkReplacement {
+                replacement: replacement.clone(),
+            }),
+        );
+
+        let error = store.write_export(&output, &document()).unwrap_err();
+
+        assert_eq!(error.code(), "validation_failed");
+        assert_eq!(fs::read(output.as_path()).unwrap(), b"old output");
+        assert_eq!(fs::read(&replacement).unwrap(), b"replacement bytes");
     }
 
     #[test]

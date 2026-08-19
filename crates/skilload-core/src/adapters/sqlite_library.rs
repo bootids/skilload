@@ -4,10 +4,10 @@ use crate::adapters::configuration::{
     sync_created_directory_entries,
 };
 use crate::adapters::xdg::{SystemEnvironment, XdgRootResolver};
-use crate::domain::configuration::{MutationOutcome, NativePath};
+use crate::domain::configuration::NativePath;
 use crate::domain::library::{
-    LIBRARY_FORMAT_VERSION, LibraryImportOperation, LibraryImportResult, PortableLibraryDocument,
-    PortableLibraryEntry,
+    LIBRARY_FORMAT_VERSION, LibraryImportOperation, LibraryImportOutcome, LibraryImportResult,
+    PortableLibraryDocument, PortableLibraryEntry,
 };
 use crate::domain::source::{RefKind, ResolvedSkill, SourceIdentity, parse_decimal_u64};
 use crate::domain::unicode_15_1::normalize_tag;
@@ -137,12 +137,16 @@ impl SqliteLibraryRepository {
     }
 
     fn open_existing_database(
+        &self,
         path: &Path,
         flags: OpenFlags,
     ) -> Result<(Connection, (u64, u64)), AppError> {
         let identity = metadata_identity(&Self::existing_database_metadata(path)?);
+        self.hooks.before_existing_database_open(path)?;
         let connection = Connection::open_with_flags(path, flags | OpenFlags::SQLITE_OPEN_NOFOLLOW)
             .map_err(|error| database_error(path, error))?;
+        self.hooks.after_existing_database_open(path)?;
+        verify_sqlite_connection_identity(&connection)?;
         configure_connection(&connection, path)?;
         Self::revalidate_database_identity(path, identity)?;
         Ok((connection, identity))
@@ -150,7 +154,7 @@ impl SqliteLibraryRepository {
 
     fn read_existing(&self, path: &Path) -> Result<Vec<PortableLibraryEntry>, AppError> {
         let (mut connection, identity) =
-            Self::open_existing_database(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+            self.open_existing_database(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
         let transaction = connection
             .transaction()
             .map_err(|error| database_error(path, error))?;
@@ -275,8 +279,7 @@ impl SqliteLibraryRepository {
             .to_os_string();
         data_directory.revalidate()?;
         let (mut connection, identity) =
-            Self::open_existing_database(&database, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
-        self.hooks.after_existing_database_open(&database)?;
+            self.open_existing_database(&database, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
         data_directory.revalidate()?;
         Self::revalidate_database_identity(&database, identity)?;
         validate_database(&connection, &database)?;
@@ -286,7 +289,7 @@ impl SqliteLibraryRepository {
             data_directory.revalidate()?;
             Self::revalidate_database_identity(&database, identity)?;
             return Ok(LibraryImportOperation {
-                outcome: MutationOutcome::Unchanged,
+                outcome: LibraryImportOutcome::Unchanged,
                 data: plan.result,
             });
         }
@@ -305,7 +308,7 @@ impl SqliteLibraryRepository {
                 .after_existing_database_sync_before_parent_sync(&database)
         })?;
         Ok(LibraryImportOperation {
-            outcome: MutationOutcome::Changed,
+            outcome: LibraryImportOutcome::Changed,
             data: plan.result,
         })
     }
@@ -451,6 +454,10 @@ impl SqliteLibraryRepository {
                     .ok_or_else(Self::database_identity_drift)?
                     .to_os_string();
                 let publication_name = staging.link_for_publication(&database)?;
+                self.hooks
+                    .after_first_publication_link_before_rename(&database)?;
+                data_directory.revalidate()?;
+                staging.verify_entry(&publication_name)?;
                 renameat_with(
                     &data_directory.handle,
                     &publication_name,
@@ -478,8 +485,12 @@ impl SqliteLibraryRepository {
                 })?;
                 data_directory.revalidate()?;
                 sync_created_directory_entries(&cleanup.created_directories, "XDG_DATA_HOME")?;
+                self.hooks
+                    .after_first_publish_sync_before_success(&database)?;
+                data_directory.revalidate()?;
+                staging.verify_entry(&database_name)?;
                 Ok(LibraryImportOperation {
-                    outcome: MutationOutcome::Changed,
+                    outcome: LibraryImportOutcome::Changed,
                     data: plan.result,
                 })
             })();
@@ -534,7 +545,7 @@ impl LibraryRepository for SqliteLibraryRepository {
             };
             let plan = Self::plan(&document, &existing, true)?;
             return Ok(LibraryImportOperation {
-                outcome: MutationOutcome::Unchanged,
+                outcome: LibraryImportOutcome::Observed,
                 data: plan.result,
             });
         }
@@ -542,7 +553,7 @@ impl LibraryRepository for SqliteLibraryRepository {
             self.import_existing(&roots, &document)
         } else if document.entries.is_empty() {
             Ok(LibraryImportOperation {
-                outcome: MutationOutcome::Unchanged,
+                outcome: LibraryImportOutcome::Unchanged,
                 data: Self::plan(&document, &[], false)?.result,
             })
         } else {
@@ -599,6 +610,17 @@ trait PersistenceHooks: Send + Sync {
         &self,
         _database: &Path,
     ) -> Result<(), AppError> {
+        Ok(())
+    }
+    fn after_first_publication_link_before_rename(&self, _database: &Path) -> Result<(), AppError> {
+        Ok(())
+    }
+
+    fn after_first_publish_sync_before_success(&self, _database: &Path) -> Result<(), AppError> {
+        Ok(())
+    }
+
+    fn before_existing_database_open(&self, _database: &Path) -> Result<(), AppError> {
         Ok(())
     }
 
@@ -844,32 +866,6 @@ impl<'directory> FirstImportStaging<'directory> {
         }
     }
 
-    fn cleanup_sidecars(&self) {
-        for suffix in ["-journal", "-wal", "-shm"] {
-            let mut sidecar_name = self.name.clone();
-            sidecar_name.push(suffix);
-            let Ok(before) = statat(
-                &self.directory.handle,
-                &sidecar_name,
-                AtFlags::SYMLINK_NOFOLLOW,
-            ) else {
-                continue;
-            };
-            if (before.st_mode & libc::S_IFMT) != libc::S_IFREG {
-                continue;
-            }
-            let still_owned = statat(
-                &self.directory.handle,
-                &sidecar_name,
-                AtFlags::SYMLINK_NOFOLLOW,
-            )
-            .is_ok_and(|after| after.st_dev == before.st_dev && after.st_ino == before.st_ino);
-            if still_owned {
-                let _ = unlinkat(&self.directory.handle, &sidecar_name, AtFlags::empty());
-            }
-        }
-    }
-
     fn verify_entry(&self, name: &std::ffi::OsStr) -> Result<(), AppError> {
         let held = fstat(self.file.as_file())
             .map_err(|_| SqliteLibraryRepository::database_identity_drift())?;
@@ -887,7 +883,6 @@ impl Drop for FirstImportStaging<'_> {
         if self.published {
             return;
         }
-        self.cleanup_sidecars();
         if let Some(publication_name) = &self.publication_name {
             self.cleanup_entry_if_held(publication_name);
         }
@@ -1292,12 +1287,16 @@ fn database_error(path: &Path, error: SqlError) -> AppError {
             AppError::database_corrupt(NativePath::new(path.to_path_buf()))
         }
         SqlError::SqliteFailure(_, Some(message))
-            if message.contains("no such table") || message.contains("no such column") =>
+            if message.contains("no such table")
+                || message.contains("no such column")
+                || message.contains("foreign key mismatch") =>
         {
             AppError::database_corrupt(NativePath::new(path.to_path_buf()))
         }
         SqlError::SqlInputError { msg, .. }
-            if msg.contains("no such table") || msg.contains("no such column") =>
+            if msg.contains("no such table")
+                || msg.contains("no such column")
+                || msg.contains("foreign key mismatch") =>
         {
             AppError::database_corrupt(NativePath::new(path.to_path_buf()))
         }
@@ -1532,12 +1531,13 @@ mod tests {
             SqliteLibraryRepository::with_environment(environment, Arc::new(XdgRootResolver));
         let import = document(vec![entry("skills/review", Some("review"))]);
         let dry_run = repository.import(&import, true).unwrap();
+        assert_eq!(dry_run.outcome, LibraryImportOutcome::Observed);
         assert_eq!(dry_run.data.added.len(), 1);
         assert!(!temporary.path().join("data/skilload").exists());
         assert!(!temporary.path().join("state/skilload").exists());
 
         let committed = repository.import(&import, false).unwrap();
-        assert_eq!(committed.outcome, MutationOutcome::Changed);
+        assert_eq!(committed.outcome, LibraryImportOutcome::Changed);
         let database = temporary.path().join("data/skilload/skilload.db");
         let connection = Connection::open(&database).unwrap();
         let mut options = connection.prepare("PRAGMA compile_options").unwrap();
@@ -1551,7 +1551,7 @@ mod tests {
         assert_eq!(exported.entries, import.clone().validate().unwrap().entries);
 
         let repeated = repository.import(&import, false).unwrap();
-        assert_eq!(repeated.outcome, MutationOutcome::Unchanged);
+        assert_eq!(repeated.outcome, LibraryImportOutcome::Unchanged);
     }
 
     #[test]
@@ -1681,7 +1681,7 @@ mod tests {
     }
 
     #[test]
-    fn first_import_precommit_failure_removes_staging_sidecars() {
+    fn first_import_precommit_failure_preserves_foreign_staging_sidecar() {
         let temporary = tempdir().unwrap();
         let repository = SqliteLibraryRepository::with_hooks(
             Arc::new(TestEnvironment::with_roots(temporary.path())),
@@ -1694,7 +1694,17 @@ mod tests {
             .unwrap_err();
 
         assert_eq!(error.code(), "internal_invariant");
-        assert!(!temporary.path().join("data/skilload").exists());
+        let data_directory = temporary.path().join("data/skilload");
+        let sidecars = fs::read_dir(&data_directory)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| {
+                path.file_name()
+                    .is_some_and(|name| name.to_string_lossy().ends_with("-shm"))
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(sidecars.len(), 1);
+        assert_eq!(fs::read(&sidecars[0]).unwrap(), b"staging sidecar");
         assert!(!temporary.path().join("state/skilload").exists());
     }
 
@@ -1796,6 +1806,31 @@ mod tests {
                     display TEXT NOT NULL,
                     PRIMARY KEY (canonical_source, comparison_key)
                 );
+                ",
+            )
+            .unwrap();
+
+        assert_eq!(repository.export().unwrap_err().code(), "database_corrupt");
+    }
+
+    #[test]
+    fn foreign_key_parent_key_mismatch_is_database_corrupt() {
+        let temporary = tempdir().unwrap();
+        let repository = SqliteLibraryRepository::with_environment(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(XdgRootResolver),
+        );
+        repository
+            .import(&document(vec![entry("skills/review", None)]), false)
+            .unwrap();
+        let database = temporary.path().join("data/skilload/skilload.db");
+        Connection::open(&database)
+            .unwrap()
+            .execute_batch(
+                "
+                PRAGMA foreign_keys = OFF;
+                DROP TABLE library_entries;
+                CREATE TABLE library_entries (canonical_source TEXT NOT NULL);
                 ",
             )
             .unwrap();
@@ -1906,7 +1941,7 @@ mod tests {
             .import(&document(vec![entry("skills/loser", None)]), false)
             .unwrap();
 
-        assert_eq!(operation.outcome, MutationOutcome::Changed);
+        assert_eq!(operation.outcome, LibraryImportOutcome::Changed);
         let sources = repository
             .export()
             .unwrap()
@@ -2040,6 +2075,98 @@ mod tests {
         ));
         assert!(!database.exists());
         assert_eq!(fs::read(replacement).unwrap(), b"replacement database");
+    }
+
+    struct FirstImportPublicationLinkReplacement {
+        replacement: PathBuf,
+    }
+
+    impl PersistenceHooks for FirstImportPublicationLinkReplacement {
+        fn after_first_publication_link_before_rename(
+            &self,
+            database: &Path,
+        ) -> Result<(), AppError> {
+            let publication = fs::read_dir(database.parent().unwrap())
+                .unwrap()
+                .map(|entry| entry.unwrap().path())
+                .find(|path| {
+                    path.file_name().is_some_and(|name| {
+                        name.to_string_lossy().starts_with(".skilload-db-publish-")
+                    })
+                })
+                .unwrap();
+            fs::remove_file(&publication).unwrap();
+            fs::hard_link(&self.replacement, publication).unwrap();
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn first_import_rejects_a_replaced_publication_link_before_rename() {
+        let temporary = tempdir().unwrap();
+        let replacement = temporary.path().join("replacement.db");
+        let database = temporary.path().join("data/skilload/skilload.db");
+        fs::write(&replacement, b"foreign database").unwrap();
+        let repository = SqliteLibraryRepository::with_hooks(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(XdgRootResolver),
+            Arc::new(FirstImportPublicationLinkReplacement {
+                replacement: replacement.clone(),
+            }),
+        );
+
+        let error = repository
+            .import(&document(vec![entry("skills/review", None)]), false)
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            AppError::InvalidState { state, .. } if state == "database_identity_drift"
+        ));
+        assert!(!database.exists());
+        assert_eq!(fs::read(replacement).unwrap(), b"foreign database");
+    }
+
+    struct PublishedDatabaseReplacementBeforeSuccess {
+        displaced: PathBuf,
+        replacement: PathBuf,
+    }
+
+    impl PersistenceHooks for PublishedDatabaseReplacementBeforeSuccess {
+        fn after_first_publish_sync_before_success(&self, database: &Path) -> Result<(), AppError> {
+            fs::rename(database, &self.displaced).unwrap();
+            fs::hard_link(&self.replacement, database).unwrap();
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn first_import_rejects_a_database_replaced_after_final_sync() {
+        let temporary = tempdir().unwrap();
+        let replacement = temporary.path().join("replacement.db");
+        let displaced = temporary.path().join("displaced.db");
+        let database = temporary.path().join("data/skilload/skilload.db");
+        fs::write(&replacement, b"foreign database").unwrap();
+        let repository = SqliteLibraryRepository::with_hooks(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(XdgRootResolver),
+            Arc::new(PublishedDatabaseReplacementBeforeSuccess {
+                displaced: displaced.clone(),
+                replacement: replacement.clone(),
+            }),
+        );
+
+        let error = repository
+            .import(&document(vec![entry("skills/review", None)]), false)
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            AppError::InvalidState { state, .. } if state == "database_identity_drift"
+        ));
+        assert_eq!(fs::read(&database).unwrap(), b"foreign database");
+        assert!(displaced.exists());
+        assert_eq!(fs::read(replacement).unwrap(), b"foreign database");
     }
     struct FirstImportStagingSymlinkBeforeOpen {
         replacement: PathBuf,
@@ -2191,6 +2318,62 @@ mod tests {
             AppError::InvalidState { state, .. } if state == "database_identity_drift"
         ));
         assert_eq!(fs::read(replacement).unwrap(), b"foreign database");
+    }
+
+    struct ExistingReadOnlyAbaReplacement {
+        database: PathBuf,
+        displaced: PathBuf,
+        replacement: PathBuf,
+        replacement_displaced: PathBuf,
+    }
+
+    impl PersistenceHooks for ExistingReadOnlyAbaReplacement {
+        fn before_existing_database_open(&self, _database: &Path) -> Result<(), AppError> {
+            fs::rename(&self.database, &self.displaced).unwrap();
+            fs::rename(&self.replacement, &self.database).unwrap();
+            Ok(())
+        }
+
+        fn after_existing_database_open(&self, _database: &Path) -> Result<(), AppError> {
+            fs::rename(&self.database, &self.replacement_displaced).unwrap();
+            fs::rename(&self.displaced, &self.database).unwrap();
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn export_rejects_a_read_only_database_aba_open() {
+        let temporary = tempdir().unwrap();
+        let environment = Arc::new(TestEnvironment::with_roots(temporary.path()));
+        let initial = SqliteLibraryRepository::with_environment(
+            environment.clone(),
+            Arc::new(XdgRootResolver),
+        );
+        initial
+            .import(&document(vec![entry("skills/review", None)]), false)
+            .unwrap();
+        let database = temporary.path().join("data/skilload/skilload.db");
+        let replacement = temporary.path().join("replacement.db");
+        fs::copy(&database, &replacement).unwrap();
+        let repository = SqliteLibraryRepository::with_hooks(
+            environment,
+            Arc::new(XdgRootResolver),
+            Arc::new(ExistingReadOnlyAbaReplacement {
+                database: database.clone(),
+                displaced: temporary.path().join("displaced.db"),
+                replacement: replacement.clone(),
+                replacement_displaced: temporary.path().join("replacement-displaced.db"),
+            }),
+        );
+
+        let error = repository.export().unwrap_err();
+
+        assert!(matches!(
+            error,
+            AppError::InvalidState { state, .. } if state == "database_identity_drift"
+        ));
+        assert!(database.exists());
+        assert!(!replacement.exists());
     }
 
     struct ExistingDatabaseReplacementAfterSync {

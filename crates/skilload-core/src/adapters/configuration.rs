@@ -475,6 +475,44 @@ pub(crate) struct CreatedDirectory {
     pub(crate) handle: File,
 }
 
+struct PendingCreatedDirectory {
+    path: PathBuf,
+    identity: (u64, u64),
+    armed: bool,
+}
+
+impl PendingCreatedDirectory {
+    fn new(path: &Path, identity: (u64, u64)) -> Self {
+        Self {
+            path: path.to_path_buf(),
+            identity,
+            armed: true,
+        }
+    }
+
+    fn disarm(mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for PendingCreatedDirectory {
+    fn drop(&mut self) {
+        if self.armed {
+            cleanup_pending_created_directory(&self.path, self.identity);
+        }
+    }
+}
+
+fn cleanup_pending_created_directory(path: &Path, identity: (u64, u64)) {
+    if fs::symlink_metadata(path).ok().is_some_and(|metadata| {
+        metadata.file_type().is_dir()
+            && !metadata.file_type().is_symlink()
+            && metadata_identity(&metadata) == identity
+    }) {
+        let _ = fs::remove_dir(path);
+    }
+}
+
 pub(crate) fn ensure_restrictive_directory(
     path: &Path,
     variable: &str,
@@ -546,6 +584,20 @@ fn create_restrictive_directory(
     directory: &Path,
     variable: &str,
 ) -> Result<Option<CreatedDirectory>, AppError> {
+    create_restrictive_directory_with_open(directory, variable, |directory| {
+        let mut options = OpenOptions::new();
+        options
+            .read(true)
+            .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW);
+        options.open(directory)
+    })
+}
+
+fn create_restrictive_directory_with_open(
+    directory: &Path,
+    variable: &str,
+    open_directory: impl FnOnce(&Path) -> io::Result<File>,
+) -> Result<Option<CreatedDirectory>, AppError> {
     let created = match fs::create_dir(directory) {
         Ok(()) => true,
         Err(error) if error.kind() == io::ErrorKind::AlreadyExists => false,
@@ -571,12 +623,8 @@ fn create_restrictive_directory(
         return Ok(None);
     }
 
-    let mut options = OpenOptions::new();
-    options
-        .read(true)
-        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW);
-    let handle = options
-        .open(directory)
+    let pending = PendingCreatedDirectory::new(directory, metadata_identity(&metadata));
+    let handle = open_directory(directory)
         .map_err(|error| environment_io(variable, directory, "open created directory", error))?;
     let handle_metadata = handle.metadata().map_err(|error| {
         environment_io(
@@ -603,11 +651,13 @@ fn create_restrictive_directory(
                 error,
             )
         })?;
-    Ok(Some(CreatedDirectory {
+    let created_directory = CreatedDirectory {
         path: directory.to_path_buf(),
         identity: metadata_identity(&metadata),
         handle,
-    }))
+    };
+    pending.disarm();
+    Ok(Some(created_directory))
 }
 
 fn cleanup_created_directories(created_directories: &[CreatedDirectory]) {
@@ -840,6 +890,20 @@ mod tests {
         );
 
         assert_eq!(fs::metadata(&directory).unwrap().mode() & 0o777, 0o700);
+    }
+
+    #[test]
+    fn created_directory_rolls_back_when_opening_it_fails() {
+        let temporary = tempdir().unwrap();
+        let directory = temporary.path().join("created");
+
+        let error = create_restrictive_directory_with_open(&directory, "XDG_STATE_HOME", |_| {
+            Err(io::Error::other("file descriptor exhaustion"))
+        })
+        .unwrap_err();
+
+        assert_eq!(error.code(), "invalid_environment_path");
+        assert!(!directory.exists());
     }
 
     #[test]

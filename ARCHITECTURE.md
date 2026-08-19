@@ -45,7 +45,7 @@ Dependencies point inward:
 
 * Domain values and rules do not import CLI, SQLite, HTTP, process, filesystem, clock, or Agent-specific code.
 * Application services coordinate domain rules through explicit ports. They own use-case transaction boundaries and return presentation-neutral results.
-* Adapters 在当前切片中实现 XDG/config 文件、受限可移植文件传输与 bundled SQLite Library repository；SQLite 的 FTS5 编译能力已被固定，但本切片不创建 FTS 表也不暴露 search。`skilload-core` 默认拒绝 unsafe code；唯一局部审计例外是在 first-import staging 的 SQLite main-file `HAS_MOVED` 检查中调用 bundled SQLite FFI，必须在任何 SQL 前返回 identity drift，不能成为一般 native I/O abstraction。immutable cache、system Git、GitHub metadata HTTP、time/randomness 和 Claude/Codex adapters 仍为 planned。
+* Adapters 在当前切片中实现 XDG/config 文件、受限可移植文件传输与 bundled SQLite Library repository；SQLite 的 FTS5 编译能力已被固定，但本切片不创建 FTS 表也不暴露 search。`skilload-core` 默认拒绝 unsafe code；唯一局部审计例外是在 first-import staging 与既有 database connection 的 SQLite main-file `HAS_MOVED` 检查中调用 bundled SQLite FFI，必须在任何 SQL 前返回 identity drift，不能成为一般 native I/O abstraction。immutable cache、system Git、GitHub metadata HTTP、time/randomness 和 Claude/Codex adapters 仍为 planned。
 * The CLI parses arguments, invokes one application command/query, and renders human or JSON output. It does not issue SQL, edit workspace files, run Git, or manage links directly.
 * Future TUI, Web, or other interfaces must call the same application layer. They may not bypass Trust, ownership, transaction, or network policies.
 

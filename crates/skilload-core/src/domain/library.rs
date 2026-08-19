@@ -1,4 +1,4 @@
-use crate::domain::configuration::{MutationOutcome, NativePath};
+use crate::domain::configuration::NativePath;
 use crate::domain::source::{ResolvedSkill, SourceIdentity};
 use crate::domain::unicode_15_1::normalize_tag;
 use crate::error::{AppError, Conflict};
@@ -51,9 +51,26 @@ pub struct LibraryImportResult {
     pub conflicts: Vec<SourceIdentity>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LibraryImportOutcome {
+    Observed,
+    Changed,
+    Unchanged,
+}
+
+impl LibraryImportOutcome {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Observed => "observed",
+            Self::Changed => "changed",
+            Self::Unchanged => "unchanged",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LibraryImportOperation {
-    pub outcome: MutationOutcome,
+    pub outcome: LibraryImportOutcome,
     pub data: LibraryImportResult,
 }
 

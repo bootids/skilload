@@ -1,6 +1,6 @@
 # CLI Contract
 
-Status: partially implemented. `PLAN-0002` implements Revision 1 of `SKL-CLI-002`, `SKL-CLI-003`, and `SKL-CLI-011` in the development `0.0.1` configuration slice. All other behaviors in this document remain planned for the 0.1 CLI MVP.
+状态：部分已实现。`PLAN-0002` 在开发版 `0.0.1` configuration slice 中实现 Revision 1 的 `SKL-CLI-002`、`SKL-CLI-003` 和 `SKL-CLI-011`。`PLAN-0003` 以 API-v2 current producer 实现 Revision 2 的 `SKL-CLI-004`、`SKL-CLI-005` 和 `SKL-CLI-012`。除这些明确列出的行为外，本文件中的其余行为仍是 0.1 CLI MVP 的 planned 状态。
 
 The CLI is both the human interface and the stable machine interface used by the built-in manager Skill. Product-domain semantics remain authoritative in their domain specifications; this file fixes routing, output, and compatibility behavior.
 
