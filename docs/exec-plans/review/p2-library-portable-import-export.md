@@ -105,7 +105,7 @@ Revision 2 的 `SKL-CLI-004`、`SKL-CLI-005` 与 `SKL-CLI-012` 以 API-v2 curren
 - [x] (2026-08-19 13:39Z) 已在 `review` 状态完成五项 ordinary remediation 及产品/架构/设计/reference 同步：first-staging SQLite connection 的 post-open inode 验证、positive resolved evidence、combined 10,000-entry transfer ceiling、tags foreign-key schema corruption 与 export final-sync output revalidation。focused core 83 tests、`cargo fmt --all --check`、workspace Clippy `-D warnings`、locked all-features workspace tests（11、12、83）和 workspace build 均通过；待审阅 diff、推送 preliminary commit、逐 thread reply/resolve。
 - [x] (2026-08-19 13:40Z) code 与 preliminary Review Conversation Log commit `8cec7fd1d1e4c79c801215e23af54095e1f83bf5` 已推送；local、upstream 与 open/ready PR #3 的 `headRefOid` 均为该 SHA。六个 source 保持 open，下一步重新读取会话、逐一回复并关闭 inline thread。
 - [x] (2026-08-19 13:45Z) 已重新获取完整会话：7 条 top-level trigger、70 个 review body 与 57 个 inline thread 中，top-level 仅为 `@codex`，所有非空 review body 都是无独立问题的 generic automation；57 个实际 source 与 57 个 Plan heading 完全对应、无 missing/stale source、无 unresolved thread。六个本轮 source 均已有 GitHub reply URL 和 `thread resolved: true`，待提交并推送最终 Review Conversation Log reconciliation。
-- [x] (2026-08-19 14:47Z) 已完整读取 PR #3 的 8 条 top-level trigger、71 个 review body 与 66 个 inline thread；57 个既有 source 已 resolved，新增 9 个 source 已在下方台账以 fixed/open 逐一登记。九项均为当前 Product Baseline 的 ordinary review remediation：完成 first-import/export publication 和最终 sync identity revalidation、foreign-sidecar preservation、foreign-key mismatch 损坏分类、directory rollback guard、read-only SQLite connection binding、领域 dry-run outcome 与 CLI product-spec status 同步。focused core（89）与 CLI（1）测试、workspace fmt/Clippy/all-features locked tests（11、12、89）/build，以及实际 CLI dry-run smoke 均通过；待检查 diff、创建并推送 preliminary code/ledger commit，再逐线程回复和关闭。
+- [x] (2026-08-19 14:50Z) preliminary remediation commit `5cc7d52012f81e75e4fb83aad67bff0c13e9678c` 已推送；local、upstream 与 open/ready PR #3 的 `headRefOid` 均为该 SHA。九个 source 保持 fixed/open，本 Plan 的 pushed-code evidence 已写入每项；下一步重新读取完整会话、逐线程回复并关闭，再提交最终 ledger reconciliation。
 - [ ] 收到明确人类合并授权后，完成预检、评审会话记录、completed 事务、必要检查、合并、默认分支更新和本地交付分支清理。
 
 ## Surprises & Discoveries
@@ -1234,9 +1234,9 @@ Disposition: fixed
 
 Status: open
 
-Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 的首次导入成功路径于 `sync_created_directory_entries` 后再次 revalidate held data directory 并比较 `database_name` 与 held staging FD；新 hook regression `first_import_rejects_a_database_replaced_after_final_sync` 确认 foreign replacement 不会被报告为 `changed`。本轮 preliminary remediation commit 待创建。
+Resolution: `5cc7d52012f81e75e4fb83aad67bff0c13e9678c` 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 的首次导入成功路径于 `sync_created_directory_entries` 后再次 revalidate held data directory 并比较 `database_name` 与 held staging FD；新 hook regression `first_import_rejects_a_database_replaced_after_final_sync` 确认 foreign replacement 不会被报告为 `changed`。
 
-Evidence: `first_import_rejects_a_database_replaced_after_final_sync`；`mise exec -- cargo test -p skilload-core --all-features --locked`（89 passed）、workspace fmt/Clippy/all-features locked tests/build 均通过。
+Evidence: code/preliminary remediation commit `5cc7d52012f81e75e4fb83aad67bff0c13e9678c` 已推送，且当时 local/upstream/PR head 一致；`first_import_rejects_a_database_replaced_after_final_sync`、`mise exec -- cargo test -p skilload-core --all-features --locked`（89 passed）、workspace fmt/Clippy/all-features locked tests/build 均通过。
 
 GitHub outcome: 待回复；thread resolved: false。
 
@@ -1250,9 +1250,9 @@ Disposition: fixed
 
 Status: open
 
-Resolution: 已删除 `FirstImportStaging::Drop` 对 basename-derived sidecar 的 cleanup；Drop 只按 held identity 清理 staging/publication entry，未知 sidecar 保留。`first_import_precommit_failure_preserves_foreign_staging_sidecar` 验证 foreign `-shm` 不被 unlink。本轮 preliminary remediation commit 待创建。
+Resolution: `5cc7d52012f81e75e4fb83aad67bff0c13e9678c` 已删除 `FirstImportStaging::Drop` 对 basename-derived sidecar 的 cleanup；Drop 只按 held identity 清理 staging/publication entry，未知 sidecar 保留。`first_import_precommit_failure_preserves_foreign_staging_sidecar` 验证 foreign `-shm` 不被 unlink。
 
-Evidence: `first_import_precommit_failure_preserves_foreign_staging_sidecar`；`mise exec -- cargo test -p skilload-core --all-features --locked`（89 passed）与 workspace gates 通过。
+Evidence: code/preliminary remediation commit `5cc7d52012f81e75e4fb83aad67bff0c13e9678c` 已推送；`first_import_precommit_failure_preserves_foreign_staging_sidecar`、focused core 89 tests 与 workspace gates 通过。
 
 GitHub outcome: 待回复；thread resolved: false。
 
@@ -1266,9 +1266,9 @@ Disposition: fixed
 
 Status: open
 
-Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 的 `database_error` 中将 `foreign key mismatch` 的 `SqliteFailure`/`SqlInputError` 映射为 `database_corrupt`。`foreign_key_parent_key_mismatch_is_database_corrupt` 以损坏 parent key fixture 验证 recovery category。本轮 preliminary remediation commit 待创建。
+Resolution: `5cc7d52012f81e75e4fb83aad67bff0c13e9678c` 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 的 `database_error` 中将 `foreign key mismatch` 的 `SqliteFailure`/`SqlInputError` 映射为 `database_corrupt`。`foreign_key_parent_key_mismatch_is_database_corrupt` 以损坏 parent key fixture 验证 recovery category。
 
-Evidence: `foreign_key_parent_key_mismatch_is_database_corrupt`；`mise exec -- cargo test -p skilload-core --all-features --locked`（89 passed）与 workspace gates 通过。
+Evidence: code/preliminary remediation commit `5cc7d52012f81e75e4fb83aad67bff0c13e9678c` 已推送；`foreign_key_parent_key_mismatch_is_database_corrupt`、focused core 89 tests 与 workspace gates 通过。
 
 GitHub outcome: 待回复；thread resolved: false。
 
@@ -1282,9 +1282,9 @@ Disposition: fixed
 
 Status: open
 
-Resolution: 已在 `crates/skilload-core/src/adapters/portable_library.rs` 的 `publish_staging` 中于 `after_publication_link_before_rename` 后重新验证 parent 和 held staging FD/publication entry，再执行 rename。`export_rejects_a_replaced_publication_link_before_rename` 确认旧 output 与 foreign replacement 保持不变。本轮 preliminary remediation commit 待创建。
+Resolution: `5cc7d52012f81e75e4fb83aad67bff0c13e9678c` 已在 `crates/skilload-core/src/adapters/portable_library.rs` 的 `publish_staging` 中于 `after_publication_link_before_rename` 后重新验证 parent 和 held staging FD/publication entry，再执行 rename。`export_rejects_a_replaced_publication_link_before_rename` 确认旧 output 与 foreign replacement 保持不变。
 
-Evidence: `export_rejects_a_replaced_publication_link_before_rename`；`mise exec -- cargo test -p skilload-core --all-features --locked`（89 passed）与 workspace gates 通过。
+Evidence: code/preliminary remediation commit `5cc7d52012f81e75e4fb83aad67bff0c13e9678c` 已推送；`export_rejects_a_replaced_publication_link_before_rename`、focused core 89 tests 与 workspace gates 通过。
 
 GitHub outcome: 待回复；thread resolved: false。
 
@@ -1298,9 +1298,9 @@ Disposition: fixed
 
 Status: open
 
-Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 的 first-import publication path 中于 publication-link hook 后重验 data directory 和 held publication entry，再运行 no-clobber rename。`first_import_rejects_a_replaced_publication_link_before_rename` 确认 foreign replacement 不会发布为 `skilload.db`。本轮 preliminary remediation commit 待创建。
+Resolution: `5cc7d52012f81e75e4fb83aad67bff0c13e9678c` 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 的 first-import publication path 中于 publication-link hook 后重验 data directory 和 held publication entry，再运行 no-clobber rename。`first_import_rejects_a_replaced_publication_link_before_rename` 确认 foreign replacement 不会发布为 `skilload.db`。
 
-Evidence: `first_import_rejects_a_replaced_publication_link_before_rename`；`mise exec -- cargo test -p skilload-core --all-features --locked`（89 passed）与 workspace gates 通过。
+Evidence: code/preliminary remediation commit `5cc7d52012f81e75e4fb83aad67bff0c13e9678c` 已推送；`first_import_rejects_a_replaced_publication_link_before_rename`、focused core 89 tests 与 workspace gates 通过。
 
 GitHub outcome: 待回复；thread resolved: false。
 
@@ -1314,9 +1314,9 @@ Disposition: fixed
 
 Status: open
 
-Resolution: 已在 `crates/skilload-core/src/adapters/configuration.rs` 添加 `PendingCreatedDirectory` rollback guard；identity 一经取得即登记，open/metadata/permission failure 仅删除仍匹配的 directory。`created_directory_rolls_back_when_opening_it_fails` 注入 open failure 并确认路径恢复 absent。本轮 preliminary remediation commit 待创建。
+Resolution: `5cc7d52012f81e75e4fb83aad67bff0c13e9678c` 已在 `crates/skilload-core/src/adapters/configuration.rs` 添加 `PendingCreatedDirectory` rollback guard；identity 一经取得即登记，open/metadata/permission failure 仅删除仍匹配的 directory。`created_directory_rolls_back_when_opening_it_fails` 注入 open failure 并确认路径恢复 absent。
 
-Evidence: `created_directory_rolls_back_when_opening_it_fails`；`mise exec -- cargo test -p skilload-core --all-features --locked`（89 passed）与 workspace gates 通过。
+Evidence: code/preliminary remediation commit `5cc7d52012f81e75e4fb83aad67bff0c13e9678c` 已推送；`created_directory_rolls_back_when_opening_it_fails`、focused core 89 tests 与 workspace gates 通过。
 
 GitHub outcome: 待回复；thread resolved: false。
 
@@ -1330,9 +1330,9 @@ Disposition: fixed
 
 Status: open
 
-Resolution: 已把 `open_existing_database` 收束为 repository instance path，在 pathname open 后、configure/SQL 前调用既有 `verify_sqlite_connection_identity`。`export_rejects_a_read_only_database_aba_open` 验证 read-only ABA connection 被拒绝。本轮 preliminary remediation commit 待创建。
+Resolution: `5cc7d52012f81e75e4fb83aad67bff0c13e9678c` 已把 `open_existing_database` 收束为 repository instance path，在 pathname open 后、configure/SQL 前调用既有 `verify_sqlite_connection_identity`。`export_rejects_a_read_only_database_aba_open` 验证 read-only ABA connection 被拒绝。
 
-Evidence: `export_rejects_a_read_only_database_aba_open`；`mise exec -- cargo test -p skilload-core --all-features --locked`（89 passed）与 workspace gates 通过。
+Evidence: code/preliminary remediation commit `5cc7d52012f81e75e4fb83aad67bff0c13e9678c` 已推送；`export_rejects_a_read_only_database_aba_open`、focused core 89 tests 与 workspace gates 通过。
 
 GitHub outcome: 待回复；thread resolved: false。
 
@@ -1346,9 +1346,9 @@ Disposition: fixed
 
 Status: open
 
-Resolution: 已在 `crates/skilload-core/src/domain/library.rs` 定义 `LibraryImportOutcome::{Observed, Changed, Unchanged}`，由 SQLite repository 返回；`crates/skilload-cli/src/main.rs` 直接投影 `operation.outcome`，不再读取 `data.dry_run` 重算结果。`dry_run_is_inert_and_first_import_round_trips` 与 CLI contract regression 覆盖该边界。本轮 preliminary remediation commit 待创建。
+Resolution: `5cc7d52012f81e75e4fb83aad67bff0c13e9678c` 已在 `crates/skilload-core/src/domain/library.rs` 定义 `LibraryImportOutcome::{Observed, Changed, Unchanged}`，由 SQLite repository 返回；`crates/skilload-cli/src/main.rs` 直接投影 `operation.outcome`，不再读取 `data.dry_run` 重算结果。`dry_run_is_inert_and_first_import_round_trips` 与 CLI contract regression 覆盖该边界。
 
-Evidence: focused core 89 tests、`library_import_export_is_portable_atomic_and_inert_when_dry_run`（1 passed）和实际 CLI `library import --dry-run --json` smoke 均观察到 `observed` 且 XDG roots 仍 absent。
+Evidence: code/preliminary remediation commit `5cc7d52012f81e75e4fb83aad67bff0c13e9678c` 已推送；focused core 89 tests、`library_import_export_is_portable_atomic_and_inert_when_dry_run`（1 passed）和实际 CLI `library import --dry-run --json` smoke 均观察到 `observed` 且 XDG roots 仍 absent。
 
 GitHub outcome: 待回复；thread resolved: false。
 
@@ -1362,9 +1362,9 @@ Disposition: fixed
 
 Status: open
 
-Resolution: 已更新 `docs/product-specs/cli-contract.md` status，明确 `PLAN-0003` 已实现 API-v2 current-producer 的 `SKL-CLI-004`/`005`/`012` Revision 2；未改变行为正文或 revision。本轮 preliminary remediation commit 待创建。
+Resolution: `5cc7d52012f81e75e4fb83aad67bff0c13e9678c` 已更新 `docs/product-specs/cli-contract.md` status，明确 `PLAN-0003` 已实现 API-v2 current-producer 的 `SKL-CLI-004`/`005`/`012` Revision 2；未改变行为正文或 revision。
 
-Evidence: `docs/product-specs/README.md` 与本 Plan Product Baseline 已声明同一 cutover；workspace gates 通过。
+Evidence: code/preliminary remediation commit `5cc7d52012f81e75e4fb83aad67bff0c13e9678c` 已推送；`docs/product-specs/README.md` 与本 Plan Product Baseline 已声明同一 cutover，workspace gates 通过。
 
 GitHub outcome: 待回复；thread resolved: false。
 
@@ -1642,3 +1642,5 @@ Library 是本机可搜索的来源元数据集合；在本交付中它只保存
 计划修订说明（2026-08-19 13:45Z）：六个本轮 source 的 disposition/status、pushed code evidence、验证、GitHub reply URL 和 resolved state 已最终同步。final pre-documentation fetch 验证所有 57 个 actual problem source 均有 Plan heading，且没有未解决 thread、top-level 问题或 review-body 问题；本 documentation commit 推送后必须再次完整读取会话和 PR head。
 
 计划修订说明（2026-08-19 14:47Z）：完整会话重读发现九个新的 open inline source。它们均在当前 `review` Product Baseline 内：本修订已完成代码、回归、产品状态/架构/设计/reference 同步，focused core（89）、CLI contract（1）、workspace fmt/Clippy/all-features locked tests（11、12、89）/build 与实际 CLI dry-run smoke 均通过。下方九项 ledger entry 保持 fixed/open，待检查 diff、创建并推送 preliminary code/ledger commit 后才回复并关闭对应 GitHub thread。
+
+计划修订说明（2026-08-19 14:50Z）：code/preliminary remediation commit `5cc7d52012f81e75e4fb83aad67bff0c13e9678c` 已推送，local/upstream/open ready PR head 已核对为该 SHA。本次台账更新将九个 fixed/open source 的具体 changed path、测试和 pushed-code evidence 写入；待该 documentation commit 推送后，重新读取会话并逐 source 回复/关闭。
