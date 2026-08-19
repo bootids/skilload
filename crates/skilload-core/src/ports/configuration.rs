@@ -49,7 +49,7 @@ impl ResolvedRoots {
 
 pub trait StateRootResolver: Send + Sync {
     fn resolve(&self, environment: &dyn Environment) -> Result<ResolvedRoots, AppError>;
-    fn revalidate(&self, roots: &ResolvedRoots) -> Result<(), AppError>;
+    fn revalidate(&self, roots: &ResolvedRoots) -> Result<ResolvedRoots, AppError>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

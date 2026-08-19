@@ -170,20 +170,21 @@ impl FileConfigurationStore {
         roots: &ResolvedRoots,
         desired: &ConfigDocument,
     ) -> Result<(), AppError> {
-        let config_root = &roots.config.effective;
-        let created_directories = ensure_restrictive_directory(config_root, "XDG_CONFIG_HOME")?;
-        self.root_resolver.revalidate(roots)?;
-        let path = config_path(roots);
+        let created_directories =
+            ensure_restrictive_directory(&roots.config.effective, "XDG_CONFIG_HOME")?;
+        let roots = self.root_resolver.revalidate(roots)?;
+        let config_root = roots.config.effective.clone();
+        let path = config_path(&roots);
         ensure_regular_destination(&path)?;
 
         let mut staging = Builder::new()
             .prefix(".skilload-config-")
             .suffix(".tmp")
-            .tempfile_in(config_root)
+            .tempfile_in(&config_root)
             .map_err(|error| {
                 environment_io(
                     "XDG_CONFIG_HOME",
-                    config_root,
+                    &config_root,
                     "create config staging file",
                     error,
                 )
@@ -208,7 +209,8 @@ impl FileConfigurationStore {
             environment_io("XDG_CONFIG_HOME", &path, "sync config staging file", error)
         })?;
         self.write_hooks.before_rename()?;
-        self.root_resolver.revalidate(roots)?;
+        let roots = self.root_resolver.revalidate(&roots)?;
+        let path = config_path(&roots);
         ensure_regular_destination(&path)?;
         staging.persist(&path).map_err(|error| {
             environment_io(
@@ -218,12 +220,12 @@ impl FileConfigurationStore {
                 error.error,
             )
         })?;
-        File::open(config_root)
+        File::open(&roots.config.effective)
             .and_then(|directory| directory.sync_all())
             .map_err(|error| {
                 environment_io(
                     "XDG_CONFIG_HOME",
-                    config_root,
+                    &roots.config.effective,
                     "sync config directory",
                     error,
                 )
@@ -253,18 +255,18 @@ impl ConfigurationStore for FileConfigurationStore {
         if !self.roots_still_match(&expected.roots)? {
             return Ok(StoreOutcome::Stale);
         }
-        self.root_resolver.revalidate(&expected.roots)?;
-        let lock = self.lock(&expected.roots)?;
+        let roots = self.root_resolver.revalidate(&expected.roots)?;
+        let lock = self.lock(&roots)?;
         let result = (|| {
             if !self.roots_still_match(&expected.roots)? {
                 return Ok(StoreOutcome::Stale);
             }
-            self.root_resolver.revalidate(&expected.roots)?;
-            let current = self.load_from_roots(expected.roots.clone())?;
+            let roots = self.root_resolver.revalidate(&roots)?;
+            let current = self.load_from_roots(roots.clone())?;
             if current.baseline.source != expected.source {
                 return Ok(StoreOutcome::Stale);
             }
-            self.write_document(&expected.roots, desired)?;
+            self.write_document(&roots, desired)?;
             Ok(StoreOutcome::Changed)
         })();
         let unlock_result = lock.unlock();
@@ -330,29 +332,8 @@ fn ensure_restrictive_directory(path: &Path, variable: &str) -> Result<Vec<PathB
 
     let mut created_directories = Vec::new();
     for directory in missing_directories.into_iter().rev() {
-        match fs::create_dir(&directory) {
-            Ok(()) => {
-                let metadata = fs::symlink_metadata(&directory).map_err(|error| {
-                    environment_io(variable, &directory, "inspect created directory", error)
-                })?;
-                ensure_real_directory(&directory, &metadata, variable)?;
-                restrict_directory_permissions(&directory, variable)?;
-                created_directories.push(directory);
-            }
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-                let metadata = fs::symlink_metadata(&directory).map_err(|error| {
-                    environment_io(variable, &directory, "inspect raced directory", error)
-                })?;
-                ensure_real_directory(&directory, &metadata, variable)?;
-            }
-            Err(error) => {
-                return Err(environment_io(
-                    variable,
-                    &directory,
-                    "create restrictive directory",
-                    error,
-                ));
-            }
+        if create_restrictive_directory(&directory, variable)? {
+            created_directories.push(directory);
         }
     }
 
@@ -361,6 +342,31 @@ fn ensure_restrictive_directory(path: &Path, variable: &str) -> Result<Vec<PathB
     ensure_real_directory(path, &metadata, variable)?;
     restrict_directory_permissions(path, variable)?;
     Ok(created_directories)
+}
+
+fn create_restrictive_directory(directory: &Path, variable: &str) -> Result<bool, AppError> {
+    let created = match fs::create_dir(directory) {
+        Ok(()) => true,
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => false,
+        Err(error) => {
+            return Err(environment_io(
+                variable,
+                directory,
+                "create restrictive directory",
+                error,
+            ));
+        }
+    };
+    let action = if created {
+        "inspect created directory"
+    } else {
+        "inspect raced directory"
+    };
+    let metadata = fs::symlink_metadata(directory)
+        .map_err(|error| environment_io(variable, directory, action, error))?;
+    ensure_real_directory(directory, &metadata, variable)?;
+    restrict_directory_permissions(directory, variable)?;
+    Ok(created)
 }
 
 fn ensure_real_directory(
@@ -548,6 +554,18 @@ mod tests {
     }
 
     #[test]
+    fn raced_directory_entries_restore_owner_search_permission() {
+        let temporary = tempdir().unwrap();
+        let directory = temporary.path().join("raced");
+        fs::create_dir(&directory).unwrap();
+        fs::set_permissions(&directory, fs::Permissions::from_mode(0o600)).unwrap();
+
+        assert!(!create_restrictive_directory(&directory, "XDG_STATE_HOME").unwrap());
+
+        assert_eq!(fs::metadata(&directory).unwrap().mode() & 0o777, 0o700);
+    }
+
+    #[test]
     fn invalid_documents_and_final_symlinks_are_preserved() {
         let temporary = tempdir().unwrap();
         let config_root = temporary.path().join("config/skilload");
@@ -594,6 +612,56 @@ mod tests {
             }
             Ok(())
         }
+    }
+
+    struct RecreatedConfigRootHooks {
+        config_root: PathBuf,
+        retired_root: PathBuf,
+    }
+
+    impl WriteHooks for RecreatedConfigRootHooks {
+        fn before_rename(&self) -> Result<(), AppError> {
+            fs::rename(&self.config_root, &self.retired_root).map_err(|error| {
+                environment_io(
+                    "XDG_CONFIG_HOME",
+                    &self.config_root,
+                    "replace configuration root in test",
+                    error,
+                )
+            })?;
+            fs::create_dir(&self.config_root).map_err(|error| {
+                environment_io(
+                    "XDG_CONFIG_HOME",
+                    &self.config_root,
+                    "recreate configuration root in test",
+                    error,
+                )
+            })
+        }
+    }
+
+    #[test]
+    fn writes_reject_recreated_configuration_root_after_initial_binding() {
+        let temporary = tempdir().unwrap();
+        let config_root = temporary.path().join("config/skilload");
+        let retired_root = temporary.path().join("retired-config-root");
+        let store = Arc::new(FileConfigurationStore::with_write_hooks(
+            Arc::new(TestEnvironment::isolated(temporary.path())),
+            Arc::new(XdgRootResolver),
+            Arc::new(RecreatedConfigRootHooks {
+                config_root: config_root.clone(),
+                retired_root: retired_root.clone(),
+            }),
+        ));
+        let application = Application::new(store);
+
+        assert!(
+            application
+                .config_set(crate::ConfigKey::CacheLimitBytes, "1".into())
+                .is_err()
+        );
+        assert!(!config_root.join("config.toml").exists());
+        assert!(!retired_root.join("config.toml").exists());
     }
 
     #[test]

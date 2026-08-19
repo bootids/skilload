@@ -42,14 +42,15 @@ impl StateRootResolver for XdgRootResolver {
         Ok(roots)
     }
 
-    fn revalidate(&self, roots: &ResolvedRoots) -> Result<(), AppError> {
+    fn revalidate(&self, roots: &ResolvedRoots) -> Result<ResolvedRoots, AppError> {
         let refreshed = ResolvedRoots {
             config: revalidate_binding(&roots.config, "XDG_CONFIG_HOME")?,
             data: revalidate_binding(&roots.data, "XDG_DATA_HOME")?,
             state: revalidate_binding(&roots.state, "XDG_STATE_HOME")?,
             cache: revalidate_binding(&roots.cache, "XDG_CACHE_HOME")?,
         };
-        ensure_disjoint(&refreshed)
+        ensure_disjoint(&refreshed)?;
+        Ok(refreshed)
     }
 }
 
