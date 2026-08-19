@@ -89,7 +89,7 @@ Revision 2 的 `SKL-CLI-004`、`SKL-CLI-005` 与 `SKL-CLI-012` 以 API-v2 curren
 - [x] (2026-08-19 10:38Z) 已在 review 状态完成六项新增 remediation：empty tags schema/state revision singleton corruption、export API-v2 wording、first staging inode binding、100-byte repository bound 和 immutable commit equality；新增 focused regressions、完整 workspace gates 和 immutable-source CLI smoke 均通过。
 - [x] (2026-08-19 10:43Z) 已检查完整 staged diff、`git diff --check`，并将六项 fix、产品/设计/reference 文档和 preliminary review ledger 以 `19fe009ac578e8fb6bd1eefc2649eaa1802611bf` 推送；local/upstream/ready PR #3 head 已核对为同一 SHA。
 - [x] (2026-08-19 10:48Z) 已重新读取第二轮完整会话：4 条 top-level trigger、48 个 review body 与 38 个 inline thread 无新增独立问题；全部 38 个 thread 已 resolved，六个新 source 均已回复、关闭并同步到 Review Conversation Log。
-- [x] (2026-08-19 11:43Z) 已在 `review` 状态登记并完成九项新增 ordinary remediation：staging publish 改为 descriptor-relative `linkat` publication link、首次 lock clone failure rollback、lossless `InvalidState.path`、human conflict projection、existing database final sync identity、sidecar cleanup、SQLite bounded busy、以及第 129 byte number stop。focused portable（12）、SQLite（26）、CLI（11 unit、12 integration）测试、workspace fmt/Clippy/all-features locked tests/build/`git diff --check` 和隔离实际 CLI import/conflict smoke 均通过；待将 code、文档和 preliminary ledger 一并提交推送。
+- [x] (2026-08-19 11:43Z) 已在 `review` 状态登记并完成九项新增 ordinary remediation：staging publish 改为 descriptor-relative `linkat` publication link、首次 lock clone failure rollback、lossless `InvalidState.path`、human conflict projection、existing database final sync identity、sidecar cleanup、SQLite bounded busy、以及第 129 byte number stop。代码与 preliminary ledger 已由 `2e0a46efb308c18546ff6855ac081818fa416088` 推送，local/PR ready head 已核对为同一 SHA；focused portable（12）、SQLite（26）、CLI（11 unit、12 integration）测试、workspace fmt/Clippy/all-features locked tests/build/`git diff --check` 和隔离实际 CLI import/conflict smoke 均通过，待逐线程 reply/resolve。
 - [ ] 收到明确人类合并授权后，完成预检、评审会话记录、completed 事务、必要检查、合并、默认分支更新和本地交付分支清理。
 
 ## Surprises & Discoveries
@@ -241,6 +241,8 @@ P2 implementation 与完整验证已完成，PR #3 已于 2026-08-19 05:57Z 转�
 2026-08-19 10:48Z 的第二轮 final reconciliation 确认：4 条 top-level trigger 和 5 个非空 bot review body 没有额外问题；38 个 inline thread 均为 resolved，Plan 的 38 个 source heading 与 GitHub thread 一一对应。六项 ordinary remediation 均记录 code commit `19fe009ac578e8fb6bd1eefc2649eaa1802611bf`、66-test/workspace/CLI evidence 和 reply URL；本条 final documentation commit 推送后将进行最后一次完整核对。
 
 2026-08-19 11:43Z 的第三轮 review remediation 完成：九项新增 source 均属于现有 P2 atomic transfer、API-v2 或 CLI projection 基线。export 与 first import 现在将已验证 held staging inode link 到随机 publication entry 后才 rename；first lock clone、sidecar rollback、existing database final sync 和 SQLite contention 都有 deterministic regression。API-v2 `InvalidStateDetails.path` 是 `SKL-CLI-012` 允许的 optional `PathValue`，human conflict output 与 JSON `ConflictDetails` 同时保留 actionable alias/source。focused tests、完整 workspace gates 和实际 CLI smoke 已通过；下一步是 preliminary commit/push、逐线程 reply/resolve 和最终 ledger reconciliation。
+
+2026-08-19 11:43Z 的 code 与 preliminary ledger commit `2e0a46efb308c18546ff6855ac081818fa416088` 已推送；GitHub PR #3 仍 open、ready，`headRefOid` 与 local HEAD 相同。九个 source 仍保持 open，下一步只处理 GitHub 回复、thread closure 和 final ledger commit。
 ## Review Conversation Log
 
 
@@ -864,7 +866,7 @@ Status: open
 
 Resolution: 本次 preliminary commit 修改 `crates/skilload-core/src/adapters/portable_library.rs`：final hook 后重验 held staging/parent identity，创建并安全移除随机 placeholder，以 descriptor-relative `linkat` 建立且重验 held inode 的 publication link，再 rename 该 link；成功后按 held identity 清理原 staging link。`export_reports_staging_replacement_after_identity_check` 现断言旧 output 保留。
 
-Evidence: 当前工作树已通过 `mise exec -- cargo test -p skilload-core --locked portable_library`（12 tests）、workspace fmt/Clippy/all-features locked tests/build 和 `git diff --check`。
+Evidence: code/preliminary ledger commit `2e0a46efb308c18546ff6855ac081818fa416088` 已推送，PR head 已核对为同一 SHA；`mise exec -- cargo test -p skilload-core --locked portable_library`（12 tests）、workspace fmt/Clippy/all-features locked tests/build 和 `git diff --check` 通过。
 
 GitHub outcome: 尚未回复；thread resolved: false。
 
@@ -880,7 +882,7 @@ Status: open
 
 Resolution: 本次 preliminary commit 修改 `crates/skilload-core/src/adapters/sqlite_library.rs`：`FirstImportStaging::link_for_publication` 在 held data directory 内建立、重验并 no-clobber rename held inode 的 publication link；成功后删除原 staging link，staging replacement fixture 现断言没有 live `skilload.db`。
 
-Evidence: 当前工作树已通过 `first_import_reports_staging_identity_drift_after_publish_race`、`mise exec -- cargo test -p skilload-core --locked sqlite_library`（26 tests）及 workspace gates。
+Evidence: code/preliminary ledger commit `2e0a46efb308c18546ff6855ac081818fa416088` 已推送，PR head 已核对为同一 SHA；`first_import_reports_staging_identity_drift_after_publish_race`、`mise exec -- cargo test -p skilload-core --locked sqlite_library`（26 tests）及 workspace gates 通过。
 
 GitHub outcome: 尚未回复；thread resolved: false。
 
@@ -896,7 +898,7 @@ Status: open
 
 Resolution: 本次 preliminary commit 令 `crates/skilload-core/src/adapters/sqlite_library.rs` 在 created lock 的 hook/`try_clone` failure 分支使用仍持有的 original FD 调用 `remove_created_lock`，随后 RAII guard 清理目录；仅 clone 成功才登记 retained handle。新增 `first_import_created_lock_clone_failure_removes_created_state`。
 
-Evidence: 当前工作树已通过 clone-failure injection、focused SQLite（26 tests）和 workspace gates。
+Evidence: code/preliminary ledger commit `2e0a46efb308c18546ff6855ac081818fa416088` 已推送；clone-failure injection、focused SQLite（26 tests）和 workspace gates 通过。
 
 GitHub outcome: 尚未回复；thread resolved: false。
 
@@ -912,7 +914,7 @@ Status: open
 
 Resolution: 本次 preliminary commit 在 `crates/skilload-core/src/error.rs` 增加 `InvalidState.path`/`invalid_state_at_path`；`sqlite_library.rs` 的 durability I/O errors 传入原始 `NativePath`，`crates/skilload-cli/src/json.rs`/`human.rs` 投影可选 lossless path，`docs/product-specs/api-v2.md` 同步 catalog。
 
-Evidence: `database_sync_error_preserves_native_path_bytes` 与 `api_v2_invalid_state_paths_preserve_native_bytes` 通过；workspace gates 通过。
+Evidence: code/preliminary ledger commit `2e0a46efb308c18546ff6855ac081818fa416088` 已推送；`database_sync_error_preserves_native_path_bytes`、`api_v2_invalid_state_paths_preserve_native_bytes` 和 workspace gates 通过。
 
 GitHub outcome: 尚未回复；thread resolved: false。
 
@@ -928,7 +930,7 @@ Status: open
 
 Resolution: 本次 preliminary commit 修改 `crates/skilload-cli/src/human.rs`，逐一输出 terminal-safe quoted conflict kind、name（或 null）和 canonical source；新增 alias/null-name renderer regression。
 
-Evidence: CLI unit/integration tests（11/12）通过；实际 `target/debug/skilload library import` smoke 先导入一个 alias，随后冲突 import 以 exit 4 输出 `"review"` 和 `github:owner/repository#skills/other@refs/heads/main`。
+Evidence: code/preliminary ledger commit `2e0a46efb308c18546ff6855ac081818fa416088` 已推送；CLI unit/integration tests（11/12）通过；实际 `target/debug/skilload library import` smoke 先导入一个 alias，随后冲突 import 以 exit 4 输出 `"review"` 和 `github:owner/repository#skills/other@refs/heads/main`。
 
 GitHub outcome: 尚未回复；thread resolved: false。
 
@@ -944,7 +946,7 @@ Status: open
 
 Resolution: 本次 preliminary commit 以 `ValidatedDataDirectory` 的 descriptor-relative `openat`、`fstat`/`statat` revalidation、file sync 和 held-parent sync 替换 existing import 的 path reopen；新增 `existing_import_rejects_a_database_replaced_after_final_sync`。
 
-Evidence: focused SQLite（26 tests）和 workspace all-features locked tests 通过。
+Evidence: code/preliminary ledger commit `2e0a46efb308c18546ff6855ac081818fa416088` 已推送；focused SQLite（26 tests）和 workspace all-features locked tests 通过。
 
 GitHub outcome: 尚未回复；thread resolved: false。
 
@@ -960,7 +962,7 @@ Status: open
 
 Resolution: 本次 preliminary commit 令未发布 `FirstImportStaging` 仅在 held data-directory descriptor 中清理同 staging basename 的 regular `-journal`、`-wal`、`-shm`，之后由 existing cleanup guard 删除空根；新增 `first_import_precommit_failure_removes_staging_sidecars`。
 
-Evidence: sidecar injection rollback regression、focused SQLite（26 tests）和 workspace gates 通过。
+Evidence: code/preliminary ledger commit `2e0a46efb308c18546ff6855ac081818fa416088` 已推送；sidecar injection rollback regression、focused SQLite（26 tests）和 workspace gates 通过。
 
 GitHub outcome: 尚未回复；thread resolved: false。
 
@@ -976,7 +978,7 @@ Status: open
 
 Resolution: 本次 preliminary commit 为所有 repository `Connection` 设置既有两秒 `LOCK_WAIT`，将 `DatabaseBusy`/`DatabaseLocked` 以及 singleton/tag iterator SQL errors 经 `database_error` 投影为 `Busy { lock_domain: "database", waited_ms: 2000 }`。
 
-Evidence: external `BEGIN EXCLUSIVE` regression 等待两秒后返回 typed busy；focused SQLite（26 tests）和 workspace gates 通过。
+Evidence: code/preliminary ledger commit `2e0a46efb308c18546ff6855ac081818fa416088` 已推送；external `BEGIN EXCLUSIVE` regression 等待两秒后返回 typed busy；focused SQLite（26 tests）和 workspace gates 通过。
 
 GitHub outcome: 尚未回复；thread resolved: false。
 
@@ -992,7 +994,7 @@ Status: open
 
 Resolution: 本次 preliminary commit 将 `JsonScanner::parse_number` 的 integer/fraction/exponent advancement 统一接入即时 ceiling 检查；新增 `scanner_stops_at_the_first_number_byte_overage`，验证第 129 byte 返回 limit 且 cursor 不遍历剩余 token。
 
-Evidence: focused portable transfer（12 tests）和 workspace all-features locked tests 通过。
+Evidence: code/preliminary ledger commit `2e0a46efb308c18546ff6855ac081818fa416088` 已推送；focused portable transfer（12 tests）和 workspace all-features locked tests 通过。
 
 GitHub outcome: 尚未回复；thread resolved: false。
 
