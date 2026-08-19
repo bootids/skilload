@@ -110,7 +110,7 @@ Revision 2 的 `SKL-CLI-004`、`SKL-CLI-005` 与 `SKL-CLI-012` 以 API-v2 curren
 - [x] (2026-08-20) 完整读取当前 PR 会话的 9 条 top-level trigger、85 个 review body 与 71 个 inline thread；前两类没有独立问题，66 个既有 ledger source 仍 resolved，5 个新 source 已按 source、路径、文本与 thread state 登记。
 - [x] (2026-08-20) 在 `review` 状态完成四项 ordinary remediation：reversible export/database publication exchange、GitHub owner grammar、SQLite commit-failure sidecar ownership；新增 focused regressions，并通过 core 94 tests、fmt、Clippy、locked workspace tests（11、12、94）、build、CLI import/export smoke 与 diff check。
 - [ ] (2026-08-20) `PRRC_kwDOT7YN2s7jWsuw` 仍等待人类决定：需要可证明的跨 macOS/Linux create-and-hold directory primitive，或明确调整首次 import 在目录创建 race 下的 absent-root/foreign-path 保证；该 inline thread 必须保持 open。
-- [x] (2026-08-20) code/preliminary remediation commit `752c0f77b24a5300dffe7edcca952809688fdc1f` 已推送；local、upstream 与 open/ready PR #3 head 均已核对为该 SHA。四个 fixed source 保持 open，待重新读取会话、逐一回复并关闭；directory source 仍 blocked/open。
+- [x] (2026-08-20) 四个 fixed source 已使用 `752c0f77b24a5300dffe7edcca952809688fdc1f` 的实现/验证证据逐一回复并在 reply 成功后关闭；`PRRC_kwDOT7YN2s7jWsuw` 已收到 exact decision question，保持 blocked/open。
 - [ ] 收到明确人类合并授权后，完成预检、评审会话记录、completed 事务、必要检查、合并、默认分支更新和本地交付分支清理。
 
 ## Surprises & Discoveries
@@ -320,6 +320,9 @@ P2 implementation 与完整验证已完成，PR #3 已于 2026-08-19 05:57Z 转�
 2026-08-19 13:45Z 的 final pre-documentation reconciliation 确认：7 条 top-level trigger 与 70 个 review body 都不含独立问题；57 个 inline problem source 与 57 个 Plan heading 一一对应，全部 resolved。六个本轮 reply URL、`8cec7fd1d1e4c79c801215e23af54095e1f83bf5` 代码证据和验证已写入 ledger；下一步提交/push 本 Plan final reconciliation 后，再执行最后一次完整会话与 PR head 检查。
 
 2026-08-20 的本轮 review remediation 已由 `752c0f77b24a5300dffe7edcca952809688fdc1f` 推送，完成四项现有 P2 contract fix：export 与 first import 都以 reversible `RenameFlags::EXCHANGE` publish protocol 保留/恢复原 target，portable owner 拒绝 impossible GitHub login，SQLite commit-failure sidecar 只按 recorded FD identity 清理。core 94 tests、fmt、Clippy、locked workspace tests（11、12、94）、build、实际 CLI import/export smoke 与 diff check 均通过。`PRRC_kwDOT7YN2s7jWsuw` 仍是未决 architecture/product choice；它保持 `pending`/`blocked` 和 open thread，不把目录 create-and-hold race 误报为完成。
+
+
+2026-08-20 的 reply reconciliation 显示 9 条 top-level trigger 与 90 个 review body 没有新增独立问题；71 个 inline source 全部在 Review Conversation Log 中有 heading。四个本轮 fixed source 已回复并 `thread resolved: true`；唯一 `PRRT_kwDOT7YN2s6ahTLF` 以 exact decision question 回复，保持 `pending`/`blocked` 与 open 状态。最终 documentation commit 推送后仍需再次全量读取会话和 PR head。
 
 ## Review Conversation Log
 
@@ -1382,67 +1385,67 @@ GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_
 
 ### PRRC_kwDOT7YN2s7jWsuc — export publication source identity race
 
-Source: 内联评论 `PRRC_kwDOT7YN2s7jWsuc`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3814378396)；线程 `PRRT_kwDOT7YN2s6ahTK6`，当前未解决。
+Source: 内联评论 `PRRC_kwDOT7YN2s7jWsuc`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3814378396)；线程 `PRRT_kwDOT7YN2s6ahTK6`，当前已解决。
 
 Problem: `publish_staging` 在确认 publication link 指向 held staging inode 后，仍以 pathname 调用 `renameat`；同账号进程可在两次 syscall 之间替换该 link，使外来文件覆盖既有 output。
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: `crates/skilload-core/src/adapters/portable_library.rs` 现在在 final validation 时 snapshot existing output identity 或 absence，再以 `OutputPublicationGuard` 记录 existing target 或 `O_EXCL|O_NOFOLLOW` absence guard。held publication link 与 guard 经 `RenameFlags::EXCHANGE` 发布；post-exchange 不是 held staging/guard 的组合会反向交换恢复旧 output 或 absence。`export_restores_the_old_output_when_publication_changes_after_final_check` 和 `export_does_not_replace_an_output_changed_after_final_validation` 覆盖两个窗口。
 
 Evidence: code/preliminary remediation commit `752c0f77b24a5300dffe7edcca952809688fdc1f` 已推送；focused core 94 tests、`cargo fmt --all --check`、workspace Clippy `-D warnings`、locked all-features workspace tests（11、12、94）、workspace build、实际 CLI dry-run/import/export smoke 与 `git diff --check` 均通过。
 
-GitHub outcome: 尚未回复；thread resolved: false。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_r3814836953；thread resolved: true。
 
 ### PRRC_kwDOT7YN2s7jWsuh — database publication source identity race
 
-Source: 内联评论 `PRRC_kwDOT7YN2s7jWsuh`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3814378401)；线程 `PRRT_kwDOT7YN2s6ahTK9`，当前未解决。
+Source: 内联评论 `PRRC_kwDOT7YN2s7jWsuh`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3814378401)；线程 `PRRT_kwDOT7YN2s6ahTK9`，当前已解决。
 
 Problem: first import 的 `NOREPLACE` rename 在最后 `verify_entry` 后仍通过可替换 publication pathname 发布；foreign replacement 可成为 authoritative `skilload.db`，随后检查只能报告已发生的损坏。
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: `crates/skilload-core/src/adapters/sqlite_library.rs` 在 first-import publish 前以 data-directory descriptor 建立 only-if-absent `FirstImportPublicationGuard`，以 `RenameFlags::EXCHANGE` 替代 final `NOREPLACE` rename，并在 post-exchange 复验 held staging/guard；mismatch 反向交换恢复 absence。`first_import_restores_absence_when_publication_changes_after_final_check` 注入最终检查后的 publication replacement。
 
 Evidence: code/preliminary remediation commit `752c0f77b24a5300dffe7edcca952809688fdc1f` 已推送；focused core 94 tests（含 first-import exchange regression）、`cargo fmt --all --check`、workspace Clippy `-D warnings`、locked all-features workspace tests（11、12、94）、workspace build、实际 CLI smoke 与 `git diff --check` 均通过。
 
-GitHub outcome: 尚未回复；thread resolved: false。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_r3814838849；thread resolved: true。
 
 ### PRRC_kwDOT7YN2s7jWsul — GitHub owner grammar
 
-Source: 内联评论 `PRRC_kwDOT7YN2s7jWsul`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3814378405)；线程 `PRRT_kwDOT7YN2s6ahTK_`，当前未解决。
+Source: 内联评论 `PRRC_kwDOT7YN2s7jWsul`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3814378405)；线程 `PRRT_kwDOT7YN2s6ahTK_`，当前已解决。
 
 Problem: `SourceIdentity::validate_owner` 仅检查 lowercase ASCII、数字和 `-`，接受 GitHub 不可能产生的 leading/trailing/consecutive hyphen owner 及超过 39-byte owner，因而可持久化无法与 fresh metadata 对齐的 canonical source。
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: `crates/skilload-core/src/domain/source.rs` 将 canonical owner 限制为 1–39 bytes、lowercase ASCII alphanumeric/single-hyphen grammar，并由 `portable_source_rejects_impossible_github_owner_logins` 覆盖 leading/trailing/consecutive hyphen、40-byte rejection 与 39-byte valid boundary。`docs/product-specs/source-and-trust.md` 澄清 `SKL-SRC-002`，`docs/references/github-repository-identity-and-auth.md` 记录验证来源；不改变 Revision 1 语义。
 
 Evidence: code/preliminary remediation commit `752c0f77b24a5300dffe7edcca952809688fdc1f` 已推送；focused core 94 tests、`cargo fmt --all --check`、workspace Clippy `-D warnings`、locked all-features workspace tests（11、12、94）、workspace build 和 `git diff --check` 均通过。
 
-GitHub outcome: 尚未回复；thread resolved: false。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_r3814840641；thread resolved: true。
 
 ### PRRC_kwDOT7YN2s7jWsur — first-import SQLite sidecar rollback
 
-Source: 内联评论 `PRRC_kwDOT7YN2s7jWsur`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3814378411)；线程 `PRRT_kwDOT7YN2s6ahTLC`，当前未解决。
+Source: 内联评论 `PRRC_kwDOT7YN2s7jWsur`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3814378411)；线程 `PRRT_kwDOT7YN2s6ahTLC`，当前已解决。
 
 Problem: pre-commit/rollback failure 时 `FirstImportStaging::drop` 只删除 staging database 和 publication link；SQLite 自行留下的 matching `-journal`、`-wal` 或 `-shm` sidecar 会使本调用新建 data directory 非空，阻止 absent-root recovery。
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: `FirstImportStaging` 现在只在 SQLite `COMMIT` 返回 failure 后，以 `O_NOFOLLOW` FD/identity 记录仍存在的 `-journal`、`-wal`、`-shm`，Drop 仅 unlink recorded matching sidecar。`first_import_staging_removes_recorded_sqlite_sidecars` 覆盖 tracked cleanup；既有 `first_import_precommit_failure_preserves_foreign_staging_sidecar` 继续证明 pre-commit foreign sidecar 不会被 basename 猜测删除。
 
 Evidence: code/preliminary remediation commit `752c0f77b24a5300dffe7edcca952809688fdc1f` 已推送；focused core 94 tests、`cargo fmt --all --check`、workspace Clippy `-D warnings`、locked all-features workspace tests（11、12、94）、workspace build 与 `git diff --check` 均通过。
 
-GitHub outcome: 尚未回复；thread resolved: false。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_r3814842723；thread resolved: true。
 
 ### PRRC_kwDOT7YN2s7jWsuw — newly created directory identity binding
 
@@ -1458,7 +1461,7 @@ Resolution: 需要在不引入未审计 unsafe code 且同时支持 macOS/Linux 
 
 Evidence: `crates/skilload-core/src/adapters/configuration.rs:601-660` 已显示该 unbound creation gap；`ARCHITECTURE.md` invariant 5 禁止覆写或删除 foreign path，Product Baseline 第 31、39、1493 行同时要求仅清理本调用创建且 identity 未变的 directory。需要产品/architecture 决定以消除这两个约束在该内核接口上的冲突。
 
-GitHub outcome: 尚未回复；thread resolved: false，等待明确决策。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_r3814847446，明确请求 create-and-hold directory 或 cleanup guarantee 决策；thread resolved: false，等待明确决策。
 
 ## Context and Orientation
 
@@ -1740,3 +1743,5 @@ Library 是本机可搜索的来源元数据集合；在本交付中它只保存
 计划修订说明（2026-08-19 14:56Z）：九个 fixed source 均已使用 `5cc7d52012f81e75e4fb83aad67bff0c13e9678c` 的 code/validation evidence 回复并关闭。最终 `list --all` reconciliation 显示 66 个 inline source 与 66 个 Plan heading 完全对应、全部 resolved；8 条 top-level trigger 与 84 个 review body 没有独立问题。客户端超时造成的四个 source 双回复均保留实际 URL；本 documentation commit 推送后必须再读取会话与 PR head。
 
 计划修订说明（2026-08-20）：本轮四项 fixed/open review remediation 的代码、回归、产品/设计/reference 同步和 preliminary ledger 已由 `752c0f77b24a5300dffe7edcca952809688fdc1f` 推送，local/upstream/open ready PR head 一致。`PRRC_kwDOT7YN2s7jWsuw` 已记录为 pending/blocked，未创建虚假修复；下一步重新获取完整会话，逐 source 回复/关闭四个 fixed thread，并让 blocked thread 保持 open。
+
+计划修订说明（2026-08-20）：四个 fixed source 已以 `752c0f77b24a5300dffe7edcca952809688fdc1f`、通过的 focused/workspace/CLI evidence 和各自 GitHub reply URL 回复并关闭；`PRRT_kwDOT7YN2s6ahTLF` 已回复 exact decision question，保持 blocked/open。reply reconciliation 显示 71 个 inline source 与 71 个 Plan heading 对应，新增的五个 review body 为空；本次 final ledger commit 推送后必须再次完整读取会话和 PR head。
