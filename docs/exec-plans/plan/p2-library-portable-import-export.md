@@ -59,6 +59,7 @@ depends_on: [PLAN-0002]
 - [x] (2026-08-19 03:05Z) 处理 PR #3 的规划评审：将新增的文件传输和 alias-error 语义从 Revision 1 提升为 `SKL-LIB-009`/`SKL-LIB-010` Revision 2，规定 `internal_duplicate` 的 Library alias 字段语义，并补足 P2 数据库损坏诊断；尚未改动任何运行时代码。
 - [x] (2026-08-19 03:09Z) 发现 `database-recovery.md` 仍以已废止的隐式 `library export --json`/`result.data` 表述恢复导出；已同步为显式 `--output <recovery-directory>/library-export.json`，使 recovery procedure 与 Revision 2 文件契约一致。
 - [x] (2026-08-19 04:30Z) 处理 PR #3 的第二轮规划评审：将 export target collision、rename 后 sync failure、非常规 import input、首次 persistence failure 与同 batch canonical source duplicate 纳入 `SKL-LIB-009`/`SKL-LIB-010` Revision 3；恢复 database recovery 的第 2 节标题，更新 API catalog、持久化设计和 Review Conversation Log；未改动任何运行时代码。
+- [x] (2026-08-19 04:43Z) 已将第二轮 PR #3 评审的六个有效问题以提交 `e7467f70d55cc48548f4c17e4df067d529719e34` 推送，逐一回复并关闭全部内联线程；本 Review Conversation Log 已记录每个 reply URL 和验证证据，计划仍为 `plan`、PR 仍为 Draft。
 - [ ] 收到明确人类执行授权后，按 `execute-exec-plan` 预检 `PLAN-0002`、Draft PR、分支和工作树，移动本计划到 `active` 并完成下列实现里程碑。
 - [ ] 在代码、测试和同步文档均提交推送后，运行 `gh pr ready`，确认 `isDraft: false` 和 `headRefOid` 等于已推送实现 HEAD，再自动移动计划到 `review`。
 - [ ] 收到明确人类合并授权后，完成预检、评审会话记录、completed 事务、必要检查、合并、默认分支更新和本地交付分支清理。
@@ -178,99 +179,99 @@ GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_
 
 ### PRRC_kwDOT7YN2s7jFpZe — export 目标与活动数据库碰撞
 
-Source: 内联评论 `PRRC_kwDOT7YN2s7jFpZe`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3809908318)；线程 `PRRT_kwDOT7YN2s6aVw_e`，当前未解决。
+Source: 内联评论 `PRRC_kwDOT7YN2s7jFpZe`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3809908318)；线程 `PRRT_kwDOT7YN2s6aVw_e`，当前已解决。
 
 Problem: 现有计划允许 `library export --output` 将可移植 JSON 原子替换为活动 `data/skilload.db`、其 WAL/SHM sidecar 或数据库写锁，从而破坏 Library 的权威 SQLite generation。
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
-Resolution: 已更新 `docs/product-specs/library.md`、`docs/design-docs/application-and-persistence.md` 与本计划：export 在 staging 前拒绝活动 database/WAL/SHM/database lock target，并以 rename 前/后不同的 failure contract 和 fixture 验收；预定提交 `docs: address portable library planning review`，本轮 planning 未改运行时代码。
+Resolution: 提交 `e7467f70d55cc48548f4c17e4df067d529719e34` 已更新 `docs/product-specs/library.md`、`docs/design-docs/application-and-persistence.md` 与本计划：export 在 staging 前拒绝活动 database/WAL/SHM/database lock target，并以 rename 前/后不同的 failure contract 和 fixture 验收；本轮 planning 未改运行时代码。
 
-Evidence: 预定提交前已通过 `/tmp/skilload-pr3-doc-check.cjs` 的产品/设计/Plan 一致性断言和 `git diff --check`；推送 SHA 待提交后记录。
+Evidence: `e7467f70d55cc48548f4c17e4df067d529719e34` 已推送且 PR #3 head 已核对为同一 SHA；`mise exec -- node /tmp/skilload-pr3-doc-check.cjs` 与 `git diff --check` 通过。
 
-GitHub outcome: 尚未回复；thread resolved: false。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_r3810093425；thread resolved: true。
 
 ### PRRC_kwDOT7YN2s7jFpZh — import 非常规文件输入
 
-Source: 内联评论 `PRRC_kwDOT7YN2s7jFpZh`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3809908321)；线程 `PRRT_kwDOT7YN2s6aVw_g`，当前未解决。
+Source: 内联评论 `PRRC_kwDOT7YN2s7jFpZh`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3809908321)；线程 `PRRT_kwDOT7YN2s6aVw_g`，当前已解决。
 
 Problem: 当前 scanner 直接读取 `--input`，FIFO、device 或 race 后的非常规文件可在资源上界检查前无限阻塞。
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
-Resolution: 已更新 `docs/product-specs/library.md`、`docs/design-docs/application-and-persistence.md` 与本计划：import 以 no-follow、nonblocking descriptor 和 `fstat` 证明 regular file、拒绝 symlink/directory/FIFO/socket/device/identity drift，并加入 FIFO/device fixture；预定提交 `docs: address portable library planning review`。
+Resolution: 提交 `e7467f70d55cc48548f4c17e4df067d529719e34` 已更新 `docs/product-specs/library.md`、`docs/design-docs/application-and-persistence.md` 与本计划：import 以 no-follow、nonblocking descriptor 和 `fstat` 证明 regular file、拒绝 symlink/directory/FIFO/socket/device/identity drift，并加入 FIFO/device fixture。
 
-Evidence: 预定提交前已通过 `/tmp/skilload-pr3-doc-check.cjs` 的产品/设计/Plan 一致性断言和 `git diff --check`；推送 SHA 待提交后记录。
+Evidence: `e7467f70d55cc48548f4c17e4df067d529719e34` 已推送且 PR #3 head 已核对为同一 SHA；`mise exec -- node /tmp/skilload-pr3-doc-check.cjs` 与 `git diff --check` 通过。
 
-GitHub outcome: 尚未回复；thread resolved: false。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_r3810094616；thread resolved: true。
 
 ### PRRC_kwDOT7YN2s7jFpZj — 同一 batch 的 canonical source 重复
 
-Source: 内联评论 `PRRC_kwDOT7YN2s7jFpZj`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3809908323)；线程 `PRRT_kwDOT7YN2s6aVw_i`，当前未解决。
+Source: 内联评论 `PRRC_kwDOT7YN2s7jFpZj`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3809908323)；线程 `PRRT_kwDOT7YN2s6aVw_i`，当前已解决。
 
 Problem: 两个输入 entry 具有同一 `skill.source.canonical` 但没有 alias 冲突时，尚未规定 batch 是拒绝、去重还是选择一项，SQLite 主键与 import result 因而不确定。
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
-Resolution: 已更新 `docs/product-specs/library.md`、`docs/product-specs/api-v1.md` 与本计划：同一 batch 的后出现 canonical source duplicate 是原子 `internal_duplicate` conflict，使用 `name: null` 和该 entry source；`SKL-LIB-010` 升为 Revision 3 并加入 fixture；预定提交 `docs: address portable library planning review`。
+Resolution: 提交 `e7467f70d55cc48548f4c17e4df067d529719e34` 已更新 `docs/product-specs/library.md`、`docs/product-specs/api-v1.md` 与本计划：同一 batch 的后出现 canonical source duplicate 是原子 `internal_duplicate` conflict，使用 `name: null` 和该 entry source；`SKL-LIB-010` 升为 Revision 3 并加入 fixture。
 
-Evidence: 预定提交前已通过 `/tmp/skilload-pr3-doc-check.cjs` 的 API catalog/产品/Plan 一致性断言和 `git diff --check`；推送 SHA 待提交后记录。
+Evidence: `e7467f70d55cc48548f4c17e4df067d529719e34` 已推送且 PR #3 head 已核对为同一 SHA；`mise exec -- node /tmp/skilload-pr3-doc-check.cjs` 与 `git diff --check` 通过。
 
-GitHub outcome: 尚未回复；thread resolved: false。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_r3810095767；thread resolved: true。
 
 ### PRRC_kwDOT7YN2s7jFpZl — 首次 import 失败遗留状态
 
-Source: 内联评论 `PRRC_kwDOT7YN2s7jFpZl`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3809908325)；线程 `PRRT_kwDOT7YN2s6aVw_l`，当前未解决。
+Source: 内联评论 `PRRC_kwDOT7YN2s7jFpZl`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3809908325)；线程 `PRRT_kwDOT7YN2s6aVw_l`，当前已解决。
 
 Problem: 首次 import 在创建根、lock 或 SQLite 文件后失败时，现有计划只依赖 transaction rollback，可能遗留原先不存在的 durable state。
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
-Resolution: 已更新 `docs/product-specs/library.md`、`docs/design-docs/application-and-persistence.md` 与本计划：absent database 使用同目录 staging publish，commit 前清理仅由调用创建的 database/sidecar/lock/空目录，commit 后 durability-sync error 不伪称旧状态；预定提交 `docs: address portable library planning review`。
+Resolution: 提交 `e7467f70d55cc48548f4c17e4df067d529719e34` 已更新 `docs/product-specs/library.md`、`docs/design-docs/application-and-persistence.md` 与本计划：absent database 使用同目录 staging publish，commit 前清理仅由调用创建的 database/sidecar/lock/空目录，commit 后 durability-sync error 不伪称旧状态。
 
-Evidence: 预定提交前已通过 `/tmp/skilload-pr3-doc-check.cjs` 的产品/设计/Plan 一致性断言和 `git diff --check`；推送 SHA 待提交后记录。
+Evidence: `e7467f70d55cc48548f4c17e4df067d529719e34` 已推送且 PR #3 head 已核对为同一 SHA；`mise exec -- node /tmp/skilload-pr3-doc-check.cjs` 与 `git diff --check` 通过。
 
-GitHub outcome: 尚未回复；thread resolved: false。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_r3810097033；thread resolved: true。
 
 ### PRRC_kwDOT7YN2s7jFpZp — export rename 后同步失败
 
-Source: 内联评论 `PRRC_kwDOT7YN2s7jFpZp`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3809908329)；线程 `PRRT_kwDOT7YN2s6aVw_n`，当前未解决。
+Source: 内联评论 `PRRC_kwDOT7YN2s7jFpZp`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3809908329)；线程 `PRRT_kwDOT7YN2s6aVw_n`，当前已解决。
 
 Problem: 当前计划把 directory `fsync` 失败也表述为保留旧 output，但 rename 已发生时新 output 可能已经发布。
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
-Resolution: 已更新 `docs/product-specs/library.md`、`docs/design-docs/application-and-persistence.md` 与本计划：rename 前 failure 保留旧 target/无 target，rename 后 parent-sync failure 返回 error 且允许新 target 已发布；预定提交 `docs: address portable library planning review`。
+Resolution: 提交 `e7467f70d55cc48548f4c17e4df067d529719e34` 已更新 `docs/product-specs/library.md`、`docs/design-docs/application-and-persistence.md` 与本计划：rename 前 failure 保留旧 target/无 target，rename 后 parent-sync failure 返回 error 且允许新 target 已发布。
 
-Evidence: 预定提交前已通过 `/tmp/skilload-pr3-doc-check.cjs` 的产品/设计/Plan 一致性断言和 `git diff --check`；推送 SHA 待提交后记录。
+Evidence: `e7467f70d55cc48548f4c17e4df067d529719e34` 已推送且 PR #3 head 已核对为同一 SHA；`mise exec -- node /tmp/skilload-pr3-doc-check.cjs` 与 `git diff --check` 通过。
 
-GitHub outcome: 尚未回复；thread resolved: false。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_r3810097641；thread resolved: true。
 
 ### PRRC_kwDOT7YN2s7jFpZr — recovery salvage 小节标题
 
-Source: 内联评论 `PRRC_kwDOT7YN2s7jFpZr`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3809908331)；线程 `PRRT_kwDOT7YN2s6aVw_p`，当前未解决。
+Source: 内联评论 `PRRC_kwDOT7YN2s7jFpZr`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3809908331)；线程 `PRRT_kwDOT7YN2s6aVw_p`，当前已解决。
 
 Problem: `database-recovery.md` 从第 1 节直接跳到第 3 节，但 reset 授权仍要求完成第 1 和第 2 节，salvage 阶段不再可识别。
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
-Resolution: 已更新 `docs/product-specs/database-recovery.md`，在 salvage 段落前恢复 `## 2. Salvage Readable Product Data` 标题；预定提交 `docs: address portable library planning review`，procedure 内容和版本未变。
+Resolution: 提交 `e7467f70d55cc48548f4c17e4df067d529719e34` 已更新 `docs/product-specs/database-recovery.md`，在 salvage 段落前恢复 `## 2. Salvage Readable Product Data` 标题；procedure 内容和版本未变。
 
-Evidence: 预定提交前已通过 `/tmp/skilload-pr3-doc-check.cjs` 的 heading/交叉引用检查和 `git diff --check`；推送 SHA 待提交后记录。
+Evidence: `e7467f70d55cc48548f4c17e4df067d529719e34` 已推送且 PR #3 head 已核对为同一 SHA；`mise exec -- node /tmp/skilload-pr3-doc-check.cjs` 与 `git diff --check` 通过。
 
-GitHub outcome: 尚未回复；thread resolved: false。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_r3810098110；thread resolved: true。
 
 ## Context and Orientation
 
