@@ -348,12 +348,12 @@ pub(crate) fn acquire_restrictive_lock_with_identity(
         }
     })();
     if let Err(error) = lock_result {
-        drop(file);
         if !matches!(&error, AppError::Busy { .. })
             && let Some(identity) = created_lock
         {
-            remove_created_lock(&lock_path, identity);
+            remove_created_lock(&lock_path, identity, &file);
         }
+        drop(file);
         return Err(error);
     }
 
@@ -401,10 +401,16 @@ fn ensure_regular_lock_file(
     }
 }
 
-fn remove_created_lock(path: &Path, created_identity: (u64, u64)) {
+fn remove_created_lock(path: &Path, created_identity: (u64, u64), handle: &File) {
     if fs::symlink_metadata(path)
         .ok()
-        .is_some_and(|metadata| metadata_identity(&metadata) == created_identity)
+        .zip(handle.metadata().ok())
+        .is_some_and(|(metadata, handle_metadata)| {
+            metadata.file_type().is_file()
+                && !metadata.file_type().is_symlink()
+                && metadata_identity(&metadata) == created_identity
+                && metadata_identity(&handle_metadata) == created_identity
+        })
     {
         let _ = fs::remove_file(path);
     }
@@ -414,10 +420,11 @@ fn metadata_identity(metadata: &fs::Metadata) -> (u64, u64) {
     (metadata.dev(), metadata.ino())
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub(crate) struct CreatedDirectory {
     pub(crate) path: PathBuf,
     pub(crate) identity: (u64, u64),
+    pub(crate) handle: File,
 }
 
 pub(crate) fn ensure_restrictive_directory(
@@ -455,11 +462,8 @@ pub(crate) fn ensure_restrictive_directory(
 
     let mut created_directories = Vec::new();
     for directory in missing_directories.into_iter().rev() {
-        if let Some(identity) = create_restrictive_directory(&directory, variable)? {
-            created_directories.push(CreatedDirectory {
-                path: directory,
-                identity,
-            });
+        if let Some(created_directory) = create_restrictive_directory(&directory, variable)? {
+            created_directories.push(created_directory);
         }
     }
 
@@ -473,7 +477,7 @@ pub(crate) fn ensure_restrictive_directory(
 fn create_restrictive_directory(
     directory: &Path,
     variable: &str,
-) -> Result<Option<(u64, u64)>, AppError> {
+) -> Result<Option<CreatedDirectory>, AppError> {
     let created = match fs::create_dir(directory) {
         Ok(()) => true,
         Err(error) if error.kind() == io::ErrorKind::AlreadyExists => false,
@@ -494,8 +498,48 @@ fn create_restrictive_directory(
     let metadata = fs::symlink_metadata(directory)
         .map_err(|error| environment_io(variable, directory, action, error))?;
     ensure_real_directory(directory, &metadata, variable)?;
-    restrict_directory_permissions(directory, variable)?;
-    Ok(created.then(|| metadata_identity(&metadata)))
+    if !created {
+        restrict_directory_permissions(directory, variable)?;
+        return Ok(None);
+    }
+
+    let mut options = OpenOptions::new();
+    options
+        .read(true)
+        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW);
+    let handle = options
+        .open(directory)
+        .map_err(|error| environment_io(variable, directory, "open created directory", error))?;
+    let handle_metadata = handle.metadata().map_err(|error| {
+        environment_io(
+            variable,
+            directory,
+            "inspect opened created directory",
+            error,
+        )
+    })?;
+    if metadata_identity(&metadata) != metadata_identity(&handle_metadata) {
+        return Err(AppError::invalid_environment(
+            variable,
+            Some(NativePath::new(directory.to_path_buf())),
+            "created directory identity drift",
+        ));
+    }
+    handle
+        .set_permissions(fs::Permissions::from_mode(0o700))
+        .map_err(|error| {
+            environment_io(
+                variable,
+                directory,
+                "restrict created directory permissions",
+                error,
+            )
+        })?;
+    Ok(Some(CreatedDirectory {
+        path: directory.to_path_buf(),
+        identity: metadata_identity(&metadata),
+        handle,
+    }))
 }
 
 fn ensure_real_directory(

@@ -303,7 +303,19 @@ impl SqliteLibraryRepository {
             self.hooks.before_first_lock()?;
             let (lock, created_lock) =
                 acquire_restrictive_lock_with_identity(roots, "database.lock", "database")?;
-            cleanup.created_lock = created_lock;
+            if let Some(identity) = created_lock {
+                cleanup.created_lock = Some(CreatedLock {
+                    identity,
+                    handle: lock.try_clone().map_err(|error| {
+                        environment_io(
+                            "XDG_STATE_HOME",
+                            &lock_path,
+                            "retain created database.lock",
+                            error,
+                        )
+                    })?,
+                });
+            }
 
             let result = (|| {
                 let roots = self.root_resolver.revalidate(roots)?;
@@ -504,9 +516,14 @@ struct ImportPlan {
     result: LibraryImportResult,
 }
 
+struct CreatedLock {
+    identity: (u64, u64),
+    handle: File,
+}
+
 struct FirstImportCleanup {
     lock_path: PathBuf,
-    created_lock: Option<(u64, u64)>,
+    created_lock: Option<CreatedLock>,
     created_directories: Vec<CreatedDirectory>,
     committed: bool,
 }
@@ -527,7 +544,7 @@ impl Drop for FirstImportCleanup {
         if !self.committed {
             cleanup_first_import(
                 &self.lock_path,
-                self.created_lock,
+                self.created_lock.as_ref(),
                 &self.created_directories,
             );
         }
@@ -882,28 +899,43 @@ fn metadata_identity(metadata: &fs::Metadata) -> (u64, u64) {
 
 fn cleanup_first_import(
     lock_path: &Path,
-    created_lock: Option<(u64, u64)>,
+    created_lock: Option<&CreatedLock>,
     created_directories: &[CreatedDirectory],
 ) {
-    if let Some(identity) = created_lock
-        && fs::symlink_metadata(lock_path)
-            .ok()
-            .is_some_and(|metadata| metadata_identity(&metadata) == identity)
+    if let Some(created_lock) = created_lock
+        && current_entry_matches_created_identity(
+            lock_path,
+            created_lock.identity,
+            &created_lock.handle,
+        )
+        .is_some_and(|metadata| {
+            metadata.file_type().is_file() && !metadata.file_type().is_symlink()
+        })
     {
         let _ = fs::remove_file(lock_path);
     }
     for directory in created_directories.iter().rev() {
-        if fs::symlink_metadata(&directory.path)
-            .ok()
-            .is_some_and(|metadata| {
-                metadata.file_type().is_dir()
-                    && !metadata.file_type().is_symlink()
-                    && metadata_identity(&metadata) == directory.identity
-            })
+        if current_entry_matches_created_identity(
+            &directory.path,
+            directory.identity,
+            &directory.handle,
+        )
+        .is_some_and(|metadata| metadata.file_type().is_dir() && !metadata.file_type().is_symlink())
         {
             let _ = fs::remove_dir(&directory.path);
         }
     }
+}
+
+fn current_entry_matches_created_identity(
+    path: &Path,
+    identity: (u64, u64),
+    handle: &File,
+) -> Option<fs::Metadata> {
+    let metadata = fs::symlink_metadata(path).ok()?;
+    let handle_metadata = handle.metadata().ok()?;
+    (metadata_identity(&metadata) == identity && metadata_identity(&handle_metadata) == identity)
+        .then_some(metadata)
 }
 
 struct StoredEntry {
