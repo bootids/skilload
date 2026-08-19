@@ -129,6 +129,8 @@ Offline results require `used: false` and `attempts: []`; `used` is true exactly
       byte_count: DecimalU64
     }
 
+`ResolvedSkill.entry_count` 与 `ResolvedSkill.byte_count` 都是正 `DecimalU64`。零仅适用于没有任何 resolved Skill 的聚合计数，不能表示单个已验证来源；每个有效来源至少包含其非空 regular `SKILL.md`。
+
     Warning {
       code: String,
       message: String,

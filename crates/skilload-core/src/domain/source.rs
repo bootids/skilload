@@ -194,6 +194,12 @@ impl ResolvedSkill {
         if description.is_empty() || description.chars().count() > 1_024 {
             return Err(AppError::validation("resolved_skill_description", None));
         }
+        if entry_count == 0 {
+            return Err(AppError::validation("resolved_skill_entry_count", None));
+        }
+        if byte_count == 0 {
+            return Err(AppError::validation("resolved_skill_byte_count", None));
+        }
         Ok(Self {
             source,
             repository_id,
@@ -480,6 +486,31 @@ mod tests {
             )
             .is_ok()
         );
+    }
+
+    #[test]
+    fn resolved_skill_rejects_zero_evidence_counts() {
+        for (entry_count, byte_count, constraint) in [
+            (0, 10, "resolved_skill_entry_count"),
+            (1, 0, "resolved_skill_byte_count"),
+        ] {
+            let error = ResolvedSkill::new(
+                source("skills/review", RefKind::Branch, "refs/heads/main"),
+                42,
+                "0123456789012345678901234567890123456789".to_owned(),
+                "sha256:0123456789012345678901234567890123456789012345678901234567890123"
+                    .to_owned(),
+                "review".to_owned(),
+                "A valid description".to_owned(),
+                entry_count,
+                byte_count,
+            )
+            .unwrap_err();
+            assert!(matches!(
+                error,
+                AppError::Validation { constraint: actual, .. } if actual == constraint
+            ));
+        }
     }
 
     #[test]

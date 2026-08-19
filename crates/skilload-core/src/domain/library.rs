@@ -11,6 +11,7 @@ use std::{
 pub const LIBRARY_FORMAT_VERSION: u64 = 1;
 
 pub const MAX_PORTABLE_LIBRARY_DOCUMENT_BYTES: u64 = 67_108_864;
+pub(crate) const MAX_PORTABLE_LIBRARY_ENTRIES: u64 = 10_000;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -74,6 +75,8 @@ impl PortableLibraryDocument {
             return Err(AppError::validation("library_format_version", None));
         }
 
+        self.ensure_entry_count()?;
+
         let mut canonical_sources = HashSet::with_capacity(self.entries.len());
         let mut aliases = HashMap::new();
         for entry in &mut self.entries {
@@ -129,17 +132,29 @@ impl PortableLibraryDocument {
         Ok(())
     }
 
+    fn ensure_entry_count(&self) -> Result<(), AppError> {
+        if self.entries.len() > MAX_PORTABLE_LIBRARY_ENTRIES as usize {
+            return Err(AppError::validation(
+                "library_portable_document_entries",
+                None,
+            ));
+        }
+        Ok(())
+    }
+
     pub fn ensure_transfer_size(&self) -> Result<(), AppError> {
         self.clone().into_transfer_size()
     }
 
     pub(crate) fn into_transfer_size(mut self) -> Result<(), AppError> {
+        self.ensure_entry_count()?;
         self.sort_deterministically()?;
         self.encode_with_limit(MAX_PORTABLE_LIBRARY_DOCUMENT_BYTES, false)
             .map(|_| ())
     }
 
     pub fn serialize_for_transfer(&self) -> Result<Vec<u8>, AppError> {
+        self.ensure_entry_count()?;
         let mut document = self.clone();
         document.sort_deterministically()?;
         document
@@ -284,6 +299,24 @@ mod tests {
         .validate()
         .unwrap_err();
         assert_eq!(error.code(), "conflict");
+    }
+
+    #[test]
+    fn validation_rejects_more_entries_than_portable_transfer_can_import() {
+        let error = PortableLibraryDocument {
+            format_version: 1,
+            entries: (0..=MAX_PORTABLE_LIBRARY_ENTRIES)
+                .map(|index| entry(&format!("skills/{index}/review")))
+                .collect(),
+        }
+        .validate()
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            AppError::Validation { constraint, .. }
+                if constraint == "library_portable_document_entries"
+        ));
     }
     #[test]
     fn transfer_encoding_rejects_a_document_over_its_byte_limit() {

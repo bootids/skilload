@@ -1,6 +1,8 @@
 use crate::adapters::xdg::{SystemEnvironment, XdgRootResolver};
 use crate::domain::configuration::{NativePath, normalize_absolute};
-use crate::domain::library::{MAX_PORTABLE_LIBRARY_DOCUMENT_BYTES, PortableLibraryDocument};
+use crate::domain::library::{
+    MAX_PORTABLE_LIBRARY_DOCUMENT_BYTES, MAX_PORTABLE_LIBRARY_ENTRIES, PortableLibraryDocument,
+};
 use crate::error::AppError;
 use crate::ports::configuration::{Environment, ResolvedRoots, StateRootResolver};
 use crate::ports::library::LibraryTransferStore;
@@ -13,7 +15,6 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tempfile::{Builder, NamedTempFile};
 
-const MAX_IMPORT_ENTRIES: u64 = 10_000;
 const MAX_IMPORT_VALUES: u64 = 1_000_000;
 const MAX_IMPORT_DEPTH: u64 = 8;
 const MAX_IMPORT_STRING_BYTES: u64 = 1_048_576;
@@ -153,6 +154,14 @@ impl PortableLibraryTransferStore {
             .sync_all()
             .map_err(|error| export_io(output, "sync export parent directory", error))?;
         parent.revalidate(output)?;
+        verify_staging_identity(
+            &staging,
+            &parent,
+            output_path.file_name().ok_or_else(|| {
+                AppError::validation("library_export_output_has_no_name", Some(output.clone()))
+            })?,
+            output,
+        )?;
         Ok(())
     }
 }
@@ -763,11 +772,11 @@ impl<'a> JsonScanner<'a> {
             self.skip_whitespace();
             if self.peek() == Some(b'{') {
                 self.entries += 1;
-                if self.entries > MAX_IMPORT_ENTRIES {
+                if self.entries > MAX_PORTABLE_LIBRARY_ENTRIES {
                     return Err(self.limit(
                         "library_import_entries",
                         self.entries,
-                        MAX_IMPORT_ENTRIES,
+                        MAX_PORTABLE_LIBRARY_ENTRIES,
                     ));
                 }
                 self.parse_object(depth + 1, false)?;
@@ -1180,7 +1189,7 @@ mod tests {
                 assert_eq!(
                     allowed,
                     match kind {
-                        "library_import_entries" => MAX_IMPORT_ENTRIES,
+                        "library_import_entries" => MAX_PORTABLE_LIBRARY_ENTRIES,
                         "library_import_values" => MAX_IMPORT_VALUES,
                         "library_import_depth" => MAX_IMPORT_DEPTH,
                         "library_import_string_bytes" => MAX_IMPORT_STRING_BYTES,
@@ -1220,7 +1229,7 @@ mod tests {
 
         let entries = format!(
             r#"{{"format_version":1,"entries":[{}]}}"#,
-            std::iter::repeat_n("{}", MAX_IMPORT_ENTRIES as usize + 1)
+            std::iter::repeat_n("{}", MAX_PORTABLE_LIBRARY_ENTRIES as usize + 1)
                 .collect::<Vec<_>>()
                 .join(",")
         );
@@ -1292,7 +1301,7 @@ mod tests {
 
         let entries = format!(
             r#"{{"format_version":1,"entries":[{}]}}"#,
-            std::iter::repeat_n("{}", MAX_IMPORT_ENTRIES as usize)
+            std::iter::repeat_n("{}", MAX_PORTABLE_LIBRARY_ENTRIES as usize)
                 .collect::<Vec<_>>()
                 .join(",")
         );
@@ -1415,6 +1424,44 @@ mod tests {
         let error = store.write_export(&output, &document()).unwrap_err();
         assert_eq!(error.code(), "internal_invariant");
         assert_ne!(fs::read(output.as_path()).unwrap(), b"old output");
+    }
+
+    struct OutputReplacementAfterRename {
+        output: PathBuf,
+        displaced: PathBuf,
+    }
+
+    impl TransferWriteHooks for OutputReplacementAfterRename {
+        fn after_rename_before_parent_sync(&self) -> Result<(), AppError> {
+            fs::rename(&self.output, &self.displaced).unwrap();
+            fs::write(&self.output, b"foreign output").unwrap();
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn export_rejects_an_output_replaced_before_final_parent_sync() {
+        let temporary = tempdir().unwrap();
+        let output_directory = temporary.path().join("output");
+        fs::create_dir(&output_directory).unwrap();
+        let output = NativePath::new(output_directory.join("library.json"));
+        let store = PortableLibraryTransferStore::with_write_hooks(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(XdgRootResolver),
+            Arc::new(OutputReplacementAfterRename {
+                output: output.as_path().to_path_buf(),
+                displaced: output_directory.join("displaced-library.json"),
+            }),
+        );
+
+        let error = store.write_export(&output, &document()).unwrap_err();
+
+        assert!(matches!(
+            error,
+            AppError::Validation { constraint, .. }
+                if constraint == "library_export_staging_identity_drift"
+        ));
+        assert_eq!(fs::read(output.as_path()).unwrap(), b"foreign output");
     }
     struct ParentReplacementAfterValidation {
         output_parent: PathBuf,

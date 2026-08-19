@@ -14,7 +14,9 @@ use crate::domain::unicode_15_1::normalize_tag;
 use crate::error::{AppError, Conflict};
 use crate::ports::configuration::{Environment, ResolvedRoots, StateRootResolver};
 use crate::ports::library::LibraryRepository;
-use rusqlite::{Connection, Error as SqlError, ErrorCode, OpenFlags, OptionalExtension, params};
+use rusqlite::{
+    Connection, Error as SqlError, ErrorCode, OpenFlags, OptionalExtension, ffi, params,
+};
 use rustix::fs::{
     AtFlags, Mode, OFlags, RenameFlags, fstat, linkat, openat, renameat_with, statat, unlinkat,
 };
@@ -395,10 +397,21 @@ impl SqliteLibraryRepository {
                         database_sync_error(&database, "restrict staging database", error)
                     })?;
                 let staging_path = staging.file.path().to_path_buf();
-                let mut connection = staging.open_connection(&staging_path, || {
-                    self.hooks
-                        .after_first_staging_identity_check_before_open(&staging_path)
-                })?;
+                let mut connection = staging.open_connection(
+                    &staging_path,
+                    || {
+                        self.hooks
+                            .after_first_staging_identity_check_before_open(&staging_path)
+                    },
+                    || {
+                        self.hooks
+                            .after_first_staging_identity_recheck_before_open(&staging_path)
+                    },
+                    || {
+                        self.hooks
+                            .after_first_staging_connection_open(&staging_path)
+                    },
+                )?;
                 initialize_schema(&connection, &staging_path)?;
                 let transaction = connection
                     .transaction()
@@ -552,6 +565,17 @@ trait PersistenceHooks: Send + Sync {
         &self,
         _staging: &Path,
     ) -> Result<(), AppError> {
+        Ok(())
+    }
+
+    fn after_first_staging_identity_recheck_before_open(
+        &self,
+        _staging: &Path,
+    ) -> Result<(), AppError> {
+        Ok(())
+    }
+
+    fn after_first_staging_connection_open(&self, _staging: &Path) -> Result<(), AppError> {
         Ok(())
     }
 
@@ -725,15 +749,20 @@ impl<'directory> FirstImportStaging<'directory> {
         &self,
         path: &Path,
         after_identity_check_before_open: impl FnOnce() -> Result<(), AppError>,
+        after_identity_recheck_before_open: impl FnOnce() -> Result<(), AppError>,
+        after_connection_open: impl FnOnce() -> Result<(), AppError>,
     ) -> Result<Connection, AppError> {
         self.verify_entry(&self.name)?;
         after_identity_check_before_open()?;
         self.verify_entry(&self.name)?;
+        after_identity_recheck_before_open()?;
         let connection = Connection::open_with_flags(
             path,
             OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NOFOLLOW,
         )
         .map_err(|error| database_error(path, error))?;
+        after_connection_open()?;
+        verify_sqlite_connection_identity(&connection)?;
         self.verify_entry(&self.name)?;
         configure_connection(&connection, path)?;
         Ok(connection)
@@ -994,7 +1023,40 @@ fn validate_library_tags_schema(connection: &Connection, path: &Path) -> Result<
     connection
         .prepare("SELECT canonical_source, comparison_key, display FROM library_tags LIMIT 0")
         .map(|_| ())
-        .map_err(|error| database_error(path, error))
+        .map_err(|error| database_error(path, error))?;
+    let mut statement = connection
+        .prepare("PRAGMA foreign_key_list(library_tags)")
+        .map_err(|error| database_error(path, error))?;
+    let relations = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, String>(6)?,
+            ))
+        })
+        .map_err(|error| database_error(path, error))?;
+    let mut relation_count = 0;
+    for relation in relations {
+        let (table, from, to, on_delete) = relation.map_err(|error| database_error(path, error))?;
+        if table != "library_entries"
+            || from != "canonical_source"
+            || to != "canonical_source"
+            || on_delete != "CASCADE"
+        {
+            return Err(AppError::database_corrupt(NativePath::new(
+                path.to_path_buf(),
+            )));
+        }
+        relation_count += 1;
+    }
+    if relation_count != 1 {
+        return Err(AppError::database_corrupt(NativePath::new(
+            path.to_path_buf(),
+        )));
+    }
+    Ok(())
 }
 
 fn load_entries(
@@ -1186,6 +1248,26 @@ fn configure_connection(connection: &Connection, path: &Path) -> Result<(), AppE
     connection
         .busy_timeout(LOCK_WAIT)
         .map_err(|error| database_error(path, error))
+}
+
+#[allow(unsafe_code)]
+fn verify_sqlite_connection_identity(connection: &Connection) -> Result<(), AppError> {
+    let mut moved: libc::c_int = 0;
+    // SAFETY: `connection` owns a live SQLite handle; `main` is NUL-terminated,
+    // and SQLite reads `moved` only for this synchronous file-control call.
+    let status = unsafe {
+        ffi::sqlite3_file_control(
+            connection.handle(),
+            c"main".as_ptr(),
+            ffi::SQLITE_FCNTL_HAS_MOVED,
+            (&mut moved as *mut libc::c_int).cast(),
+        )
+    };
+    if status == ffi::SQLITE_OK && moved == 0 {
+        Ok(())
+    } else {
+        Err(SqliteLibraryRepository::database_identity_drift())
+    }
 }
 
 fn database_error(path: &Path, error: SqlError) -> AppError {
@@ -1495,6 +1577,28 @@ mod tests {
     }
 
     #[test]
+    fn complete_import_plan_rejects_more_entries_than_portable_transfer_allows() {
+        let existing = (0..crate::domain::library::MAX_PORTABLE_LIBRARY_ENTRIES)
+            .map(|index| entry(&format!("skills/{index}/review"), None))
+            .collect::<Vec<_>>();
+
+        let error = match SqliteLibraryRepository::plan(
+            &document(vec![entry("skills/overflow", None)]),
+            &existing,
+            false,
+        ) {
+            Err(error) => error,
+            Ok(_) => panic!("expected complete portable entry ceiling to reject import plan"),
+        };
+
+        assert!(matches!(
+            error,
+            AppError::Validation { constraint, .. }
+                if constraint == "library_portable_document_entries"
+        ));
+    }
+
+    #[test]
     fn first_import_conflict_precedes_any_state_creation() {
         let temporary = tempdir().unwrap();
         let repository = SqliteLibraryRepository::with_environment(
@@ -1665,6 +1769,36 @@ mod tests {
             Arc::new(TestEnvironment::with_roots(temporary.path())),
             Arc::new(XdgRootResolver),
         );
+
+        assert_eq!(repository.export().unwrap_err().code(), "database_corrupt");
+    }
+
+    #[test]
+    fn tags_schema_without_entry_foreign_key_is_database_corrupt() {
+        let temporary = tempdir().unwrap();
+        let repository = SqliteLibraryRepository::with_environment(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(XdgRootResolver),
+        );
+        repository
+            .import(&document(vec![entry("skills/review", None)]), false)
+            .unwrap();
+        let database = temporary.path().join("data/skilload/skilload.db");
+        Connection::open(&database)
+            .unwrap()
+            .execute_batch(
+                "
+                PRAGMA foreign_keys = OFF;
+                DROP TABLE library_tags;
+                CREATE TABLE library_tags (
+                    canonical_source TEXT NOT NULL,
+                    comparison_key TEXT NOT NULL,
+                    display TEXT NOT NULL,
+                    PRIMARY KEY (canonical_source, comparison_key)
+                );
+                ",
+            )
+            .unwrap();
 
         assert_eq!(repository.export().unwrap_err().code(), "database_corrupt");
     }
@@ -1961,6 +2095,54 @@ mod tests {
                 .file_type()
                 .is_symlink()
         );
+    }
+
+    struct FirstImportStagingAbaReplacement {
+        displaced: PathBuf,
+        replacement: PathBuf,
+    }
+
+    impl PersistenceHooks for FirstImportStagingAbaReplacement {
+        fn after_first_staging_identity_recheck_before_open(
+            &self,
+            staging: &Path,
+        ) -> Result<(), AppError> {
+            fs::rename(staging, &self.displaced).unwrap();
+            fs::rename(&self.replacement, staging).unwrap();
+            Ok(())
+        }
+
+        fn after_first_staging_connection_open(&self, staging: &Path) -> Result<(), AppError> {
+            fs::rename(staging, &self.replacement).unwrap();
+            fs::rename(&self.displaced, staging).unwrap();
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn first_import_rejects_an_aba_staging_open_before_sql() {
+        let temporary = tempdir().unwrap();
+        let replacement = temporary.path().join("foreign.db");
+        File::create(&replacement).unwrap();
+        let repository = SqliteLibraryRepository::with_hooks(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(XdgRootResolver),
+            Arc::new(FirstImportStagingAbaReplacement {
+                displaced: temporary.path().join("displaced-staging.db"),
+                replacement: replacement.clone(),
+            }),
+        );
+
+        let error = repository
+            .import(&document(vec![entry("skills/review", None)]), false)
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            AppError::InvalidState { state, .. } if state == "database_identity_drift"
+        ));
+        assert_eq!(fs::metadata(replacement).unwrap().len(), 0);
+        assert!(!temporary.path().join("data/skilload/skilload.db").exists());
     }
 
     struct ExistingDatabaseReplacement {
