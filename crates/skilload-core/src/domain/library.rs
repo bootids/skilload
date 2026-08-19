@@ -134,11 +134,20 @@ impl PortableLibraryDocument {
 
     pub fn sort_deterministically(&mut self) -> Result<(), AppError> {
         for entry in &mut self.entries {
-            entry.tags.sort_by(|left, right| {
-                let left = normalize_tag(left).expect("stored tag was validated");
-                let right = normalize_tag(right).expect("stored tag was validated");
-                left.comparison_key.cmp(&right.comparison_key)
-            });
+            let mut tag_order = entry
+                .tags
+                .iter()
+                .enumerate()
+                .map(|(index, tag)| {
+                    normalize_tag(tag).map(|normalized| (normalized.comparison_key, index))
+                })
+                .collect::<Result<Vec<_>, AppError>>()?;
+            tag_order.sort_by(|(left, _), (right, _)| left.cmp(right));
+            let mut tags = std::mem::take(&mut entry.tags);
+            entry.tags = tag_order
+                .into_iter()
+                .map(|(_, index)| std::mem::take(&mut tags[index]))
+                .collect();
         }
         self.entries.sort_by(|left, right| {
             left.skill
@@ -305,6 +314,38 @@ mod tests {
         .validate()
         .unwrap();
         assert_eq!(document.entries[0].tags, ["Review"]);
+    }
+
+    #[test]
+    fn sorting_invalid_tags_returns_validation_error_without_mutating_document() {
+        let mut document = PortableLibraryDocument {
+            format_version: 1,
+            entries: vec![entry("skills/review")],
+        };
+        document.entries[0].tags = vec!["Review".to_owned(), "\u{202e}".to_owned()];
+        let original = document.clone();
+
+        assert!(matches!(
+            document.sort_deterministically(),
+            Err(AppError::Validation { constraint, .. })
+                if constraint == "library_tag_forbidden_character"
+        ));
+        assert_eq!(document, original);
+    }
+
+    #[test]
+    fn transfer_serialization_propagates_invalid_tag_validation() {
+        let mut document = PortableLibraryDocument {
+            format_version: 1,
+            entries: vec![entry("skills/review")],
+        };
+        document.entries[0].tags = vec!["\u{202e}".to_owned()];
+
+        assert!(matches!(
+            document.serialize_for_transfer(),
+            Err(AppError::Validation { constraint, .. })
+                if constraint == "library_tag_forbidden_character"
+        ));
     }
 
     #[test]
