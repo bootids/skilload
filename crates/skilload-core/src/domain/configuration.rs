@@ -56,7 +56,6 @@ impl ConfigKey {
             "agents.codex.executable" => Ok(Self::CodexExecutable),
             _ => Err(AppError::usage(
                 "key",
-                value,
                 Self::all().into_iter().map(Self::as_str),
             )),
         }

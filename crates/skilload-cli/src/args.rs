@@ -56,16 +56,11 @@ pub fn top_level_help() -> String {
 }
 
 pub fn rejects_json_meta_invocation(arguments: &[OsString]) -> bool {
-    let has_meta = arguments.iter().skip(1).any(|argument| {
-        matches!(
-            argument.as_os_str(),
-            value if value == OsStr::new("--help")
-                || value == OsStr::new("-h")
-                || value == OsStr::new("--version")
-                || value == OsStr::new("-V")
-        )
-    });
-    json_requested(arguments) && has_meta
+    json_requested(arguments)
+        && arguments
+            .iter()
+            .skip(1)
+            .any(|argument| is_text_meta_invocation(argument.as_os_str()))
 }
 
 pub fn json_configuration_operation(arguments: &[OsString]) -> Option<&'static str> {
@@ -76,7 +71,7 @@ pub fn json_configuration_operation(arguments: &[OsString]) -> Option<&'static s
         !matches!(
             argument.as_os_str(),
             value if value == OsStr::new("--json") || value == OsStr::new("--no-color")
-        )
+        ) && !is_option_like(argument.as_os_str())
     });
     if positionals.next()?.as_os_str() != OsStr::new("config") {
         return None;
@@ -88,6 +83,23 @@ pub fn json_configuration_operation(arguments: &[OsString]) -> Option<&'static s
         value if value == OsStr::new("list") => Some("config.list"),
         _ => None,
     }
+}
+
+fn is_text_meta_invocation(argument: &OsStr) -> bool {
+    matches!(
+        argument,
+        value if value == OsStr::new("--help") || value == OsStr::new("--version")
+    ) || argument.to_str().is_some_and(|value| {
+        value.strip_prefix('-').is_some_and(|cluster| {
+            !cluster.is_empty() && cluster.chars().all(|flag| matches!(flag, 'h' | 'V'))
+        })
+    })
+}
+
+fn is_option_like(argument: &OsStr) -> bool {
+    argument
+        .to_str()
+        .is_some_and(|value| value.starts_with('-') && value != "-")
 }
 
 fn json_requested(arguments: &[OsString]) -> bool {
@@ -127,6 +139,16 @@ mod tests {
             "--json".into(),
             "--help".into()
         ]));
+        assert!(rejects_json_meta_invocation(&[
+            "skilload".into(),
+            "--json".into(),
+            "-hV".into()
+        ]));
+        assert!(rejects_json_meta_invocation(&[
+            "skilload".into(),
+            "--json".into(),
+            "-Vh".into()
+        ]));
         assert!(!rejects_json_meta_invocation(&[
             "skilload".into(),
             "config".into(),
@@ -154,6 +176,26 @@ mod tests {
                 "--no-color".into(),
                 "list".into(),
                 "--json".into(),
+            ]),
+            Some("config.list")
+        );
+        assert_eq!(
+            json_configuration_operation(&[
+                "skilload".into(),
+                "--json".into(),
+                "--bogus".into(),
+                "config".into(),
+                "list".into(),
+            ]),
+            Some("config.list")
+        );
+        assert_eq!(
+            json_configuration_operation(&[
+                "skilload".into(),
+                "--json".into(),
+                "config".into(),
+                "--bogus".into(),
+                "list".into(),
             ]),
             Some("config.list")
         );

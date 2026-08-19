@@ -71,6 +71,7 @@ The deliberately narrow development command surface is important. Building all 5
 - [x] (2026-08-18) Classified all six inline review concerns in the Review Conversation Log. R1 preserves the documented literal-native-path interpretation; R2 through R6 are ordinary in-scope remediations. Focused core and CLI regressions, locked workspace tests, format, Clippy, build, and diff checks passed; remediation commit `3417b8a2c914b0ed9c16259f969fbc2ba9546031` is pushed before reviewer replies.
 - [x] (2026-08-18) Replied to R1 through R6 from pushed remediation head `3417b8a2c914b0ed9c16259f969fbc2ba9546031`; the final `pr_threads.cjs list --all` reconciliation reports all six inline threads resolved.
 - [x] (2026-08-18) Implemented R7 through R10 in pushed remediation commit `c3977fe5653118487ec0801e3bb6f1cfec749e28`, retained the documented R11 no-fix disposition, replied to every source, and resolved every handled inline thread. The final `pr_threads.cjs list --all` reconciliation reports all eleven actual-problem threads R1 through R11 resolved.
+- [ ] (2026-08-18) Implemented in-scope R12 through R14 parser/error-contract remediations with focused and full locked validation passing; pending the `fix(cli): preserve safe JSON failure contracts` commit, push, GitHub replies, and inline-thread resolutions.
 - [ ] After a later explicit human merge prompt, use `merge-exec-plan` to pass preflight, complete and push the Plan, merge, update local `main`, and delete the local delivery branch.
 
 ## Surprises & Discoveries
@@ -317,6 +318,54 @@ Resolution: Retain the current load-linearized no-op. `Application::mutate` retu
 Evidence: `SKL-CLI-007` requires a mutation whose desired state is already satisfied to return `unchanged` without rewriting state. The existing Decision Log records bounded locking for actual writes and optimistic no-op reads; `Application::mutate` uses `ConfigurationStore::replace` only when the desired document differs from the observed document. `repeated_mutations_preserve_file_identity_and_final_unset_keeps_schema_document` verifies that unchanged setters preserve file identity; the locked workspace suite passed 34. The no-fix assessment is recorded in commit `c3977fe5653118487ec0801e3bb6f1cfec749e28`. No implementation change is warranted.
 
 GitHub outcome: [Reply](https://github.com/bootids/skilload/pull/2#discussion_r3805787684); thread resolved: true.
+
+### R12 — JSON parser errors lose an identifiable leaf behind an unknown option
+
+Source: inline thread `PRRT_kwDOT7YN2s6aL8Ny`, comment `PRRC_kwDOT7YN2s7i24TA`, [review comment](https://github.com/bootids/skilload/pull/2#discussion_r3806037184) by `chatgpt-codex-connector`.
+
+Problem: A malformed JSON invocation with an unrecognized option before or between `config` and a supported leaf falls back to a human diagnostic instead of the leaf's one API-v1 `usage_error` envelope.
+
+Disposition: fixed.
+
+Status: open.
+
+Resolution: `crates/skilload-cli/src/args.rs` now removes option-shaped tokens while recognizing the otherwise identifiable supported `config get|set|unset|list` pair, so `main.rs` returns the leaf's API-v1 parser `usage_error`. The planned `fix(cli): preserve safe JSON failure contracts` remediation commit includes unit coverage for both unknown-option positions and end-to-end parser coverage for `config.list`.
+
+Evidence: `mise exec -- cargo test -p skilload-cli --all-features --locked` passed 16 tests (six CLI unit and 10 integration), including `json_parser_failures_preserve_identifiable_configuration_operations` and `parser_failures_are_terminal_safe_and_preserve_json_configuration_operations`. Full validation passed: `mise exec -- cargo fmt --all --check`, `mise exec -- cargo clippy --workspace --all-targets --all-features -- -D warnings`, `mise exec -- cargo test --workspace --all-features --locked` (35 tests), `mise exec -- cargo build --workspace --all-features --locked`, and `git diff --check`.
+
+GitHub outcome: awaiting remediation reply; thread resolved: false.
+
+### R13 — Clustered help/version flags bypass JSON-meta rejection
+
+Source: inline thread `PRRT_kwDOT7YN2s6aL8N2`, comment `PRRC_kwDOT7YN2s7i24TF`, [review comment](https://github.com/bootids/skilload/pull/2#discussion_r3806037189) by `chatgpt-codex-connector`.
+
+Problem: `--json -hV` reaches clap's successful text-help path because the pre-parse JSON-meta guard recognizes only standalone `-h` and `-V` tokens.
+
+Disposition: fixed.
+
+Status: open.
+
+Resolution: `crates/skilload-cli/src/args.rs` now treats a nonempty short cluster containing only clap's `h` and `V` meta flags as a text meta invocation before parsing. The planned `fix(cli): preserve safe JSON failure contracts` remediation commit covers `-hV` and `-Vh` in the args unit test and the real-binary contract test, which require exit 2 and empty stdout.
+
+Evidence: `mise exec -- cargo test -p skilload-cli --all-features --locked` passed 16 tests, including `json_is_rejected_only_for_text_meta_invocations` and `json_meta_and_invalid_native_path_errors_are_safe`. Full validation passed: `mise exec -- cargo fmt --all --check`, `mise exec -- cargo clippy --workspace --all-targets --all-features -- -D warnings`, `mise exec -- cargo test --workspace --all-features --locked` (35 tests), `mise exec -- cargo build --workspace --all-features --locked`, and `git diff --check`.
+
+GitHub outcome: awaiting remediation reply; thread resolved: false.
+
+### R14 — Unknown configuration-key diagnostics echo credential-shaped input
+
+Source: inline thread `PRRT_kwDOT7YN2s6aL8N3`, comment `PRRC_kwDOT7YN2s7i24TK`, [review comment](https://github.com/bootids/skilload/pull/2#discussion_r3806037194) by `chatgpt-codex-connector`.
+
+Problem: The unknown-key usage error serializes and human-renders the rejected key verbatim, so a credential accidentally supplied as a key can be retained in JSON or terminal output.
+
+Disposition: fixed.
+
+Status: open.
+
+Resolution: `crates/skilload-core/src/domain/configuration.rs` now constructs unknown-key `AppError::Usage` errors without a `value`, and `crates/skilload-core/src/error.rs` makes that omission the standard usage constructor behavior. The planned `fix(cli): preserve safe JSON failure contracts` remediation commit adds `unknown_configuration_keys_redact_credential_shaped_values`, proving JSON and human output omit the credential-shaped fixture while preserving the argument name and fixed supported-key list.
+
+Evidence: `mise exec -- cargo test -p skilload-cli --all-features --locked` passed 16 tests, and `mise exec -- cargo test -p skilload-core --lib --locked` passed 19 tests. Full validation passed: `mise exec -- cargo fmt --all --check`, `mise exec -- cargo clippy --workspace --all-targets --all-features -- -D warnings`, `mise exec -- cargo test --workspace --all-features --locked` (35 tests), `mise exec -- cargo build --workspace --all-features --locked`, and `git diff --check`.
+
+GitHub outcome: awaiting remediation reply; thread resolved: false.
 
 ## Context and Orientation
 

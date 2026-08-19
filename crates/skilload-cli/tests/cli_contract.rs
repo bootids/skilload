@@ -290,10 +290,12 @@ fn out_of_range_schema_versions_keep_json_details_within_api_v1() {
 fn json_meta_and_invalid_native_path_errors_are_safe() {
     let temporary = tempdir().unwrap();
     fs::create_dir(temporary.path().join("home")).unwrap();
-    let meta = execute(temporary.path(), &["--json", "--help"]);
-    assert_eq!(meta.status.code(), Some(2));
-    assert!(meta.stdout.is_empty());
-    assert!(String::from_utf8_lossy(&meta.stderr).contains("--json cannot be combined"));
+    for meta_arguments in [["--json", "--help"], ["--json", "-hV"], ["--json", "-Vh"]] {
+        let meta = execute(temporary.path(), &meta_arguments);
+        assert_eq!(meta.status.code(), Some(2));
+        assert!(meta.stdout.is_empty());
+        assert!(String::from_utf8_lossy(&meta.stderr).contains("--json cannot be combined"));
+    }
 
     let no_operation = execute(temporary.path(), &["--json"]);
     assert_eq!(no_operation.status.code(), Some(2));
@@ -330,6 +332,38 @@ fn json_meta_and_invalid_native_path_errors_are_safe() {
 }
 
 #[test]
+fn unknown_configuration_keys_redact_credential_shaped_values() {
+    let temporary = tempdir().unwrap();
+    fs::create_dir(temporary.path().join("home")).unwrap();
+    let credential = "ghp_0123456789abcdefghijklmnopqrstuvwxyz";
+
+    let json_output = execute(temporary.path(), &["--json", "config", "get", credential]);
+    assert_eq!(json_output.status.code(), Some(2));
+    assert!(json_output.stderr.is_empty());
+    assert!(!String::from_utf8_lossy(&json_output.stdout).contains(credential));
+    let document: Value = serde_json::from_slice(&json_output.stdout).unwrap();
+    assert_eq!(document["operation"], "config.get");
+    assert_eq!(document["error"]["code"], "usage_error");
+    assert_eq!(document["error"]["details"]["argument"], "key");
+    assert!(document["error"]["details"]["value"].is_null());
+    assert_eq!(
+        document["error"]["details"]["expected"],
+        serde_json::json!([
+            "cache_limit_bytes",
+            "agents.claude.executable",
+            "agents.codex.executable"
+        ])
+    );
+
+    let human_output = execute(temporary.path(), &["config", "get", credential]);
+    assert_eq!(human_output.status.code(), Some(2));
+    assert!(human_output.stdout.is_empty());
+    assert!(!String::from_utf8_lossy(&human_output.stderr).contains(credential));
+    assert!(!temporary.path().join("config").exists());
+    assert!(!temporary.path().join("state").exists());
+}
+
+#[test]
 fn parser_failures_are_terminal_safe_and_preserve_json_configuration_operations() {
     let temporary = tempdir().unwrap();
     let hostile = execute(temporary.path(), &["\u{001b}]0;owned\u{0007}\nunknown"]);
@@ -357,6 +391,18 @@ fn parser_failures_are_terminal_safe_and_preserve_json_configuration_operations(
         document["error"]["details"]["expected"],
         serde_json::json!([])
     );
+    for arguments in [
+        ["--json", "--bogus", "config", "list"],
+        ["--json", "config", "--bogus", "list"],
+    ] {
+        let malformed_json = execute(temporary.path(), &arguments);
+        assert_eq!(malformed_json.status.code(), Some(2));
+        assert!(malformed_json.stderr.is_empty());
+        let document: Value = serde_json::from_slice(&malformed_json.stdout).unwrap();
+        assert_eq!(document["operation"], "config.list");
+        assert_eq!(document["ok"], false);
+        assert_eq!(document["error"]["code"], "usage_error");
+    }
     assert!(!temporary.path().join("config").exists());
     assert!(!temporary.path().join("state").exists());
 }

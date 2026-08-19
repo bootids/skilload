@@ -58,12 +58,11 @@ pub enum AppError {
 impl AppError {
     pub fn usage(
         argument: impl Into<String>,
-        value: impl Into<String>,
         expected: impl IntoIterator<Item = impl Into<String>>,
     ) -> Self {
         Self::Usage {
             argument: Some(argument.into()),
-            value: Some(value.into()),
+            value: None,
             path: None,
             expected: expected.into_iter().map(Into::into).collect(),
         }
