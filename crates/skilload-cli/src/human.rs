@@ -88,11 +88,31 @@ pub fn render_error(error: &AppError) -> String {
             allowed,
             quote_path(path)
         ),
-        AppError::Conflict { conflicts } => format!(
-            "error [{}]: Library import has {} conflict(s)\n",
-            error.code(),
-            conflicts.len()
-        ),
+        AppError::Conflict { conflicts } => {
+            let mut output = format!(
+                "error [{}]: Library import has {} conflict(s)\n",
+                error.code(),
+                conflicts.len()
+            );
+            for conflict in conflicts {
+                let name = conflict
+                    .name
+                    .as_deref()
+                    .map(quote_string)
+                    .unwrap_or_else(|| "null".to_owned());
+                let source = conflict
+                    .source
+                    .as_ref()
+                    .map(|source| quote_string(&source.canonical))
+                    .unwrap_or_else(|| "null".to_owned());
+                let _ = writeln!(
+                    output,
+                    "  - kind: {}; name: {name}; source: {source}",
+                    quote_string(&conflict.kind)
+                );
+            }
+            output
+        }
         AppError::InvalidEnvironment {
             variable,
             path,
@@ -144,9 +164,10 @@ pub fn render_error(error: &AppError) -> String {
         AppError::InvalidState {
             domain,
             state,
+            path,
             expected,
         } => format!(
-            "error [{}]: {} is {}; expected {}\n",
+            "error [{}]: {} is {}; expected {}{}\n",
             error.code(),
             quote_string(domain),
             quote_string(state),
@@ -154,7 +175,10 @@ pub fn render_error(error: &AppError) -> String {
                 .iter()
                 .map(|item| quote_string(item))
                 .collect::<Vec<_>>()
-                .join(", ")
+                .join(", "),
+            path.as_ref()
+                .map(|path| format!(" at {}", quote_path(path)))
+                .unwrap_or_default()
         ),
         AppError::Internal { incident_id } => format!(
             "error [{}]: incident {}\n",
@@ -336,5 +360,30 @@ mod tests {
                 "kept: 1\n  - \"github:owner/repository#skills/review@refs/heads/main\"\n"
             )
         );
+    }
+
+    #[test]
+    fn library_import_conflicts_include_quoted_actionable_details() {
+        let source = SourceIdentity::new(
+            "github:owner/repository#skills/review@refs/heads/main".to_owned(),
+            "owner".to_owned(),
+            "repository".to_owned(),
+            "Repository".to_owned(),
+            "skills/review".to_owned(),
+            skilload_core::RefKind::Branch,
+            "refs/heads/main".to_owned(),
+        )
+        .unwrap();
+        let rendered = render_error(&AppError::conflict(vec![
+            skilload_core::Conflict::internal_duplicate(Some("alias\n".to_owned()), source.clone()),
+            skilload_core::Conflict::internal_duplicate(None, source),
+        ]));
+
+        assert!(rendered.contains(
+            "kind: \"internal_duplicate\"; name: \"alias\\n\"; source: \"github:owner/repository#skills/review@refs/heads/main\""
+        ));
+        assert!(rendered.contains(
+            "kind: \"internal_duplicate\"; name: null; source: \"github:owner/repository#skills/review@refs/heads/main\""
+        ));
     }
 }

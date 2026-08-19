@@ -556,7 +556,9 @@ Every error code maps to exactly one required details type and exit category. Co
     SchemaDetails { domain: String, found_version: UInt, supported_version: UInt }
     DatabaseCorruptDetails { database: PathValue, backups: PathValue[], recoverable_exports: String[], recovery_procedure: "database-corruption-v1" }
     RecoveryDetails { journal: PathValue, resource: TargetRef | null, reason: String }
-    InvalidStateDetails { domain: String, state: String, expected: String[] }
+    InvalidStateDetails { domain: String, state: String, path: PathValue | null, expected: String[] }
+
+`InvalidStateDetails.expected` 仅包含稳定状态标签、版本或完整性值；若错误涉及 native filesystem location，`path` MUST 携带该位置的 `PathValue`，否则为 null。该可选字段遵守 `SKL-CLI-012` 的 API-v2 演进规则。
     InternalDetails { incident_id: OpaqueId }
 
 `UsageDetails` uses `value` for a logical UTF-8 argument and `path` for a native path argument; at most one is non-null. `LookupDetails` requires exactly one of `selector` or `path` to be non-null: logical selectors remain strings and native filesystem targets use `PathValue`. In `LimitDetails` and `ValidationDetails`, a repository-relative Git path uses `source_path` while a host path uses `path`; a producer MUST NOT place either in the other field. `source_limit_exceeded` always uses `SourceLimitDetails` so both independently active dimensions are present even when only one was exceeded; generic fixed one-dimension limits use `LimitDetails`. `portable_path_collision` requires a non-null `collision_key` and null `target_root`; `filesystem_path_collision` requires the materialization `target_root` and may use null `collision_key` when the host alias rule has no portable textual key.

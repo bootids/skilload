@@ -65,6 +65,7 @@ pub enum AppError {
     InvalidState {
         domain: String,
         state: String,
+        path: Option<NativePath>,
         expected: Vec<String>,
     },
     #[error("internal invariant failed: {incident_id}")]
@@ -146,6 +147,21 @@ impl AppError {
         Self::InvalidState {
             domain: domain.into(),
             state: state.into(),
+            path: None,
+            expected: expected.into_iter().map(Into::into).collect(),
+        }
+    }
+
+    pub fn invalid_state_at_path(
+        domain: impl Into<String>,
+        state: impl Into<String>,
+        path: NativePath,
+        expected: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        Self::InvalidState {
+            domain: domain.into(),
+            state: state.into(),
+            path: Some(path),
             expected: expected.into_iter().map(Into::into).collect(),
         }
     }

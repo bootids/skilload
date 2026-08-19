@@ -14,13 +14,13 @@
 * `unicode-normalization 0.1.25` 的生成表声明 `UNICODE_VERSION = (17, 0, 0)`，不能用于 Revision 1。P2 使用精确 `unicode-normalization =0.1.23`，其生成表声明 `(15, 1, 0)`；不能使用允许 Cargo 解析到更新 Unicode 数据的兼容版本范围。
 * P2 将 Unicode 15.1.0 的 `CaseFolding.txt`、`PropList.txt` 与 Unicode License v3 置于 `crates/skilload-core/unicode/15.1.0/`；2026-08-19 获取的文本 SHA-256 分别为 `4e55acfdc32825a22e87670e9056a3bf94ad7c5400065778e9e10f8314372bcf`、`05672956317b6296bc2ec3d6cef1f6452b57ff4f2efc6dc55b0a19277d5fcfd1` 与 `e7a93b009565cfce55919a381437ac4db883e9da2126fa28b91d12732bc53d96`。build script 只读取这些本地输入，抽取 `C`/`F` case-fold mappings 与 `White_Space`，构建和运行时均不联网。
 * P2 直接依赖 `libc =0.2.189`，仅为 Unix `O_NOFOLLOW` 与 `O_NONBLOCK` 常量提供固定来源；它不引入 unsafe code 或新的 native I/O abstraction。
-* P2 直接依赖 `rustix = { version = "=1.1.4", features = ["fs"] }`。`rustix::fs::renameat` 接收安全的 `AsFd` directory handle 与相对 path component，使 export 能在持有且已验证 identity 的父目录中发布 staging。相同锁定版本的 `renameat_with(..., RenameFlags::NOREPLACE)` 在 macOS 使用 `renameatx_np(RENAME_EXCL)`、在 Linux 使用 `renameat2(RENAME_NOREPLACE)`，可将首次 database publish 保持为 descriptor-relative no-clobber；`fstat` 加 `statat(..., AtFlags::SYMLINK_NOFOLLOW)` 可将 held staging file identity 与目录 entry 比较。
+* P2 直接依赖 `rustix = { version = "=1.1.4", features = ["fs"] }`。`rustix::fs::renameat` 接收安全的 `AsFd` directory handle 与相对 path component，使 export 能在持有且已验证 identity 的父目录中发布 staging；`linkat` 先为 held staging inode 建立第二个随机 publication link，避免最终 rename 直接消费可替换的原 staging name；`openat(..., OFlags::RDWR | OFlags::NOFOLLOW, Mode::empty())` 可从相同 held descriptor 打开既有 database，避免 parent path 的重新解析。相同锁定版本的 `renameat_with(..., RenameFlags::NOREPLACE)` 在 macOS 使用 `renameatx_np(RENAME_EXCL)`、在 Linux 使用 `renameat2(RENAME_NOREPLACE)`，可将首次 database publish 保持为 descriptor-relative no-clobber；`fstat` 加 `statat(..., AtFlags::SYMLINK_NOFOLLOW)` 可将 held staging file identity 与目录 entry 比较。
 
 ## 注意事项
 
 * P2 仅建立 Library 元数据表；即使嵌入式 SQLite 已具备 FTS5，也不得预先暴露 `library search` 或声明 `SKL-LIB-004` 已完成。
 * Unicode 15.1.0 表的数据文件和生成输出必须保留上游许可证与版本说明。更新表、`unicode-normalization` 或 SQLite 版本属于刻意依赖变更：更新本参考、锁文件、版本断言与完整验证证据，不能作为顺手升级。
-* `rustix::fs::renameat` 或 `renameat_with` 必须仅接收已通过 no-follow 打开并经 device/inode 重验的父目录 handle，以及无分隔符的 staging/output 文件名；将任一绝对或未绑定 path 传给它会恢复被本交付禁止的路径重新解析窗口。export 和首次 database publish 都必须在 rename 前后用 `fstat`/`statat(..., SYMLINK_NOFOLLOW)` 比较 held staging FD 与 directory entry；不匹配时不得报告成功，也不得让 `NamedTempFile` path cleanup 删除未知 replacement。
+* `rustix::fs::renameat`、`renameat_with`、`linkat` 与 `openat` 必须仅接收已通过 no-follow 打开并经 device/inode 重验的父目录 handle，以及无分隔符的 staging/database/output 文件名；将任一绝对或未绑定 path 传给它会恢复被本交付禁止的路径重新解析窗口。export 和首次 database publish 都必须在 final hook 后于 rename 前重验 held staging FD 与 parent-relative staging entry，再以 `linkat` 建立并重验随机 publication entry，最后 rename 该 entry；不匹配时不得报告成功，也不得让 `NamedTempFile` path cleanup 删除未知 replacement。既有 database durability sync 必须经 held directory descriptor 的 no-follow `openat`、file sync、entry revalidation、directory sync 与最终 revalidation 完成。
 * `rusqlite` 的 `backup` 特性暂不加入；尚未实现的前向数据库迁移和恢复行为继续由后续交付负责。
 
 ## 来源

@@ -4,7 +4,7 @@ use crate::domain::library::PortableLibraryDocument;
 use crate::error::AppError;
 use crate::ports::configuration::{Environment, ResolvedRoots, StateRootResolver};
 use crate::ports::library::LibraryTransferStore;
-use rustix::fs::{AtFlags, fstat, renameat, statat, unlinkat};
+use rustix::fs::{AtFlags, fstat, linkat, renameat, statat, unlinkat};
 use std::collections::HashSet;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
@@ -356,20 +356,113 @@ fn publish_staging(
         cleanup_staging_if_owned(staging, parent, &staging_name);
         return Err(error);
     }
-    after_identity_check()?;
-    renameat(
-        &parent.directory,
-        &staging_name,
-        &parent.directory,
-        &output_name,
-    )
-    .map_err(|error| export_io(output, "atomically replace export output", error.into()))?;
-    if let Err(error) = verify_staging_identity(staging, parent, &output_name, output) {
-        staging.disable_cleanup(true);
+    if let Err(error) = after_identity_check() {
+        cleanup_staging_if_owned(staging, parent, &staging_name);
         return Err(error);
     }
-    staging.disable_cleanup(true);
+    if let Err(error) = parent.revalidate(output) {
+        cleanup_staging_if_owned(staging, parent, &staging_name);
+        return Err(error);
+    }
+    if let Err(error) = verify_staging_identity(staging, parent, &staging_name, output) {
+        cleanup_staging_if_owned(staging, parent, &staging_name);
+        return Err(error);
+    }
+    let publication_name = match link_staging_inode(staging, parent, &staging_name, output) {
+        Ok(name) => name,
+        Err(error) => {
+            cleanup_staging_if_owned(staging, parent, &staging_name);
+            return Err(error);
+        }
+    };
+    if let Err(error) = renameat(
+        &parent.directory,
+        &publication_name,
+        &parent.directory,
+        &output_name,
+    ) {
+        cleanup_staging_if_owned(staging, parent, &staging_name);
+        return Err(export_io(
+            output,
+            "atomically replace export output",
+            error.into(),
+        ));
+    }
+    if let Err(error) = verify_staging_identity(staging, parent, &output_name, output) {
+        cleanup_staging_if_owned(staging, parent, &staging_name);
+        return Err(error);
+    }
+    cleanup_staging_if_owned(staging, parent, &staging_name);
     Ok(())
+}
+
+fn link_staging_inode(
+    staging: &mut NamedTempFile,
+    parent: &ValidatedOutputParent,
+    staging_name: &std::ffi::OsStr,
+    output: &NativePath,
+) -> Result<std::ffi::OsString, AppError> {
+    let mut placeholder = Builder::new()
+        .prefix(".skilload-publish-")
+        .suffix(".tmp")
+        .tempfile_in(&parent.path)
+        .map_err(|error| export_io(output, "create export publication link", error))?;
+    let publication_name = placeholder
+        .path()
+        .file_name()
+        .ok_or_else(|| {
+            AppError::validation(
+                "library_export_publication_has_no_name",
+                Some(output.clone()),
+            )
+        })?
+        .to_os_string();
+    let placeholder_identity = fstat(placeholder.as_file()).map_err(|_| {
+        AppError::validation(
+            "library_export_publication_identity_drift",
+            Some(output.clone()),
+        )
+    })?;
+    let placeholder_entry = statat(
+        &parent.directory,
+        &publication_name,
+        AtFlags::SYMLINK_NOFOLLOW,
+    )
+    .map_err(|_| {
+        AppError::validation(
+            "library_export_publication_identity_drift",
+            Some(output.clone()),
+        )
+    })?;
+    if placeholder_identity.st_dev != placeholder_entry.st_dev
+        || placeholder_identity.st_ino != placeholder_entry.st_ino
+    {
+        placeholder.disable_cleanup(true);
+        return Err(AppError::validation(
+            "library_export_publication_identity_drift",
+            Some(output.clone()),
+        ));
+    }
+    if let Err(error) = unlinkat(&parent.directory, &publication_name, AtFlags::empty()) {
+        placeholder.disable_cleanup(true);
+        return Err(export_io(
+            output,
+            "prepare export publication link",
+            error.into(),
+        ));
+    }
+    placeholder.disable_cleanup(true);
+    verify_staging_identity(staging, parent, staging_name, output)?;
+    linkat(
+        &parent.directory,
+        staging_name,
+        &parent.directory,
+        &publication_name,
+        AtFlags::empty(),
+    )
+    .map_err(|error| export_io(output, "link held export staging file", error.into()))?;
+    verify_staging_identity(staging, parent, &publication_name, output)?;
+    Ok(publication_name)
 }
 
 fn verify_staging_identity(
@@ -770,36 +863,45 @@ impl<'a> JsonScanner<'a> {
 
     fn parse_number(&mut self) -> Result<(), AppError> {
         let start = self.position;
-        self.consume_byte(b'-');
-        match self.next_byte() {
-            Some(b'0') => {}
+        if self.peek() == Some(b'-') {
+            self.advance_number(start)?;
+        }
+        match self.peek() {
+            Some(b'0') => self.advance_number(start)?,
             Some(b'1'..=b'9') => {
+                self.advance_number(start)?;
                 while matches!(self.peek(), Some(b'0'..=b'9')) {
-                    self.position += 1;
+                    self.advance_number(start)?;
                 }
             }
             _ => return Err(self.malformed()),
         }
-        if self.consume_byte(b'.') {
+        if self.peek() == Some(b'.') {
+            self.advance_number(start)?;
             if !matches!(self.peek(), Some(b'0'..=b'9')) {
                 return Err(self.malformed());
             }
             while matches!(self.peek(), Some(b'0'..=b'9')) {
-                self.position += 1;
+                self.advance_number(start)?;
             }
         }
         if matches!(self.peek(), Some(b'e' | b'E')) {
-            self.position += 1;
+            self.advance_number(start)?;
             if matches!(self.peek(), Some(b'+' | b'-')) {
-                self.position += 1;
+                self.advance_number(start)?;
             }
             if !matches!(self.peek(), Some(b'0'..=b'9')) {
                 return Err(self.malformed());
             }
             while matches!(self.peek(), Some(b'0'..=b'9')) {
-                self.position += 1;
+                self.advance_number(start)?;
             }
         }
+        Ok(())
+    }
+
+    fn advance_number(&mut self, start: usize) -> Result<(), AppError> {
+        self.position += 1;
         let length = (self.position - start) as u64;
         if length > MAX_IMPORT_NUMBER_BYTES {
             return Err(self.limit(
@@ -1121,6 +1223,35 @@ mod tests {
     }
 
     #[test]
+    fn scanner_stops_at_the_first_number_byte_overage() {
+        let input = NativePath::new(PathBuf::from("/tmp/library-import.json"));
+        let number = format!(
+            r#"{{"x":{}}}"#,
+            "1".repeat(MAX_IMPORT_NUMBER_BYTES as usize + 1)
+        );
+        let mut scanner = JsonScanner::new(number.as_bytes(), &input);
+        scanner.position = r#"{"x":"#.len();
+
+        match scanner.parse_number().unwrap_err() {
+            AppError::LibraryInputLimit {
+                limit_kind,
+                measured,
+                allowed,
+                ..
+            } => {
+                assert_eq!(limit_kind, "library_import_number_bytes");
+                assert_eq!(measured, MAX_IMPORT_NUMBER_BYTES + 1);
+                assert_eq!(allowed, MAX_IMPORT_NUMBER_BYTES);
+            }
+            error => panic!("expected number limit, got {error:?}"),
+        }
+        assert_eq!(
+            scanner.position,
+            r#"{"x":"#.len() + MAX_IMPORT_NUMBER_BYTES as usize + 1
+        );
+    }
+
+    #[test]
     fn scanner_accepts_each_exact_non_byte_ceiling() {
         let input = NativePath::new(PathBuf::from("/tmp/library-import.json"));
         let string = format!(
@@ -1262,7 +1393,7 @@ mod tests {
         assert_eq!(error.code(), "validation_failed");
         assert_eq!(fs::read(database).unwrap(), b"protected database");
         assert!(!protected_data.join("library.json").exists());
-        assert!(displaced_parent.join("library.json").is_file());
+        assert!(!displaced_parent.join("library.json").exists());
     }
     struct StagingReplacementAfterIdentityCheck {
         replacement: PathBuf,
@@ -1307,7 +1438,7 @@ mod tests {
 
         let error = store.write_export(&output, &document()).unwrap_err();
         assert_eq!(error.code(), "validation_failed");
-        assert_eq!(fs::read(output.as_path()).unwrap(), b"replacement bytes");
+        assert_eq!(fs::read(output.as_path()).unwrap(), b"old output");
         assert_eq!(fs::read(replacement).unwrap(), b"replacement bytes");
     }
 

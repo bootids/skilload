@@ -449,7 +449,7 @@ fn ensure_opened_lock_identity(
     Ok(())
 }
 
-fn remove_created_lock(path: &Path, created_identity: (u64, u64), handle: &File) {
+pub(crate) fn remove_created_lock(path: &Path, created_identity: (u64, u64), handle: &File) {
     if fs::symlink_metadata(path)
         .ok()
         .zip(handle.metadata().ok())

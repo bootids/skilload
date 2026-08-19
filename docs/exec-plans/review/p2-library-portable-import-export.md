@@ -89,6 +89,7 @@ Revision 2 的 `SKL-CLI-004`、`SKL-CLI-005` 与 `SKL-CLI-012` 以 API-v2 curren
 - [x] (2026-08-19 10:38Z) 已在 review 状态完成六项新增 remediation：empty tags schema/state revision singleton corruption、export API-v2 wording、first staging inode binding、100-byte repository bound 和 immutable commit equality；新增 focused regressions、完整 workspace gates 和 immutable-source CLI smoke 均通过。
 - [x] (2026-08-19 10:43Z) 已检查完整 staged diff、`git diff --check`，并将六项 fix、产品/设计/reference 文档和 preliminary review ledger 以 `19fe009ac578e8fb6bd1eefc2649eaa1802611bf` 推送；local/upstream/ready PR #3 head 已核对为同一 SHA。
 - [x] (2026-08-19 10:48Z) 已重新读取第二轮完整会话：4 条 top-level trigger、48 个 review body 与 38 个 inline thread 无新增独立问题；全部 38 个 thread 已 resolved，六个新 source 均已回复、关闭并同步到 Review Conversation Log。
+- [x] (2026-08-19 11:43Z) 已在 `review` 状态登记并完成九项新增 ordinary remediation：staging publish 改为 descriptor-relative `linkat` publication link、首次 lock clone failure rollback、lossless `InvalidState.path`、human conflict projection、existing database final sync identity、sidecar cleanup、SQLite bounded busy、以及第 129 byte number stop。focused portable（12）、SQLite（26）、CLI（11 unit、12 integration）测试、workspace fmt/Clippy/all-features locked tests/build/`git diff --check` 和隔离实际 CLI import/conflict smoke 均通过；待将 code、文档和 preliminary ledger 一并提交推送。
 - [ ] 收到明确人类合并授权后，完成预检、评审会话记录、completed 事务、必要检查、合并、默认分支更新和本地交付分支清理。
 
 ## Surprises & Discoveries
@@ -125,6 +126,11 @@ Revision 2 的 `SKL-CLI-004`、`SKL-CLI-005` 与 `SKL-CLI-012` 以 API-v2 curren
 
 - Observation: `rustix 1.1.4` 同时提供 macOS/Linux 的 descriptor-relative `renameat_with(..., RenameFlags::NOREPLACE)` 与 `fstat`/`statat(..., SYMLINK_NOFOLLOW)`，可分别维持首次 database no-clobber 和检测 export staging identity drift。
   Evidence: 锁定 crate 的 `src/fs/at.rs`、`src/fs/fd.rs` 和 platform `RenameFlags` 定义；新增 `first_import_rejects_a_replaced_data_directory_before_publish` 与 `export_reports_staging_replacement_after_identity_check` 回归测试。
+
+- Observation: SQLite exclusive contention 在 `singleton_i64` 的 `prepare/query/next` error mapping 被无条件降级为 `database_corrupt`，因此即使 `database_error` 已识别 busy，export 仍错误投影。
+  Evidence: `sqlite_contention_returns_a_bounded_busy_error` 初次返回 `DatabaseCorrupt`；改为将这些 SQLite errors 交给 `database_error` 后，在两秒后返回 `Busy { lock_domain: "database", waited_ms: 2000 }`。
+- Observation: POSIX `renameat` 没有 source-FD 形态；macOS 试验将 unlinked held FD 通过 `/dev/fd/<N>` hard-link 回目录返回 `EPERM`，但 `rustix::fs::linkat` 可以从已验证的 held staging entry 建立第二个同 inode publication link。
+  Evidence: 本机 `/dev/fd` link experiment 返回 `Operation not permitted`；`portable_library` 与 `sqlite_library` regressions 通过 descriptor-relative `linkat` publish path。
 
 ## Decision Log
 
@@ -198,6 +204,10 @@ Revision 2 的 `SKL-CLI-004`、`SKL-CLI-005` 与 `SKL-CLI-012` 以 API-v2 curren
   Rationale: `renameat_with(NOREPLACE)` 将首次 database publish 限制在已验证 data-directory descriptor；export 在 rename 前后将 held staging FD 与 parent-relative entry 比较。任何检测到的 drift 返回错误且不报告成功，cleanup 只删除已证实仍由本调用持有的 entry。
   Date/Author: 2026-08-19 / Codex
 
+- Decision: export 和 first-import publish 在最终 hook 后不直接 rename 初始 staging name；先通过 held parent descriptor 以 `linkat` 建立并重验随机 publication link，再 rename 该 link。
+  Rationale: 新 link 将 publish source 绑定到 held staging inode；若 hook 或初始 source name 已被替换，pre-link/relink identity check 在 destination mutation 前失败。该方案只使用已锁定 rustix 的安全 API，保持 macOS/Linux shared implementation，且成功后按 inode 删除原 staging link。
+  Date/Author: 2026-08-19 / Codex
+
 ## Outcomes & Retrospective
 
 
@@ -229,6 +239,8 @@ P2 implementation 与完整验证已完成，PR #3 已于 2026-08-19 05:57Z 转�
 2026-08-19 10:38Z 的第二轮 ordinary review remediation 已完成本地实现。`validate_database` 现在独立 probe empty Library 的 required tags schema 且验证 state revision singleton；first import 与 export 一样在 held staging FD/descriptor-relative entry 上执行 pre/post inode comparison。Source validation 限制 GitHub repository identity 到 100 bytes，并要求 immutable ref SHA 等于 resolved commit；product spec 消除了 export API-v1 遗留文字。core 66 tests、workspace gates 与无状态 immutable-source CLI smoke 均通过，待 preliminary commit/push。
 
 2026-08-19 10:48Z 的第二轮 final reconciliation 确认：4 条 top-level trigger 和 5 个非空 bot review body 没有额外问题；38 个 inline thread 均为 resolved，Plan 的 38 个 source heading 与 GitHub thread 一一对应。六项 ordinary remediation 均记录 code commit `19fe009ac578e8fb6bd1eefc2649eaa1802611bf`、66-test/workspace/CLI evidence 和 reply URL；本条 final documentation commit 推送后将进行最后一次完整核对。
+
+2026-08-19 11:43Z 的第三轮 review remediation 完成：九项新增 source 均属于现有 P2 atomic transfer、API-v2 或 CLI projection 基线。export 与 first import 现在将已验证 held staging inode link 到随机 publication entry 后才 rename；first lock clone、sidecar rollback、existing database final sync 和 SQLite contention 都有 deterministic regression。API-v2 `InvalidStateDetails.path` 是 `SKL-CLI-012` 允许的 optional `PathValue`，human conflict output 与 JSON `ConflictDetails` 同时保留 actionable alias/source。focused tests、完整 workspace gates 和实际 CLI smoke 已通过；下一步是 preliminary commit/push、逐线程 reply/resolve 和最终 ledger reconciliation。
 ## Review Conversation Log
 
 
@@ -839,6 +851,150 @@ Resolution: `ResolvedSkill::new` 对 commit-kind source 要求 `source.ref_value
 Evidence: `19fe009ac578e8fb6bd1eefc2649eaa1802611bf` 已推送；core 66 tests 和隔离 CLI smoke 均证明 mismatch 返回 `validation_failed` 且不创建 XDG state。
 
 GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_r3812279916；thread resolved: true。
+
+### PRRC_kwDOT7YN2s7jPSnG — export staging publish race
+
+Source: 内联评论 `PRRC_kwDOT7YN2s7jPSnG`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3812436422)；线程 `PRRT_kwDOT7YN2s6acRkl`，当前未解决。
+
+Problem: export 在最终 staging inode 检查后仍可能以被替换的 staging entry 执行 `renameat`，报错前已经覆盖旧 output。
+
+Disposition: fixed
+
+Status: open
+
+Resolution: 本次 preliminary commit 修改 `crates/skilload-core/src/adapters/portable_library.rs`：final hook 后重验 held staging/parent identity，创建并安全移除随机 placeholder，以 descriptor-relative `linkat` 建立且重验 held inode 的 publication link，再 rename 该 link；成功后按 held identity 清理原 staging link。`export_reports_staging_replacement_after_identity_check` 现断言旧 output 保留。
+
+Evidence: 当前工作树已通过 `mise exec -- cargo test -p skilload-core --locked portable_library`（12 tests）、workspace fmt/Clippy/all-features locked tests/build 和 `git diff --check`。
+
+GitHub outcome: 尚未回复；thread resolved: false。
+
+### PRRC_kwDOT7YN2s7jPSnV — first-import staging publish race
+
+Source: 内联评论 `PRRC_kwDOT7YN2s7jPSnV`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3812436437)；线程 `PRRT_kwDOT7YN2s6acRk0`，当前未解决。
+
+Problem: first import 在 final staging inode check 后可将替换 entry 发布为 `skilload.db`，随后才报告 identity drift。
+
+Disposition: fixed
+
+Status: open
+
+Resolution: 本次 preliminary commit 修改 `crates/skilload-core/src/adapters/sqlite_library.rs`：`FirstImportStaging::link_for_publication` 在 held data directory 内建立、重验并 no-clobber rename held inode 的 publication link；成功后删除原 staging link，staging replacement fixture 现断言没有 live `skilload.db`。
+
+Evidence: 当前工作树已通过 `first_import_reports_staging_identity_drift_after_publish_race`、`mise exec -- cargo test -p skilload-core --locked sqlite_library`（26 tests）及 workspace gates。
+
+GitHub outcome: 尚未回复；thread resolved: false。
+
+### PRRC_kwDOT7YN2s7jPSnk — first-lock clone cleanup
+
+Source: 内联评论 `PRRC_kwDOT7YN2s7jPSnk`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3812436452)；线程 `PRRT_kwDOT7YN2s6acRk_`，当前未解决。
+
+Problem: 新建 `database.lock` 后若 cleanup handle 的 `try_clone` 失败，cleanup guard 尚未登记该 lock，导致首次 import 的 pre-COMMIT rollback 遗留 lock/state 目录。
+
+Disposition: fixed
+
+Status: open
+
+Resolution: 本次 preliminary commit 令 `crates/skilload-core/src/adapters/sqlite_library.rs` 在 created lock 的 hook/`try_clone` failure 分支使用仍持有的 original FD 调用 `remove_created_lock`，随后 RAII guard 清理目录；仅 clone 成功才登记 retained handle。新增 `first_import_created_lock_clone_failure_removes_created_state`。
+
+Evidence: 当前工作树已通过 clone-failure injection、focused SQLite（26 tests）和 workspace gates。
+
+GitHub outcome: 尚未回复；thread resolved: false。
+
+### PRRC_kwDOT7YN2s7jPSnr — database error native path
+
+Source: 内联评论 `PRRC_kwDOT7YN2s7jPSnr`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3812436459)；线程 `PRRT_kwDOT7YN2s6acRlE`，当前未解决。
+
+Problem: database creation/publication/durability I/O error 将 native database path lossy-render 到 `InvalidStateDetails.expected`，违反 API-v2 对状态标签与 `PathValue` 的分工。
+
+Disposition: fixed
+
+Status: open
+
+Resolution: 本次 preliminary commit 在 `crates/skilload-core/src/error.rs` 增加 `InvalidState.path`/`invalid_state_at_path`；`sqlite_library.rs` 的 durability I/O errors 传入原始 `NativePath`，`crates/skilload-cli/src/json.rs`/`human.rs` 投影可选 lossless path，`docs/product-specs/api-v2.md` 同步 catalog。
+
+Evidence: `database_sync_error_preserves_native_path_bytes` 与 `api_v2_invalid_state_paths_preserve_native_bytes` 通过；workspace gates 通过。
+
+GitHub outcome: 尚未回复；thread resolved: false。
+
+### PRRC_kwDOT7YN2s7jPSn1 — human import conflict details
+
+Source: 内联评论 `PRRC_kwDOT7YN2s7jPSn1`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3812436469)；线程 `PRRT_kwDOT7YN2s6acRlO`，当前未解决。
+
+Problem: human-mode Library import 对 `ConflictDetails` 只显示计数，遗漏 JSON 中已有的 conflict alias/name 和 rejected canonical source。
+
+Disposition: fixed
+
+Status: open
+
+Resolution: 本次 preliminary commit 修改 `crates/skilload-cli/src/human.rs`，逐一输出 terminal-safe quoted conflict kind、name（或 null）和 canonical source；新增 alias/null-name renderer regression。
+
+Evidence: CLI unit/integration tests（11/12）通过；实际 `target/debug/skilload library import` smoke 先导入一个 alias，随后冲突 import 以 exit 4 输出 `"review"` 和 `github:owner/repository#skills/other@refs/heads/main`。
+
+GitHub outcome: 尚未回复；thread resolved: false。
+
+### PRRC_kwDOT7YN2s7jPSoC — existing database final sync drift
+
+Source: 内联评论 `PRRC_kwDOT7YN2s7jPSoC`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3812436482)；线程 `PRRT_kwDOT7YN2s6acRlX`，当前未解决。
+
+Problem: existing import 最后一次 database sync 后没有重验 live path/held descriptor identity，且随后 parent sync 重新按 path 打开目录；被替换 generation 仍可能报告 `changed`。
+
+Disposition: fixed
+
+Status: open
+
+Resolution: 本次 preliminary commit 以 `ValidatedDataDirectory` 的 descriptor-relative `openat`、`fstat`/`statat` revalidation、file sync 和 held-parent sync 替换 existing import 的 path reopen；新增 `existing_import_rejects_a_database_replaced_after_final_sync`。
+
+Evidence: focused SQLite（26 tests）和 workspace all-features locked tests 通过。
+
+GitHub outcome: 尚未回复；thread resolved: false。
+
+### PRRC_kwDOT7YN2s7jPSoX — first-import sidecar rollback
+
+Source: 内联评论 `PRRC_kwDOT7YN2s7jPSoX`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3812436503)；线程 `PRRT_kwDOT7YN2s6acRln`，当前未解决。
+
+Problem: first-import staging rollback 只清理主 database temp file；SQLite `-journal`、`-wal` 或 `-shm` sidecar 可使新建目录非空，破坏 pre-COMMIT absent-footprint guarantee。
+
+Disposition: fixed
+
+Status: open
+
+Resolution: 本次 preliminary commit 令未发布 `FirstImportStaging` 仅在 held data-directory descriptor 中清理同 staging basename 的 regular `-journal`、`-wal`、`-shm`，之后由 existing cleanup guard 删除空根；新增 `first_import_precommit_failure_removes_staging_sidecars`。
+
+Evidence: sidecar injection rollback regression、focused SQLite（26 tests）和 workspace gates 通过。
+
+GitHub outcome: 尚未回复；thread resolved: false。
+
+### PRRC_kwDOT7YN2s7jPSog — SQLite contention result
+
+Source: 内联评论 `PRRC_kwDOT7YN2s7jPSog`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3812436512)；线程 `PRRT_kwDOT7YN2s6acRlu`，当前未解决。
+
+Problem: SQLite `DatabaseBusy`/`DatabaseLocked` 被投影为 `invalid_state`，且 connection 采用默认而非 Library 的两秒 bounded wait，正常 transient contention 失去 `busy` 语义。
+
+Disposition: fixed
+
+Status: open
+
+Resolution: 本次 preliminary commit 为所有 repository `Connection` 设置既有两秒 `LOCK_WAIT`，将 `DatabaseBusy`/`DatabaseLocked` 以及 singleton/tag iterator SQL errors 经 `database_error` 投影为 `Busy { lock_domain: "database", waited_ms: 2000 }`。
+
+Evidence: external `BEGIN EXCLUSIVE` regression 等待两秒后返回 typed busy；focused SQLite（26 tests）和 workspace gates 通过。
+
+GitHub outcome: 尚未回复；thread resolved: false。
+
+### PRRC_kwDOT7YN2s7jPSom — number ceiling early stop
+
+Source: 内联评论 `PRRC_kwDOT7YN2s7jPSom`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3812436518)；线程 `PRRT_kwDOT7YN2s6acRl0`，当前未解决。
+
+Problem: JSON scanner 在检查 128-byte number ceiling 前遍历完整 numeric token，未在第 129 byte 立即停止。
+
+Disposition: fixed
+
+Status: open
+
+Resolution: 本次 preliminary commit 将 `JsonScanner::parse_number` 的 integer/fraction/exponent advancement 统一接入即时 ceiling 检查；新增 `scanner_stops_at_the_first_number_byte_overage`，验证第 129 byte 返回 limit 且 cursor 不遍历剩余 token。
+
+Evidence: focused portable transfer（12 tests）和 workspace all-features locked tests 通过。
+
+GitHub outcome: 尚未回复；thread resolved: false。
 
 ## Context and Orientation
 

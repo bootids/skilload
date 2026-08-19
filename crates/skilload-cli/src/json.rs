@@ -124,6 +124,7 @@ struct DatabaseCorruptDetails {
 struct InvalidStateDetails {
     domain: String,
     state: String,
+    path: Option<PathValue>,
     expected: Vec<String>,
 }
 
@@ -351,10 +352,12 @@ fn error_details(error: &AppError) -> ErrorDetails {
         AppError::InvalidState {
             domain,
             state,
+            path,
             expected,
         } => ErrorDetails::InvalidState(InvalidStateDetails {
             domain: domain.clone(),
             state: state.clone(),
+            path: path.as_ref().map(path_value),
             expected: expected.clone(),
         }),
         AppError::DatabaseCorrupt {
@@ -422,6 +425,29 @@ mod tests {
             STANDARD.encode(raw)
         );
         assert!(value["error"]["details"].get("expected").is_none());
+    }
+
+    #[test]
+    fn api_v2_invalid_state_paths_preserve_native_bytes() {
+        let raw = b"/tmp/library-database-\xff.db";
+        let error = AppError::invalid_state_at_path(
+            "library_database",
+            "sync_failed",
+            NativePath::new(PathBuf::from(OsString::from_vec(raw.to_vec()))),
+            ["a synced database"],
+        );
+        let value: serde_json::Value =
+            serde_json::from_slice(&super::error("library.import", &error).unwrap()).unwrap();
+
+        assert_eq!(value["error"]["code"], "invalid_state");
+        assert_eq!(
+            value["error"]["details"]["path"]["bytes_base64"],
+            STANDARD.encode(raw)
+        );
+        assert_eq!(
+            value["error"]["details"]["expected"][0],
+            "a synced database"
+        );
     }
 
     #[test]
