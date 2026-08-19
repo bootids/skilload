@@ -99,7 +99,7 @@ Revision 2 的 `SKL-CLI-004`、`SKL-CLI-005` 与 `SKL-CLI-012` 以 API-v2 curren
 - [x] (2026-08-19 11:59Z) 已重新获取完整会话，9 个 target thread 均有本次 code SHA、验证和具体处理说明的 GitHub reply，随后均确认 `isResolved: true`；47 个 inline thread 全部 resolved，新增的 9 个空 review body 不含问题。待提交并推送最终 Review Conversation Log reconciliation。
 
 - [x] (2026-08-19 12:18Z) 已完整读取 PR #3 的 6 条 top-level 触发评论、8 个非空自动 review body 和 51 个 inline thread；前两类没有独立问题，47 个既有 source 仍 resolved，4 个新增未解决内联问题均已以 source、路径、文本、状态与初始 disposition 登记到 Review Conversation Log。
-- [x] (2026-08-19 12:36Z) 已在 `review` 状态本地完成四项 ordinary remediation：export rename failure 清理 publication link；完整 Library transfer-size 闭环；首个 import 在 lock 后重规划；first-import staging no-follow/no-create open 与 inode 重验。`transfer_encoding_rejects_a_document_over_its_byte_limit`、`transfer_encoding_rejects_valid_metadata_beyond_the_import_ceiling`（4,097 个有效上限 note fixture）、`export_removes_publication_link_when_rename_fails`、`first_import_replans_after_a_concurrent_winner_publishes` 和 `first_import_does_not_follow_a_staging_replacement_before_open` 已通过；待完整 gate、提交和推送。
+- [x] (2026-08-19 12:42Z) 四项 remediation 的代码、回归测试、产品/设计同步和 preliminary Review Conversation Log 已由 `e8a025208e23e6feac7671714e8657f2e789cdcd` 推送；local、upstream 与 open/ready PR #3 的 `headRefOid` 均为该 SHA。五个直接回归以及 `cargo fmt --all --check`、workspace Clippy `-D warnings`、all-features locked tests（77 个 core tests）和 build 全部通过；待逐线程回复并关闭。
 - [ ] 收到明确人类合并授权后，完成预检、评审会话记录、completed 事务、必要检查、合并、默认分支更新和本地交付分支清理。
 
 ## Surprises & Discoveries
@@ -272,7 +272,7 @@ P2 implementation 与完整验证已完成，PR #3 已于 2026-08-19 05:57Z 转�
 
 2026-08-19 11:59Z 的 GitHub reconciliation 确认 47 个 inline thread 均为 resolved。九个本轮 source 的 reply URL、code SHA 和 validation 已写回下列 ledger；新出现的九个 `bootids` review body 均为空，不构成独立问题。待本 Plan 的 final documentation commit 推送后重新读取会话和 PR head，以排除最后漂移。
 
-2026-08-19 12:36Z 的第四轮 local remediation 已完成：`PortableLibraryDocument` 现在将 import scanner 与 export 共享的 67,108,864-byte bound 用于 deterministic stream encoding；SQLite import 在 lock 后重规划 winner 已发布的 database，且 staging open 在任何 SQL 前后拒绝 identity drift；export rename-error 分支清理 publication link。产品规格和持久化设计同步为既有单一 portable format 的闭环说明。五个直接回归测试通过；下一步是格式化、完整 workspace gates、完整 diff 检查、preliminary commit/push，再逐线程回复和关闭。
+2026-08-19 12:42Z 的第四轮 remediation 已由 code/preliminary ledger commit `e8a025208e23e6feac7671714e8657f2e789cdcd` 推送，PR #3 仍为 open、ready，`headRefOid`、local 与 upstream 一致。共享 67,108,864-byte deterministic encoder 现在阻止不可重新导入的 aggregate Library；SQLite 在 lock 后重规划 winner 已发布的 database，并在 staging open 的 SQL 前后验证 inode；export 的 rename-error 分支清理 publication link。产品规格与持久化设计说明了既有唯一可移植文档的闭环。下一步只逐 thread 回复、关闭和最终 Review Conversation Log reconciliation。
 ## Review Conversation Log
 
 
@@ -1040,7 +1040,7 @@ Status: open
 
 Resolution: `crates/skilload-core/src/adapters/portable_library.rs` 在 `publish_staging` 的最终 `renameat` error 分支按 held inode 先清理 `publication_name`，再清理原 staging name；新增 `after_publication_link_before_rename` fault hook 与 `export_removes_publication_link_when_rename_fails`，证明外部创建的 destination directory 保留、两个 skilload staging entry 都不存在。
 
-Evidence: `export_removes_publication_link_when_rename_fails` 已通过；`mise exec -- cargo fmt --all --check`、Clippy `-D warnings`、workspace all-features locked tests（77 个 core tests）与 workspace build 均通过。预期 code/preliminary-ledger commit 待创建。
+Evidence: code/preliminary ledger commit `e8a025208e23e6feac7671714e8657f2e789cdcd` 已推送；`export_removes_publication_link_when_rename_fails`、`cargo fmt --all --check`、Clippy `-D warnings`、workspace all-features locked tests（77 个 core tests）与 workspace build 均通过。
 
 GitHub outcome: 未回复；thread resolved: false。
 
@@ -1056,7 +1056,7 @@ Status: open
 
 Resolution: `crates/skilload-core/src/domain/library.rs` 新增共享 `MAX_PORTABLE_LIBRARY_DOCUMENT_BYTES`、限制写入器和 deterministic encoder；`portable_library.rs` 用它读取/导出，`sqlite_library.rs` 在每个实际 import/dry-run plan 对完整结果调用 consuming size check。`docs/product-specs/library.md`、`docs/design-docs/application-and-persistence.md` 与本 Plan 将其说明为既有唯一可移植文档闭环，行为 revision 不变。
 
-Evidence: `transfer_encoding_rejects_a_document_over_its_byte_limit` 与 `transfer_encoding_rejects_valid_metadata_beyond_the_import_ceiling`（4,097 个单条合法最大字节 note）均通过；全部 workspace gate 已通过。预期 code/preliminary-ledger commit 待创建。
+Evidence: code/preliminary ledger commit `e8a025208e23e6feac7671714e8657f2e789cdcd` 已推送；`transfer_encoding_rejects_a_document_over_its_byte_limit` 与 `transfer_encoding_rejects_valid_metadata_beyond_the_import_ceiling`（4,097 个单条合法最大字节 note）均通过，全部 workspace gate 也已通过。
 
 GitHub outcome: 未回复；thread resolved: false。
 
@@ -1072,7 +1072,7 @@ Status: open
 
 Resolution: `crates/skilload-core/src/adapters/sqlite_library.rs` 将 existing import 的锁内工作提取为 `import_existing_with_lock`；`import_first` 取得 lock 后发现合法 database 时以原 document 调用它重新规划，且保留已经出现的 durable state，不重入 lock。
 
-Evidence: `first_import_replans_after_a_concurrent_winner_publishes` 已通过，证明 lock 前的 winner 发布后 loser 添加自己的 source 且 export 含两条记录；全部 workspace gate 已通过。预期 code/preliminary-ledger commit 待创建。
+Evidence: code/preliminary ledger commit `e8a025208e23e6feac7671714e8657f2e789cdcd` 已推送；`first_import_replans_after_a_concurrent_winner_publishes` 证明 winner 发布后 loser 添加自己的 source 且 export 含两条记录，全部 workspace gate 已通过。
 
 GitHub outcome: 未回复；thread resolved: false。
 
@@ -1088,7 +1088,7 @@ Status: open
 
 Resolution: `FirstImportStaging::open_connection` 在 hook 前后验证 held staging inode，并以 `SQLITE_OPEN_READ_WRITE | SQLITE_OPEN_NOFOLLOW`、无 create flag 打开；只有第二次验证成功才配置 connection 或执行 SQL。新增 pre-open symlink replacement regression，外部数据库保持原字节，未知 symlink 不被 cleanup。
 
-Evidence: `first_import_does_not_follow_a_staging_replacement_before_open` 已通过；完整 workspace gate 已通过。预期 code/preliminary-ledger commit 待创建。
+Evidence: code/preliminary ledger commit `e8a025208e23e6feac7671714e8657f2e789cdcd` 已推送；`first_import_does_not_follow_a_staging_replacement_before_open` 证明 foreign database 字节不变，完整 workspace gate 已通过。
 
 GitHub outcome: 未回复；thread resolved: false。
 
@@ -1345,3 +1345,5 @@ Library 是本机可搜索的来源元数据集合；在本交付中它只保存
 计划修订说明（2026-08-19 10:48Z）：第二轮 six-thread remediation 已逐源回复并关闭；最终 list 显示 38 个 thread 均 resolved、38 个 Plan source 均已覆盖、无新 top-level/review-body 问题。此 final Review Conversation Log commit 推送后，必须再次确认 PR head、Plan 状态和完整会话没有漂移。
 
 计划修订说明（2026-08-19 11:59Z）：记录第三轮九项 ordinary review remediation 的 code/preliminary ledger commit、focused/完整验证、逐 thread GitHub reply URL 与 resolved state；原因是让 `Review Conversation Log` 与 GitHub 的完整会话在最终 reconciliation 前保持可审计一致。
+
+计划修订说明（2026-08-19 12:42Z）：记录第四轮四项 ordinary review remediation 的已推送 code/preliminary ledger commit、完整验证、共享传输大小决策和每个 open thread 的精确 evidence；下一步仅写入 GitHub 回复、关闭线程并提交最终 reconciliation。
