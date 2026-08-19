@@ -2,7 +2,7 @@
 plan_id: PLAN-0003
 branch: codex/p2-library-portable-import-export
 pull_request: https://github.com/bootids/skilload/pull/3
-status: review
+status: active
 depends_on: [PLAN-0002]
 ---
 
@@ -75,6 +75,11 @@ depends_on: [PLAN-0002]
 
 - [x] (2026-08-19 08:03Z) 新增七项 review remediation 已由 `078d85f7582bad5f4c81b9f0d7944c069a5b558e` 推送；逐一回复后，PR #3 的 23 个 inline thread 均为 resolved。首次七线程批量写入在 30 秒客户端超时后仍继续，human/revision 两项各留下两条字节相同的回复；两个 URL 均已记录，未删除审计证据。最终 Review Conversation Log reconciliation 已由 `a244195` 文档提交推送。
 
+- [x] (2026-08-19 08:56Z) 已完整读取 PR #3 的 4 条 top-level 评论、32 个 review body 和 32 个 inline thread；其中 23 个既有 ledger source 仍与 GitHub 的 resolved state 一致，新增 9 个未解决实际问题已逐项登记。
+- [x] (2026-08-19 08:56Z) 发现 `agent_input_limit_exceeded` 被错误用于 Library import 的 six-limit scanner，而 API-v1 明确将该 code 保留给 Agent project-input，并禁止为不同条件复用 code；已将 ready PR 恢复为 Draft，待 active rework。
+- [ ] 等待明确产品决定：Library import limit 是否以新 API major version 和独立 error code 交付；当前 API-v1 没有合规的 `LimitDetails` code。
+- [ ] 在收到该决定和明确重新执行授权后，通过 `execute-exec-plan` 完成九项记录的 active rework、回归测试、产品/API 文档同步和完整门禁。
+- [ ] 在所有 rework 已提交推送后重新执行 ready/review 原子事务，再重新运行完整 PR 会话处理。
 - [ ] 收到明确人类合并授权后，完成预检、评审会话记录、completed 事务、必要检查、合并、默认分支更新和本地交付分支清理。
 
 ## Surprises & Discoveries
@@ -103,6 +108,10 @@ depends_on: [PLAN-0002]
 - Observation: `tempfile::NamedTempFile::persist` 只能接收路径，不能将 publish 绑定到已验证的父目录 descriptor；本 crate 又禁止 unsafe code，不能直接调用 raw `libc::renameat`。
   Evidence: `tempfile 3.27.0` 的 `persist` API 接收 destination path；`rustix 1.1.4/src/fs/at.rs` 的安全 `renameat` 接收 `AsFd` 目录 handle 与相对文件名。
 
+
+
+- Observation: 当前 `InputLimit` 固定投影为 `agent_input_limit_exceeded`，但该 code 在 API-v1 中只表示 `agent-project-input-v1`；Library import 的受限 JSON scanner 没有可用的、同时保留 `LimitDetails` 的独立 API-v1 code。
+  Evidence: `crates/skilload-core/src/error.rs` 的 `AppError::InputLimit` 与 `code()`，`docs/product-specs/api-v1.md` 的 `LimitDetails`、error catalog 及“不同条件复用 code 需要新 API version”规则。
 
 ## Decision Log
 
@@ -161,6 +170,11 @@ depends_on: [PLAN-0002]
   Date/Author: 2026-08-19 / Codex
 
 
+
+- Decision: 因第九轮 review 发现的 API-v1 error-code 冲突，将 PR #3 从 ready `review` 逆向恢复为 Draft `active`，不在 review 状态伪装为普通修复。
+  Rationale: `SKL-LIB-010` 要求 import ceiling error 保留 measured/allowed 的 `LimitDetails`，而 `agent_input_limit_exceeded` 已被 API-v1 专用于不同的 Agent 输入条件；选择新 major API version 或其他产品契约属于需要人类确认的重大行为决定。其余八项是既有 P2 boundary 内的实施缺口，但必须与该 rework 一起通过 active Plan 生命周期完成。
+  Date/Author: 2026-08-19 / Codex
+
 ## Outcomes & Retrospective
 
 
@@ -175,6 +189,9 @@ P2 implementation 与完整验证已完成，PR #3 已于 2026-08-19 05:57Z 转�
 2026-08-19 07:58Z 的新增 review remediation 已完成本地验收：export 使用持有父目录 descriptor 的安全 `rustix::fs::renameat`，既有数据库不再通过可创建或可跟随的路径打开，缺列/越界 schema 的错误保持 API-v1 可表示的 `database_corrupt`，first-import cleanup 保留 identity-mismatched directory，state revision 在写 entry 前受限递增，human import 输出枚举已计划 source。focused 与 workspace gates 均通过，实际 dry-run CLI smoke 已显示 quoted source；下一步仅为 preliminary commit、push、逐线程回复和关闭。
 
 2026-08-19 08:03Z 的全量会话 reconciliation 确认：3 条 top-level `@codex` 触发评论和 31 个 review bodies 未提出新的独立问题，23 个 inline thread 全部为 resolved；新增七个 source 均有 code commit、验证、GitHub reply URL 和 close state。最终文档 reconciliation commit `a244195` 已推送；随后仍须重新读取会话和 PR head 以确认没有后续漂移。
+
+
+2026-08-19 08:56Z 的完整 review 重读发现九个新的 inline 问题。八项文件 identity、SQLite corruption、portable evidence 与 typed path 修复均落在既有 P2 基线内；但 Library scanner 上限错误 code 与 API-v1 的强制语义相冲突，无法在不作产品决定的前提下满足既有 `LimitDetails` acceptance。已运行 `gh pr ready https://github.com/bootids/skilload/pull/3 --undo` 并确认 PR 仍 open、`isDraft: true` 且 head 为 `ae76b9fab46ea22147a8ce044a255b07659be2b9`；本 Plan 随本提交回到 `active`，所有新线程保持 open，等待人类 API 决定和重新执行授权。
 
 ## Review Conversation Log
 
@@ -547,6 +564,150 @@ Evidence: `078d85f7582bad5f4c81b9f0d7944c069a5b558e` 已推送；`mise exec -- c
 
 GitHub outcome: 批量请求在客户端超时后继续写入，产生两条内容相同的回复 https://github.com/bootids/skilload/pull/3#discussion_r3811139704 与 https://github.com/bootids/skilload/pull/3#discussion_r3811142216；thread resolved: true。
 
+### PRRC_kwDOT7YN2s7jLbul — 首次数据库发布绑定 data directory
+
+Source: 内联评论 `PRRC_kwDOT7YN2s7jLbul`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3811425189)；线程 `PRRT_kwDOT7YN2s6aZqw3`，当前未解决。
+
+Problem: final root revalidation 后，`persist_noclobber(&database)` 仍按路径重新解析 data directory；同账号进程替换该目录可让首次数据库发布逃离已验证的 XDG identity。
+
+Disposition: fixed
+
+Status: open
+
+Resolution: active rework 将在 `crates/skilload-core/src/adapters/sqlite_library.rs` 以持有的 no-follow data-directory descriptor 相对发布 staging database，并在 publish 期间验证目录 identity；增加替换 `roots.data.effective` 的 race fixture。
+
+Evidence: `docs/design-docs/application-and-persistence.md` 要求 first-import 持有并验证目录 device/inode；当前 `import_first` 在 revalidate 后仍于路径上调用 `NamedTempFile::persist_noclobber`。
+
+GitHub outcome: 未回复；thread resolved: false。
+
+### PRRC_kwDOT7YN2s7jLbus — schema version 行完整性
+
+Source: 内联评论 `PRRC_kwDOT7YN2s7jLbus`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3811425196)；线程 `PRRT_kwDOT7YN2s6aZqw6`，当前未解决。
+
+Problem: `schema_info` 缺少 version row 时 `query_row` 被映射为 `invalid_state`，并且多行 version 被静默忽略；两种 durable schema 损坏都应进入 `database_corrupt`。
+
+Disposition: fixed
+
+Status: open
+
+Resolution: active rework 将在 `crates/skilload-core/src/adapters/sqlite_library.rs` 要求 schema table 恰有一条可表示的 version row，并把缺失或额外 row 分类为 `database_corrupt`；新增 delete/extra-row fixtures。
+
+Evidence: 当前 `validate_database` 的 `SELECT version FROM schema_info` 使用 `query_row`，而 Product Baseline 要求识别到的损坏返回 `DatabaseCorruptDetails`。
+
+GitHub outcome: 未回复；thread resolved: false。
+
+### PRRC_kwDOT7YN2s7jLbuu — repository display 与 canonical identity
+
+Source: 内联评论 `PRRC_kwDOT7YN2s7jLbuu`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3811425198)；线程 `PRRT_kwDOT7YN2s6aZqw8`，当前未解决。
+
+Problem: `SourceIdentity::new` 只拒绝空 `repository_display`，允许其 ASCII-lowercased repository identity 与 canonical `repository` 不同，进而让 root Skill 的 derived name 依赖伪造 display spelling。
+
+Disposition: fixed
+
+Status: open
+
+Resolution: active rework 将在 `crates/skilload-core/src/domain/source.rs` 要求 `repository_display` 的 ASCII-lowercased 值等于 canonical `repository`，并覆盖 portable root source 的 mismatch rejection。
+
+Evidence: `docs/design-docs/github-resolution-and-integrity.md` 规定 repository identity case-insensitive 且 display spelling 仅作保留；当前 constructor 只检查 nonempty。
+
+GitHub outcome: 未回复；thread resolved: false。
+
+### PRRC_kwDOT7YN2s7jLbu1 — partial directory 创建清理
+
+Source: 内联评论 `PRRC_kwDOT7YN2s7jLbu1`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3811425205)；线程 `PRRT_kwDOT7YN2s6aZqxA`，当前未解决。
+
+Problem: `ensure_restrictive_directory` 在创建多个祖先后若后续 create/open/restrict 失败，会在结果返回前丢失已创建 descriptor，导致 pre-COMMIT failure 遗留调用创建的空 state directory。
+
+Disposition: fixed
+
+Status: open
+
+Resolution: active rework 将使 `crates/skilload-core/src/adapters/configuration.rs` 在 helper 内回滚已创建目录或逐步交给 cleanup guard，并添加 partial-creation failure fixture。
+
+Evidence: 当前 helper 仅在全部成功后返回 `Vec<CreatedDirectory>`；Product Baseline 要求 COMMIT 前失败恢复本调用创建的 data/state 根。
+
+GitHub outcome: 未回复；thread resolved: false。
+
+### PRRC_kwDOT7YN2s7jLbvB — Library import limit API 表示
+
+Source: 内联评论 `PRRC_kwDOT7YN2s7jLbvB`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3811425217)；线程 `PRRT_kwDOT7YN2s6aZqxH`，当前未解决。
+
+Problem: six 个 Library import JSON ceiling 当前均返回 `agent_input_limit_exceeded`，但 API-v1 将该 code 保留给 `agent-project-input-v1`，并禁止对不同条件复用 code。
+
+Disposition: pending
+
+Status: blocked
+
+Resolution: 需要人类决定 Library import limit 的权威 API 合约：引入含独立 Library limit code 的新 API major version，或批准另一项明确的产品契约。不得仅因 ExecPlan 曾建议复用 `agent_input_limit_exceeded` 而违反更高优先级 API catalog。
+
+Evidence: `docs/product-specs/api-v1.md` 将 `agent_input_limit_exceeded` 映射到 `LimitDetails`，并在 error catalog 后明确新增/复用 code 需要新 API version；`SKL-LIB-010` 和本 Plan 的 Product Baseline 又要求每个 ceiling 返回 structured measured/allowed details。
+
+GitHub outcome: 未回复；thread resolved: false，等待产品决定。
+
+### PRRC_kwDOT7YN2s7jLbvG — database lock descriptor identity
+
+Source: 内联评论 `PRRC_kwDOT7YN2s7jLbvG`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3811425222)；线程 `PRRT_kwDOT7YN2s6aZqxK`，当前未解决。
+
+Problem: 既有 lock 的 `symlink_metadata` 与 `open_restrictive_lock` 之间发生 file replacement 时，no-follow 打开的 descriptor 未与已检查 inode 比较；两个进程可能在不同 inode 上分别持锁并并发写同一数据库。
+
+Disposition: fixed
+
+Status: open
+
+Resolution: active rework 将在 `crates/skilload-core/src/adapters/configuration.rs` 将 path inspection、opened descriptor 和 `AlreadyExists` race branch 的 device/inode 绑定，并添加 lock replacement race fixture。
+
+Evidence: 当前 `acquire_restrictive_lock_with_identity` 只在 `create_new` 成功时记录 descriptor identity；持久 database mutation 依赖此 lock 提供并发边界。
+
+GitHub outcome: 未回复；thread resolved: false。
+
+### PRRC_kwDOT7YN2s7jLbvM — 持久 tag comparison key 损坏
+
+Source: 内联评论 `PRRC_kwDOT7YN2s7jLbvM`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3811425228)；线程 `PRRT_kwDOT7YN2s6aZqxP`，当前未解决。
+
+Problem: `load_tags` 只读取 display 并重新计算 key，未验证数据库中规范 Unicode comparison key；损坏 key 因而被 export/import 接受而不是作为 corruption 拒绝。
+
+Disposition: fixed
+
+Status: open
+
+Resolution: active rework 将在 `crates/skilload-core/src/adapters/sqlite_library.rs` 同时读取 `comparison_key` 与 display，以 Unicode-15.1 normalizer 复算并比较，任何不匹配均返回 `database_corrupt`；新增 durable row corruption fixture。
+
+Evidence: `library_tags.comparison_key` 是 primary-key/排序 identity，`SKL-LIB-008` 规定比较 key 必须使用固定 Unicode-15.1 algorithm；当前 query 丢弃该列。
+
+GitHub outcome: 未回复；thread resolved: false。
+
+### PRRC_kwDOT7YN2s7jLbvS — staging inode 发布验证
+
+Source: 内联评论 `PRRC_kwDOT7YN2s7jLbvS`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3811425234)；线程 `PRRT_kwDOT7YN2s6aZqxS`，当前未解决。
+
+Problem: export 最终 `renameat` 只按 staging filename 发布；同账号进程在 write/sync 后替换该 directory entry 时，可发布与已 sync descriptor 不同的内容。
+
+Disposition: fixed
+
+Status: open
+
+Resolution: active rework 将在 `crates/skilload-core/src/adapters/portable_library.rs` 让 staging file descriptor 的 identity 与持有 parent descriptor 下的 entry 在 `renameat` 前相匹配，不匹配即失败；新增 final-validation hook replacement fixture。
+
+Evidence: `docs/design-docs/application-and-persistence.md` 要求最终 publish bind staging inode；当前 `publish_staging` 只传 relative filename 给 `renameat`。
+
+GitHub outcome: 未回复；thread resolved: false。
+
+### PRRC_kwDOT7YN2s7jLbvc — native output path typed error
+
+Source: 内联评论 `PRRC_kwDOT7YN2s7jLbvc`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3811425244)；线程 `PRRT_kwDOT7YN2s6aZqxb`，当前未解决。
+
+Problem: export staging/write/sync/rename failure 把可能含 invalid UTF-8 bytes 的 native output path 以 lossy `.display()` 写入 `InvalidStateDetails.expected`，既丢失 PathValue bytes 又滥用 logical state-label field。
+
+Disposition: fixed
+
+Status: open
+
+Resolution: active rework 将在 `crates/skilload-core/src/adapters/portable_library.rs` 改用 API-v1 支持 `PathValue` 的 typed error detail，并新增 invalid-UTF-8 output path 的 JSON projection fixture。
+
+Evidence: `docs/product-specs/api-v1.md` 要求 host filesystem path 使用 `PathValue`，且 `InvalidStateDetails.expected` 只表示 logical expected state；当前 `export_io` 把 `display()` 字符串放入该字段。
+
+GitHub outcome: 未回复；thread resolved: false。
+
 ## Context and Orientation
 
 
@@ -777,3 +938,5 @@ Library 是本机可搜索的来源元数据集合；在本交付中它只保存
 计划修订说明（2026-08-19 06:45Z）：preliminary review fix/log 提交 `73d30857c5aa6281bec1bddf7004efe5f7e654c5` 已推送，local、upstream 与 PR #3 ready head 已核对。七项 open ledger entry 均已记录具体实现、回归测试和该 SHA；下一步仅为重新读取会话、逐源 GitHub 回复和关闭内联线程。
 
 计划修订说明（2026-08-19 06:51Z）：已重新读取完整 PR 会话并完成逐源 reconciliation。七项 fixed entry 已设为 resolved，记录 pushed implementation SHA、验证、每个回复 URL 和 resolved thread state；所有 16 个 inline thread 当前均为 resolved。两条 timeout-induced duplicate reply 作为真实 GitHub 审计结果保留并在相应条目中说明。
+
+计划修订说明（2026-08-19 08:56Z）：完整读取 PR #3 会话后发现九个新增 inline 问题。八项属于既有 P2 文件 identity、SQLite durable-state、portable source 和 JSON path 约束；另一项揭示 `SKL-LIB-010` 的 `LimitDetails` acceptance 与 API-v1 独占 `agent_input_limit_exceeded` 之间的未决产品冲突。已先将 ready PR 恢复为 Draft 并确认 GitHub head 不变，随后本 Plan 从 `review/` 逆向移回 `active/`，记录 source-complete open/blocked ledger；不在本次 review workflow 中伪造 API 选择、实现或关闭线程，等待人类决定和 `execute-exec-plan` 重新执行授权。
