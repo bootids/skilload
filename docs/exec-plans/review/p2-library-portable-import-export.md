@@ -69,7 +69,7 @@ depends_on: [PLAN-0002]
 - [x] (2026-08-19 05:52Z) 已 staged 全部 34 个交付文件并完整检查 diff；`git diff --cached --check` 通过，包含 vendored Unicode 输入在内的每个变更均已检查。
 - [x] (2026-08-19 05:55Z) 实现提交 `4c6a6919921cabcbc29b11cfa255466993ad2adf` 已推送；local、origin branch 与 Draft PR #3 head 相同，PR 仍为 Draft。
 - [x] (2026-08-19 05:57Z) 已运行 `gh pr ready https://github.com/bootids/skilload/pull/3`，随后观察到 `isDraft: false` 与 `headRefOid: 47f22f8a1687d5e46b9d787503565e1badad141a`；该 SHA 等于已推送的 implementation/active-Plan HEAD。首次 review-state commit `b30afe3aa7a772f1ccf1885eb041006528f10c24` 推送后曾再次确认 GitHub/repository head 一致，本 Plan 保持 `review`。
-- [x] (2026-08-19 06:42Z) 已在 review 状态修复 PR #3 的七项实现反馈：首次 database publish 使用 no-clobber、首次 lock failure 清理、SQLite row decode 损坏分类，以及 portable source 的 repository 标点、已验证名称、Git path 和 Git ref 约束；focused source（5）/SQLite（9）测试、workspace all-features locked tests（6、12、46）、格式、Clippy `-D warnings` 与 workspace build 均通过。修复与 preliminary review log 待提交、推送及逐线程回复。
+- [x] (2026-08-19 06:42Z) 已在 review 状态修复 PR #3 的七项实现反馈：首次 database publish 使用 no-clobber、首次 lock failure 清理、SQLite row decode 损坏分类，以及 portable source 的 repository 标点、已验证名称、Git path 和 Git ref 约束；修复与 preliminary review log 已由 `73d30857c5aa6281bec1bddf7004efe5f7e654c5` 推送，local/upstream/PR ready head 已核对为该 SHA。focused source（5）/SQLite（9）测试、workspace all-features locked tests（6、12、46）、格式、Clippy `-D warnings` 与 workspace build 均通过；待逐线程回复。
 - [ ] 收到明确人类合并授权后，完成预检、评审会话记录、completed 事务、必要检查、合并、默认分支更新和本地交付分支清理。
 
 ## Surprises & Discoveries
@@ -154,7 +154,7 @@ P2 implementation 与完整验证已完成，PR #3 已于 2026-08-19 05:57Z 转�
 
 首次 review-state commit `b30afe3aa7a772f1ccf1885eb041006528f10c24` 推送后，PR #3 当时仍为 open、ready，`headRefOid`、local HEAD 与 origin branch 一致，且 `docs/exec-plans/review/p2-library-portable-import-export.md` 是唯一的 current Plan copy。
 
-2026-08-19 06:42Z 的 review remediation 工作树将 first-import database publish 改为 `persist_noclobber`、把 creation identity 从 restrictive lock helper 传给 RAII cleanup guard、将 SQLite durable row decode 错误映射为 `database_corrupt`，并收紧 portable source 的 repository/name/path/ref 重验证。focused source（5）和 SQLite（9）测试、workspace all-features locked tests（6、12、46）、格式、Clippy 和 build 均通过；preliminary fix/log 提交、推送和 GitHub thread 回复仍待本次 review workflow 完成。
+2026-08-19 06:42Z 的 review remediation 已由 `73d30857c5aa6281bec1bddf7004efe5f7e654c5` 推送：first-import database publish 改为 `persist_noclobber`、creation identity 从 restrictive lock helper 传给 RAII cleanup guard、SQLite durable row decode 错误映射为 `database_corrupt`，并收紧 portable source 的 repository/name/path/ref 重验证。local、upstream 与 PR #3 ready head 已核对为该 SHA；focused source（5）和 SQLite（9）测试、workspace all-features locked tests（6、12、46）、格式、Clippy 和 build 均通过，GitHub thread 回复仍待本次 review workflow 完成。
 
 ## Review Conversation Log
 
@@ -313,9 +313,9 @@ Disposition: fixed
 
 Status: open
 
-Resolution: 当前工作树已修改 `crates/skilload-core/src/adapters/sqlite_library.rs`，用 `persist_noclobber` 发布首次 database；destination 竞争映射为 `database_identity_drift`，并新增 publish-window race 注入测试。该实现与 preliminary review-log 更新将进入待创建的修复提交。
+Resolution: 提交 `73d30857c5aa6281bec1bddf7004efe5f7e654c5` 已修改 `crates/skilload-core/src/adapters/sqlite_library.rs`，用 `persist_noclobber` 发布首次 database；destination 竞争映射为 `database_identity_drift`，并新增 publish-window race 注入测试。
 
-Evidence: 当前工作树已通过 `mise exec -- cargo test -p skilload-core --locked sqlite_library`（9 tests）、workspace all-features locked tests、Clippy 与 build；待提交并推送后记录 SHA。
+Evidence: `73d30857c5aa6281bec1bddf7004efe5f7e654c5` 已推送，local/upstream/PR #3 ready head 已核对为同一 SHA；`mise exec -- cargo test -p skilload-core --locked sqlite_library`（9 tests）、workspace all-features locked tests、Clippy 与 build 通过。
 
 GitHub outcome: 待回复；线程待解决。
 
@@ -329,9 +329,9 @@ Disposition: fixed
 
 Status: open
 
-Resolution: 当前工作树已修改 `crates/skilload-core/src/domain/source.rs`，分离 canonical owner/repository component 校验并允许 repository 的 `.`/`_`；新增 root repository display 拼写的 portable round-trip test。该实现与 preliminary review-log 更新将进入待创建的修复提交。
+Resolution: 提交 `73d30857c5aa6281bec1bddf7004efe5f7e654c5` 已修改 `crates/skilload-core/src/domain/source.rs`，分离 canonical owner/repository component 校验并允许 repository 的 `.`/`_`；新增 root repository display 拼写的 portable round-trip test。
 
-Evidence: 当前工作树已通过 `mise exec -- cargo test -p skilload-core --locked source`（5 tests）、workspace all-features locked tests、Clippy 与 build；待提交并推送后记录 SHA。
+Evidence: `73d30857c5aa6281bec1bddf7004efe5f7e654c5` 已推送，local/upstream/PR #3 ready head 已核对为同一 SHA；`mise exec -- cargo test -p skilload-core --locked source`（5 tests）、workspace all-features locked tests、Clippy 与 build 通过。
 
 GitHub outcome: 待回复；线程待解决。
 
@@ -345,9 +345,9 @@ Disposition: fixed
 
 Status: open
 
-Resolution: 当前工作树已修改 `crates/skilload-core/src/adapters/sqlite_library.rs` 的 SQLite error 映射，将 durable row decoding 的列类型、UTF-8、数值及 conversion error 分类为 `database_corrupt`；新增 BLOB column fixture。该实现与 preliminary review-log 更新将进入待创建的修复提交。
+Resolution: 提交 `73d30857c5aa6281bec1bddf7004efe5f7e654c5` 已修改 `crates/skilload-core/src/adapters/sqlite_library.rs` 的 SQLite error 映射，将 durable row decoding 的列类型、UTF-8、数值及 conversion error 分类为 `database_corrupt`；新增 BLOB column fixture。
 
-Evidence: 当前工作树已通过 `mise exec -- cargo test -p skilload-core --locked sqlite_library`（9 tests）、workspace all-features locked tests、Clippy 与 build；待提交并推送后记录 SHA。
+Evidence: `73d30857c5aa6281bec1bddf7004efe5f7e654c5` 已推送，local/upstream/PR #3 ready head 已核对为同一 SHA；`mise exec -- cargo test -p skilload-core --locked sqlite_library`（9 tests）、workspace all-features locked tests、Clippy 与 build 通过。
 
 GitHub outcome: 待回复；线程待解决。
 
@@ -361,9 +361,9 @@ Disposition: fixed
 
 Status: open
 
-Resolution: 当前工作树已修改 `crates/skilload-core/src/domain/source.rs`，在构造 `ResolvedSkill` 时比较已验证 name 与 source 的非根末段或 root display 派生 segment；新增 root/non-root mismatch 回归测试。该实现与 preliminary review-log 更新将进入待创建的修复提交。
+Resolution: 提交 `73d30857c5aa6281bec1bddf7004efe5f7e654c5` 已修改 `crates/skilload-core/src/domain/source.rs`，在构造 `ResolvedSkill` 时比较已验证 name 与 source 的非根末段或 root display 派生 segment；新增 root/non-root mismatch 回归测试。
 
-Evidence: 当前工作树已通过 `mise exec -- cargo test -p skilload-core --locked source`（5 tests）、workspace all-features locked tests、Clippy 与 build；待提交并推送后记录 SHA。
+Evidence: `73d30857c5aa6281bec1bddf7004efe5f7e654c5` 已推送，local/upstream/PR #3 ready head 已核对为同一 SHA；`mise exec -- cargo test -p skilload-core --locked source`（5 tests）、workspace all-features locked tests、Clippy 与 build 通过。
 
 GitHub outcome: 待回复；线程待解决。
 
@@ -377,9 +377,9 @@ Disposition: fixed
 
 Status: open
 
-Resolution: 当前工作树已修改 `crates/skilload-core/src/adapters/configuration.rs` 与 `crates/skilload-core/src/adapters/sqlite_library.rs`：restrictive lock 只在 `create_new` 成功时返回创建 identity，首次 import 在任何目录创建前安装 cleanup guard，并新增锁准备失败回归测试。该实现与 preliminary review-log 更新将进入待创建的修复提交。
+Resolution: 提交 `73d30857c5aa6281bec1bddf7004efe5f7e654c5` 已修改 `crates/skilload-core/src/adapters/configuration.rs` 与 `crates/skilload-core/src/adapters/sqlite_library.rs`：restrictive lock 只在 `create_new` 成功时返回创建 identity，首次 import 在任何目录创建前安装 cleanup guard，并新增锁准备失败回归测试。
 
-Evidence: 当前工作树已通过 `mise exec -- cargo test -p skilload-core --locked sqlite_library`（9 tests）、workspace all-features locked tests、Clippy 与 build；待提交并推送后记录 SHA。
+Evidence: `73d30857c5aa6281bec1bddf7004efe5f7e654c5` 已推送，local/upstream/PR #3 ready head 已核对为同一 SHA；`mise exec -- cargo test -p skilload-core --locked sqlite_library`（9 tests）、workspace all-features locked tests、Clippy 与 build 通过。
 
 GitHub outcome: 待回复；线程待解决。
 
@@ -393,9 +393,9 @@ Disposition: fixed
 
 Status: open
 
-Resolution: 当前工作树已修改 `crates/skilload-core/src/domain/source.rs`，拒绝 control byte、反斜线和 `.git` path segment，同时保留 root source 的空 path；新增 hostile path 回归测试。该实现与 preliminary review-log 更新将进入待创建的修复提交。
+Resolution: 提交 `73d30857c5aa6281bec1bddf7004efe5f7e654c5` 已修改 `crates/skilload-core/src/domain/source.rs`，拒绝 control byte、反斜线和 `.git` path segment，同时保留 root source 的空 path；新增 hostile path 回归测试。
 
-Evidence: 当前工作树已通过 `mise exec -- cargo test -p skilload-core --locked source`（5 tests）、workspace all-features locked tests、Clippy 与 build；待提交并推送后记录 SHA。
+Evidence: `73d30857c5aa6281bec1bddf7004efe5f7e654c5` 已推送，local/upstream/PR #3 ready head 已核对为同一 SHA；`mise exec -- cargo test -p skilload-core --locked source`（5 tests）、workspace all-features locked tests、Clippy 与 build 通过。
 
 GitHub outcome: 待回复；线程待解决。
 
@@ -409,9 +409,9 @@ Disposition: fixed
 
 Status: open
 
-Resolution: 当前工作树已修改 `crates/skilload-core/src/domain/source.rs`，实现完整 Git ref-name suffix 规则并保留 namespace prefix；新增与 `git check-ref-format` 对齐的 malformed-ref 回归测试。该实现与 preliminary review-log 更新将进入待创建的修复提交。
+Resolution: 提交 `73d30857c5aa6281bec1bddf7004efe5f7e654c5` 已修改 `crates/skilload-core/src/domain/source.rs`，实现完整 Git ref-name suffix 规则并保留 namespace prefix；新增与 `git check-ref-format` 对齐的 malformed-ref 回归测试。
 
-Evidence: 当前工作树已通过 `mise exec -- cargo test -p skilload-core --locked source`（5 tests）、workspace all-features locked tests、Clippy 与 build；待提交并推送后记录 SHA。
+Evidence: `73d30857c5aa6281bec1bddf7004efe5f7e654c5` 已推送，local/upstream/PR #3 ready head 已核对为同一 SHA；`mise exec -- cargo test -p skilload-core --locked source`（5 tests）、workspace all-features locked tests、Clippy 与 build 通过。
 
 GitHub outcome: 待回复；线程待解决。
 
@@ -637,3 +637,5 @@ Library 是本机可搜索的来源元数据集合；在本交付中它只保存
 计划修订说明（2026-08-19）：完成 Draft-to-review 原子事务：GitHub ready 后确认 implementation SHA，随后将 Plan 从 `active/` 移入 `review/` 并将 frontmatter 更新为 `status: review`。review-state commit 推送后必须再次核对 GitHub head 与 repository 状态。
 
 计划修订说明（2026-08-19 06:42Z）：PR #3 ready-review 发现七项现有 P2 implementation 缺口。本修订在 `review` 状态记录其 source-complete preliminary ledger，并实现 no-clobber database publish、first-lock cleanup、SQLite row corruption mapping 与完整 portable source revalidation；所有修复仍属于既有 Product Baseline，待提交、推送、GitHub 回复和线程关闭后再将记录收束为 resolved。
+
+计划修订说明（2026-08-19 06:45Z）：preliminary review fix/log 提交 `73d30857c5aa6281bec1bddf7004efe5f7e654c5` 已推送，local、upstream 与 PR #3 ready head 已核对。七项 open ledger entry 均已记录具体实现、回归测试和该 SHA；下一步仅为重新读取会话、逐源 GitHub 回复和关闭内联线程。
