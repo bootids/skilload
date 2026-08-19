@@ -144,7 +144,7 @@ Offline results require `used: false` and `attempts: []`; `used` is true exactly
       source: SourceIdentity | null
     }
 
-`internal_duplicate` 表示一个 durable domain 内已声明唯一值的冲突。对 Library import 的 alias 冲突，`name` MUST 为冲突 alias，`source` MUST 为被拒绝导入 entry 的 source，`agent` 与 `path` MUST 为 null；它同时覆盖与已有记录及同一 batch 中较早 entry 的冲突。
+`internal_duplicate` 表示一个 durable domain 内已声明唯一值的冲突。对 Library import 的 alias 冲突，`name` MUST 为冲突 alias，`source` MUST 为被拒绝导入 entry 的 source，`agent` 与 `path` MUST 为 null；它同时覆盖与已有记录及同一 batch 中较早 entry 的冲突。对同一 batch 的 canonical source 重复，`name` MUST 为 null，`source` MUST 为后出现且被拒绝 entry 的 source，`agent` 与 `path` MUST 为 null。
 
 
     Profile {

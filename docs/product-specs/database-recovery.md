@@ -21,6 +21,8 @@ Create a recovery directory outside all effective skilload config/data/state/cac
 
 Record byte sizes and SHA-256 digests. Never validate a backup by opening or copying a live WAL database in place; operate on an evidence copy after all processes have stopped. Retain the untouched original set until recovery is accepted.
 
+## 2. Salvage Readable Product Data
+
 当 read 操作成功时，在 replacement 或 reset 前保留其 JSON response；成功的 Library export 还必须将可移植文档保存到本节指定的 recovery directory。
 
 
