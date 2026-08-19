@@ -82,7 +82,7 @@ Revision 2 的 `SKL-CLI-004`、`SKL-CLI-005` 与 `SKL-CLI-012` 以 API-v2 curren
 - [x] (2026-08-19 09:00Z) 人类已选择 API-v2 并授权 active rework：新增独立 `library_input_limit_exceeded` code，保留 `LimitDetails` 的 measured/allowed 字段；不保留 API-v1 dual-output mode。
 - [x] (2026-08-19 10:17Z) 已实现九项 active remediation：API-v2 full producer cutover 与独立 Library limit code；repository display identity；partial directory cleanup；lock/data-directory/staging descriptor identity binding；schema cardinality、tag comparison-key corruption 诊断；以及 export native path 的 `PathValue` validation projection。
 - [x] (2026-08-19 10:17Z) 已通过 focused core（61 tests）和 CLI（9 unit、12 integration）测试，以及 `cargo fmt --all --check`、workspace Clippy `-D warnings`、workspace all-features locked tests、build；隔离 CLI smoke 验证 API-v2 dry-run/import/export 和 `library_input_limit_exceeded` details。
-- [ ] 检查完整 diff、运行 `git diff --check`，提交并推送代码、测试、产品/API/设计/reference 文档和 preliminary review ledger。
+- [x] (2026-08-19 10:21Z) 已检查完整 staged diff、`git diff --check`，并将代码、测试、产品/API/设计/reference 文档和 preliminary review ledger 以 `03b4aa0de8b05963b0c5a2a3ce7b798684d3a92c` 推送；local/upstream/Draft PR #3 head 已核对为同一 SHA。
 - [ ] 在所有 rework 已提交推送后重新执行 ready/review 原子事务，再重新运行完整 PR 会话处理。
 - [ ] 收到明确人类合并授权后，完成预检、评审会话记录、completed 事务、必要检查、合并、默认分支更新和本地交付分支清理。
 
@@ -597,7 +597,7 @@ Status: open
 
 Resolution: `crates/skilload-core/src/adapters/sqlite_library.rs` 新增持有 no-follow data-directory descriptor 和 `renameat_with(..., RenameFlags::NOREPLACE)`；首次 staging 的 cleanup 也通过 held descriptor 删除同 inode entry。publish 前后重验 directory identity，`DataDirectoryReplacement` fixture 证明 replacement 后不会在新旧目录发布 database。
 
-Evidence: `first_import_rejects_a_replaced_data_directory_before_publish`；`mise exec -- cargo test -p skilload-core --locked` 通过（61 tests），workspace fmt/Clippy/all-features locked test/build 和隔离 CLI smoke 均通过；待本次 preliminary commit SHA。
+Evidence: `03b4aa0de8b05963b0c5a2a3ce7b798684d3a92c` 已推送；`first_import_rejects_a_replaced_data_directory_before_publish`、core 61 tests、workspace fmt/Clippy/all-features locked test/build 和隔离 CLI smoke 均通过。
 
 GitHub outcome: 未回复；thread resolved: false。
 
@@ -613,7 +613,7 @@ Status: open
 
 Resolution: `crates/skilload-core/src/adapters/sqlite_library.rs` 的 `singleton_i64` 要求 `schema_info` 恰有一条可解码 version；缺失、额外或错误类型均返回 `database_corrupt`。新增 `missing_schema_version_row_is_database_corrupt` 与 `multiple_schema_version_rows_are_database_corrupt`。
 
-Evidence: `mise exec -- cargo test -p skilload-core --locked` 通过（61 tests），含两个新 cardinality fixture；待本次 preliminary commit SHA。
+Evidence: `03b4aa0de8b05963b0c5a2a3ce7b798684d3a92c` 已推送；core 61 tests（含两个 cardinality fixture）和 workspace gates 均通过。
 
 GitHub outcome: 未回复；thread resolved: false。
 
@@ -629,7 +629,7 @@ Status: open
 
 Resolution: `crates/skilload-core/src/domain/source.rs` 在 `SourceIdentity::new` 要求 `repository_display.eq_ignore_ascii_case(repository)`，并新增 `portable_source_rejects_mismatched_repository_display`。
 
-Evidence: `mise exec -- cargo test -p skilload-core --locked` 通过（61 tests）；该 regression 证明 root Skill 不能从不相关 display spelling 导出 name；待本次 preliminary commit SHA。
+Evidence: `03b4aa0de8b05963b0c5a2a3ce7b798684d3a92c` 已推送；core 61 tests 证明 root Skill 不能从不相关 display spelling 导出 name。
 
 GitHub outcome: 未回复；thread resolved: false。
 
@@ -645,7 +645,7 @@ Status: open
 
 Resolution: `crates/skilload-core/src/adapters/configuration.rs` 将 `ensure_restrictive_directory` 的创建过程包入 failure cleanup：任何后续 create/open/restrict/hook error 都按 held descriptor 与 device/inode 逆序删除空、仍属本调用的目录。新增 `restrictive_directory_rolls_back_partial_created_prefix`。
 
-Evidence: `mise exec -- cargo test -p skilload-core --locked` 通过（61 tests）；待本次 preliminary commit SHA。
+Evidence: `03b4aa0de8b05963b0c5a2a3ce7b798684d3a92c` 已推送；core 61 tests（含 partial-prefix rollback fixture）和 workspace gates 均通过。
 
 GitHub outcome: 未回复；thread resolved: false。
 
@@ -661,9 +661,9 @@ Status: open
 
 Resolution: 新增 `docs/product-specs/api-v2.md`，将 current CLI producer 统一切换为 `api_version: 2`，并定义 `library_input_limit_exceeded` → `LimitDetails`；`AppError::LibraryInputLimit` 只由六个 Library scanner ceiling 构造。`api-v1.md` 保留为历史 contract，`SKL-LIB-010` 升为 Revision 4、相关 CLI IDs 升为 Revision 2。
 
-Evidence: `api_v2_library_limit_uses_its_dedicated_code` 和 scanner limit regressions；隔离 CLI smoke 返回 `library_input_limit_exceeded`、`library_import_number_bytes`、`129`/`128` 与 input `PathValue`；workspace gates 通过，待本次 preliminary commit SHA。
+Evidence: `03b4aa0de8b05963b0c5a2a3ce7b798684d3a92c` 已推送；`api_v2_library_limit_uses_its_dedicated_code`、scanner regressions 和隔离 CLI smoke 返回 `library_input_limit_exceeded`、`library_import_number_bytes`、`129`/`128` 与 input `PathValue`。
 
-GitHub outcome: 未回复；thread resolved: false，待实现、推送和验证。
+GitHub outcome: 未回复；thread resolved: false，待逐源回复和关闭。
 
 ### PRRC_kwDOT7YN2s7jLbvG — database lock descriptor identity
 
@@ -677,7 +677,7 @@ Status: open
 
 Resolution: `crates/skilload-core/src/adapters/configuration.rs` 将 inspected path、opened descriptor 和 expected device/inode 绑定，并在取得 advisory lock 后再次比较；existing 与 `AlreadyExists` race branch 均覆盖。新增 `lock_rejects_replacement_after_path_inspection`。
 
-Evidence: `mise exec -- cargo test -p skilload-core --locked` 通过（61 tests）；fixture 保留 replacement lock 且返回 `lock_path_identity_drift`；待本次 preliminary commit SHA。
+Evidence: `03b4aa0de8b05963b0c5a2a3ce7b798684d3a92c` 已推送；core 61 tests 的 replacement fixture 保留外部 lock 并返回 `lock_path_identity_drift`。
 
 GitHub outcome: 未回复；thread resolved: false。
 
@@ -693,7 +693,7 @@ Status: open
 
 Resolution: `crates/skilload-core/src/adapters/sqlite_library.rs` 的 `load_tags` 同时读取 `comparison_key` 与 display，以固定 Unicode-15.1 normalizer 验证两者都为 canonical stored value；mismatch 返回 `database_corrupt`。新增 `malformed_tag_comparison_key_is_database_corrupt`。
 
-Evidence: `mise exec -- cargo test -p skilload-core --locked` 通过（61 tests）；待本次 preliminary commit SHA。
+Evidence: `03b4aa0de8b05963b0c5a2a3ce7b798684d3a92c` 已推送；core 61 tests（含 comparison-key corruption fixture）和 workspace gates 均通过。
 
 GitHub outcome: 未回复；thread resolved: false。
 
@@ -709,7 +709,7 @@ Status: open
 
 Resolution: `crates/skilload-core/src/adapters/portable_library.rs` 以 `fstat` 与 parent-descriptor-relative `statat(..., SYMLINK_NOFOLLOW)` 在 rename 前后验证 held staging inode；drift 不报告成功，且 `NamedTempFile` cleanup 不会删除未知 replacement。新增 `export_reports_staging_replacement_after_identity_check`。
 
-Evidence: `mise exec -- cargo test -p skilload-core --locked` 通过（61 tests）；fixture 在 identity check 后替换 staging，命令返回 `validation_failed` 而非 success；待本次 preliminary commit SHA。
+Evidence: `03b4aa0de8b05963b0c5a2a3ce7b798684d3a92c` 已推送；core 61 tests 的 staging replacement fixture 返回 `validation_failed` 而非 success。
 
 GitHub outcome: 未回复；thread resolved: false。
 
@@ -725,7 +725,7 @@ Status: open
 
 Resolution: `crates/skilload-core/src/adapters/portable_library.rs` 的 `export_io` 改为 `AppError::Validation` 并携带原始 `NativePath`，JSON 由 API-v2 `ValidationDetails.path: PathValue` 投影；不再将 lossy path display 放入 `InvalidStateDetails.expected`。新增 core 与 CLI JSON native-byte fixtures。
 
-Evidence: `export_io_uses_a_typed_native_output_path`、`api_v2_error_paths_preserve_native_bytes`；workspace gates 通过，待本次 preliminary commit SHA。
+Evidence: `03b4aa0de8b05963b0c5a2a3ce7b798684d3a92c` 已推送；`export_io_uses_a_typed_native_output_path`、`api_v2_error_paths_preserve_native_bytes` 和 workspace gates 均通过。
 
 GitHub outcome: 未回复；thread resolved: false。
 
@@ -968,3 +968,5 @@ Library 是本机可搜索的来源元数据集合；在本交付中它只保存
 计划修订说明（2026-08-19 09:00Z）：人类已选择 API-v2 独立 `library_input_limit_exceeded` code 并明确授权执行 active rework。Product Baseline 将 `SKL-LIB-010` 提升为 Revision 4，纳入 API-v2 current-producer cutover 的最小 `SKL-CLI-004`/`005`/`012` Revision 2 范围；API-v1 留作历史规格，不提供双输出 mode。下一步实现全部九项 open review remediation、验证、推送并按正常 ready/review 事务重新进入 review。
 
 计划修订说明（2026-08-19 10:17Z）：已在 active rework 本地完成九项 review remediation、API-v2 catalog/cutover、产品/设计/reference 同步、focused tests、workspace gates 和隔离 CLI smoke。Review Conversation Log 的九项 fixed entry 现在记录具体 changed paths、回归测试和待写入的 preliminary commit SHA；所有线程仍保持 open，直到该 commit 推送、逐源 GitHub 回复并关闭后才设为 resolved。
+
+计划修订说明（2026-08-19 10:21Z）：preliminary remediation commit `03b4aa0de8b05963b0c5a2a3ce7b798684d3a92c` 已推送，local/upstream/Draft PR head 均为该 SHA。九项 open ledger entry 都已记录该 SHA 和对应验证；下一步执行 ready/review 原子事务，再重新读取完整 GitHub 会话并逐源回复/关闭。
