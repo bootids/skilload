@@ -71,6 +71,8 @@ depends_on: [PLAN-0002]
 - [x] (2026-08-19 05:57Z) 已运行 `gh pr ready https://github.com/bootids/skilload/pull/3`，随后观察到 `isDraft: false` 与 `headRefOid: 47f22f8a1687d5e46b9d787503565e1badad141a`；该 SHA 等于已推送的 implementation/active-Plan HEAD。首次 review-state commit `b30afe3aa7a772f1ccf1885eb041006528f10c24` 推送后曾再次确认 GitHub/repository head 一致，本 Plan 保持 `review`。
 - [x] (2026-08-19 06:42Z) 已在 review 状态修复 PR #3 的七项实现反馈：首次 database publish 使用 no-clobber、首次 lock failure 清理、SQLite row decode 损坏分类，以及 portable source 的 repository 标点、已验证名称、Git path 和 Git ref 约束；修复与 preliminary review log 已由 `73d30857c5aa6281bec1bddf7004efe5f7e654c5` 推送，local/upstream/PR ready head 已核对为该 SHA。focused source（5）/SQLite（9）测试、workspace all-features locked tests（6、12、46）、格式、Clippy `-D warnings` 与 workspace build 均通过；待逐线程回复。
 - [x] (2026-08-19 06:51Z) 已在最终全量会话复读中核对 16 个 review thread 全部为 resolved；本轮七个实际问题均有 GitHub 回复和 `thread resolved: true`。source-path/ref 的初次批量 reply 请求超时后继续写入，重试产生了两条字节相同的回复；两条 URL 均已如实记录，未删除审计记录。
+- [x] (2026-08-19 07:58Z) 已在 review 状态完成新增七项反馈的代码、测试与文档修订：安全 descriptor-relative export publish、既有 SQLite 文件 identity binding、缺失 schema 列与 API-v1 UInt corruption 分类、目录 identity cleanup、state revision 上界和 human import 来源列表。focused SQLite（14）、portable transfer（9）与 human（3 unit、1 integration）测试通过；workspace fmt check、Clippy `-D warnings`、all-features locked test（7、12、52）和 build 通过；实际 dry-run CLI 输出 added canonical source，`git diff --check` 通过。待创建并推送 preliminary review commit。
+
 - [ ] 收到明确人类合并授权后，完成预检、评审会话记录、completed 事务、必要检查、合并、默认分支更新和本地交付分支清理。
 
 ## Surprises & Discoveries
@@ -96,6 +98,9 @@ depends_on: [PLAN-0002]
   Evidence: `SourceIdentity::deserialize` 和 `ResolvedSkill::deserialize` 都调用各自 `new`；`docs/product-specs/source-and-trust.md` 的 `SKL-SRC-002`/`SKL-SRC-007` 规定同一 canonical identity 与名称关系。
 - Observation: 七个 GitHub reply/resolve 的批量请求在 30 秒超时后仍继续执行，导致 source-path 与 source-ref 线程各出现两条相同回复。
   Evidence: 最终 `list --all` 显示 `PRRT_kwDOT7YN2s6aXLAs` 的 `discussion_r3810692503`/`discussion_r3810696527` 与 `PRRT_kwDOT7YN2s6aXLAy` 的 `discussion_r3810693274`/`discussion_r3810698817` 内容字节相同，两个 thread 均为 resolved。
+- Observation: `tempfile::NamedTempFile::persist` 只能接收路径，不能将 publish 绑定到已验证的父目录 descriptor；本 crate 又禁止 unsafe code，不能直接调用 raw `libc::renameat`。
+  Evidence: `tempfile 3.27.0` 的 `persist` API 接收 destination path；`rustix 1.1.4/src/fs/at.rs` 的安全 `renameat` 接收 `AsFd` 目录 handle 与相对文件名。
+
 
 ## Decision Log
 
@@ -149,6 +154,10 @@ depends_on: [PLAN-0002]
 - Decision: 新 database publication 使用 `persist_noclobber`，且 restrictive lock helper 仅在 `create_new` 成功时记录可删除的 identity。
   Rationale: no-clobber 保持 race 中的外部 authoritative database；create-new 的 file identity 让 commit 前 cleanup 只删除本调用证实创建的 lock，而不把 prior absence 检查误当成 ownership proof。
   Date/Author: 2026-08-19 / Codex
+- Decision: review remediation 将 `rustix =1.1.4`（`fs`）作为直接 workspace dependency，并以安全 `renameat` 在持有的 export 父目录 descriptor 内发布 staging。
+  Rationale: 这消除最终 output-parent validation 与 path-based publish 之间的祖先替换窗口，同时保持 repository 的禁止 unsafe-code 规则；锁文件已固定相同版本，直接依赖只声明实际使用的安全 API。
+  Date/Author: 2026-08-19 / Codex
+
 
 ## Outcomes & Retrospective
 
@@ -160,6 +169,8 @@ P2 implementation 与完整验证已完成，PR #3 已于 2026-08-19 05:57Z 转�
 2026-08-19 06:42Z 的 review remediation 已由 `73d30857c5aa6281bec1bddf7004efe5f7e654c5` 推送：first-import database publish 改为 `persist_noclobber`、creation identity 从 restrictive lock helper 传给 RAII cleanup guard、SQLite durable row decode 错误映射为 `database_corrupt`，并收紧 portable source 的 repository/name/path/ref 重验证。local、upstream 与 PR #3 ready head 已核对为该 SHA；focused source（5）和 SQLite（9）测试、workspace all-features locked tests（6、12、46）、格式、Clippy 和 build 均通过；GitHub thread 回复于 06:51Z 完成。
 
 2026-08-19 06:51Z 的最终会话核对确认：所有 16 个 inline thread 均为 resolved；本轮七个问题的每个 source 都有相应的 pushed-fix reply。source-path/ref 的批量请求超时留下的重复回复已在 Review Conversation Log 保留两个 URL，未影响修复、验证或 thread 状态。
+
+2026-08-19 07:58Z 的新增 review remediation 已完成本地验收：export 使用持有父目录 descriptor 的安全 `rustix::fs::renameat`，既有数据库不再通过可创建或可跟随的路径打开，缺列/越界 schema 的错误保持 API-v1 可表示的 `database_corrupt`，first-import cleanup 保留 identity-mismatched directory，state revision 在写 entry 前受限递增，human import 输出枚举已计划 source。focused 与 workspace gates 均通过，实际 dry-run CLI smoke 已显示 quoted source；下一步仅为 preliminary commit、push、逐线程回复和关闭。
 
 ## Review Conversation Log
 
@@ -310,7 +321,7 @@ GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_
 
 ### PRRC_kwDOT7YN2s7jHvvZ — 首次数据库发布竞争
 
-Source: 内联评论 `PRRC_kwDOT7YN2s7jHvvZ`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3810458585)；线程 `PRRT_kwDOT7YN2s6aXLAS`，当前未解决。
+Source: 内联评论 `PRRC_kwDOT7YN2s7jHvvZ`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3810458585)；线程 `PRRT_kwDOT7YN2s6aXLAS`，当前已解决。
 
 Problem: 首次 import 在 publish 前的 absent 检查与 `NamedTempFile::persist` 之间存在竞争；后创建的 `skilload.db` 会被替换，违反不得覆盖外部权威 generation 的 ownership invariant。
 
@@ -326,7 +337,7 @@ GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_
 
 ### PRRC_kwDOT7YN2s7jHvvl — 可移植 repository 标点
 
-Source: 内联评论 `PRRC_kwDOT7YN2s7jHvvl`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3810458597)；线程 `PRRT_kwDOT7YN2s6aXLAb`，当前未解决。
+Source: 内联评论 `PRRC_kwDOT7YN2s7jHvvl`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3810458597)；线程 `PRRT_kwDOT7YN2s6aXLAb`，当前已解决。
 
 Problem: `SourceIdentity` 将 owner 与 repository 共用仅允许连字符的校验，拒绝产品 fixtures 明确允许的 repository `.` 和 `_`，使有效 root Library export 无法重新导入。
 
@@ -342,7 +353,7 @@ GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_
 
 ### PRRC_kwDOT7YN2s7jHvvq — SQLite 行类型损坏诊断
 
-Source: 内联评论 `PRRC_kwDOT7YN2s7jHvvq`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3810458602)；线程 `PRRT_kwDOT7YN2s6aXLAe`，当前未解决。
+Source: 内联评论 `PRRC_kwDOT7YN2s7jHvvq`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3810458602)；线程 `PRRT_kwDOT7YN2s6aXLAe`，当前已解决。
 
 Problem: 持久 SQLite schema 或 Library 列的错误 storage type 产生 `rusqlite::Error::InvalidColumnType`，当前落入 `invalid_state` 而不是要求的 `database_corrupt` recovery diagnostic。
 
@@ -358,7 +369,7 @@ GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_
 
 ### PRRC_kwDOT7YN2s7jHvvu — 已验证名称与来源关系
 
-Source: 内联评论 `PRRC_kwDOT7YN2s7jHvvu`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3810458606)；线程 `PRRT_kwDOT7YN2s6aXLAh`，当前未解决。
+Source: 内联评论 `PRRC_kwDOT7YN2s7jHvvu`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3810458606)；线程 `PRRT_kwDOT7YN2s6aXLAh`，当前已解决。
 
 Problem: portable import 仅检查 `ResolvedSkill.name` 的独立语法，没有强制 `SKL-SRC-007` 的 non-root 最终目录或 root repository display 派生名称关系，因而可持久化永远无法通过来源验证的 evidence。
 
@@ -374,7 +385,7 @@ GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_
 
 ### PRRC_kwDOT7YN2s7jHvv2 — 首次 import 锁失败清理
 
-Source: 内联评论 `PRRC_kwDOT7YN2s7jHvv2`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3810458614)；线程 `PRRT_kwDOT7YN2s6aXLAn`，当前未解决。
+Source: 内联评论 `PRRC_kwDOT7YN2s7jHvv2`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3810458614)；线程 `PRRT_kwDOT7YN2s6aXLAn`，当前已解决。
 
 Problem: 首次 import 在获取 `database.lock` 前创建 state/locks 后，锁获取失败会越过既有 cleanup，遗留本调用创建的 state、locks 或 lock 文件。
 
@@ -390,7 +401,7 @@ GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_
 
 ### PRRC_kwDOT7YN2s7jHvv_ — 可移植 source path 限制
 
-Source: 内联评论 `PRRC_kwDOT7YN2s7jHvv_`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3810458623)；线程 `PRRT_kwDOT7YN2s6aXLAs`，当前未解决。
+Source: 内联评论 `PRRC_kwDOT7YN2s7jHvv_`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3810458623)；线程 `PRRT_kwDOT7YN2s6aXLAs`，当前已解决。
 
 Problem: 当前 source path 只拒绝空、绝对和 `.`/`..` segment，仍接受控制字符或 `.git` segment，违反 untrusted portable source 的 normalized Git-path 限制。
 
@@ -406,7 +417,7 @@ GitHub outcome: 批量请求超时后产生两条内容相同的回复 https://g
 
 ### PRRC_kwDOT7YN2s7jHvwF — 可移植 branch/tag ref 限制
 
-Source: 内联评论 `PRRC_kwDOT7YN2s7jHvwF`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3810458629)；线程 `PRRT_kwDOT7YN2s6aXLAy`，当前未解决。
+Source: 内联评论 `PRRC_kwDOT7YN2s7jHvwF`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3810458629)；线程 `PRRT_kwDOT7YN2s6aXLAy`，当前已解决。
 
 Problem: 当前 branch/tag suffix 只检查 slash 与 `.`/`..` segment，仍接受 Git 无法解析的 `..`、`.lock`、控制字节和保留 ref 字符。
 
@@ -419,6 +430,118 @@ Resolution: 提交 `73d30857c5aa6281bec1bddf7004efe5f7e654c5` 已修改 `crates/
 Evidence: `73d30857c5aa6281bec1bddf7004efe5f7e654c5` 已推送，local/upstream/PR #3 ready head 已核对为同一 SHA；`mise exec -- cargo test -p skilload-core --locked source`（5 tests）、workspace all-features locked tests、Clippy 与 build 通过。
 
 GitHub outcome: 批量请求超时后产生两条内容相同的回复 https://github.com/bootids/skilload/pull/3#discussion_r3810693274 与 https://github.com/bootids/skilload/pull/3#discussion_r3810698817；thread resolved: true。
+
+### PRRC_kwDOT7YN2s7jJWGX — export 父目录替换竞争
+
+Source: 内联评论 `PRRC_kwDOT7YN2s7jJWGX`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3810877847)；线程 `PRRT_kwDOT7YN2s6aYP_z`，当前未解决。
+
+Problem: export 在最后一次父目录验证后仍通过原始路径调用 `persist`，同账户进程可替换祖先目录并使 publish 重新解析到受保护的 data 路径。
+
+Disposition: fixed
+
+Status: open
+
+Resolution: 已修改 `Cargo.toml`、`crates/skilload-core/Cargo.toml` 与 `crates/skilload-core/src/adapters/portable_library.rs`：以 no-follow、identity-verified 的父目录 `File` 持有 publish capability，并通过 `rustix::fs::renameat` 以相对名称发布 staging；新增 `export_does_not_publish_through_a_replaced_parent_directory` 回归测试。本轮 preliminary review commit 待创建。
+
+Evidence: `mise exec -- cargo test -p skilload-core --locked portable_library` 通过（9 tests）且 `mise exec -- cargo check -p skilload-core` 通过；workspace `cargo fmt --all --check`、Clippy `-D warnings`、all-features locked tests（7、12、52）和 build 均通过，`git diff --check` 通过。待推送和 GitHub 回复。
+
+GitHub outcome: 待回复；thread unresolved。
+
+### PRRC_kwDOT7YN2s7jJWGZ — 既有数据库打开竞争
+
+Source: 内联评论 `PRRC_kwDOT7YN2s7jJWGZ`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3810877849)；线程 `PRRT_kwDOT7YN2s6aYP_1`，当前未解决。
+
+Problem: 既有 database 的 regular-file 检查与 `Connection::open` 之间存在替换窗口，默认 read-write/create 路径语义可能创建新文件或跟随 raced symlink。
+
+Disposition: fixed
+
+Status: open
+
+Resolution: 已修改 `crates/skilload-core/src/adapters/sqlite_library.rs`：既有 database 以 `READ_ONLY`/`READ_WRITE` 加 `SQLITE_OPEN_NOFOLLOW` 和 no-create 语义打开，打开前后及写前以 device/inode 绑定 identity，sync 也不跟随路径；新增 `existing_import_rejects_a_database_replaced_after_open`。本轮 preliminary review commit 待创建。
+
+Evidence: `mise exec -- cargo test -p skilload-core --locked sqlite_library` 通过（14 tests）且 `mise exec -- cargo check -p skilload-core` 通过；workspace `cargo fmt --all --check`、Clippy `-D warnings`、all-features locked tests（7、12、52）和 build 均通过，`git diff --check` 通过。待推送和 GitHub 回复。
+
+GitHub outcome: 待回复；thread unresolved。
+
+### PRRC_kwDOT7YN2s7jJWGc — 缺失 schema 列的损坏诊断
+
+Source: 内联评论 `PRRC_kwDOT7YN2s7jJWGc`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3810877852)；线程 `PRRT_kwDOT7YN2s6aYP_4`，当前未解决。
+
+Problem: durable schema 缺少必需列时 SQLite 的 `no such column` 错误落入 `invalid_state`，没有返回已承诺的 `database_corrupt` recovery diagnostic。
+
+Disposition: fixed
+
+Status: open
+
+Resolution: 已修改 `crates/skilload-core/src/adapters/sqlite_library.rs`：`SqliteFailure` 与 bundled SQLite 的 `SqlInputError` 均将缺表/缺列分类为 `database_corrupt`；新增 `missing_schema_column_is_database_corrupt` fixture。本轮 preliminary review commit 待创建。
+
+Evidence: `mise exec -- cargo test -p skilload-core --locked sqlite_library` 通过（14 tests）；workspace `cargo fmt --all --check`、Clippy `-D warnings`、all-features locked tests（7、12、52）和 build 均通过。待推送和 GitHub 回复。
+
+GitHub outcome: 待回复；thread unresolved。
+
+### PRRC_kwDOT7YN2s7jJWGd — 超出 API-v1 UInt 的 schema version
+
+Source: 内联评论 `PRRC_kwDOT7YN2s7jJWGd`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3810877853)；线程 `PRRT_kwDOT7YN2s6aYP_5`，当前未解决。
+
+Problem: 大于 API-v1 `UInt` 最大值的非负 SQLite schema version 会进入 `SchemaNewer` 并生成不可表示的 `found_version`。
+
+Disposition: fixed
+
+Status: open
+
+Resolution: 已修改 `crates/skilload-core/src/adapters/sqlite_library.rs`：在构造 `SchemaNewer` 前将原始版本限制为 API-v1 `UInt` 最大值，并以 `database_corrupt` 拒绝越界值；新增 `schema_version_above_api_uint_range_is_database_corrupt` fixture。本轮 preliminary review commit 待创建。
+
+Evidence: `mise exec -- cargo test -p skilload-core --locked sqlite_library` 通过（14 tests）；workspace `cargo fmt --all --check`、Clippy `-D warnings`、all-features locked tests（7、12、52）和 build 均通过。待推送和 GitHub 回复。
+
+GitHub outcome: 待回复；thread unresolved。
+
+### PRRC_kwDOT7YN2s7jJWGh — 首次 import 目录 identity 清理
+
+Source: 内联评论 `PRRC_kwDOT7YN2s7jJWGh`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3810877857)；线程 `PRRT_kwDOT7YN2s6aYP_8`，当前未解决。
+
+Problem: pre-commit failure cleanup 只检查当前路径是目录，未比较调用创建时的 device/inode，可能删除外部进程替换出的空目录。
+
+Disposition: fixed
+
+Status: open
+
+Resolution: 已修改 `crates/skilload-core/src/adapters/configuration.rs` 与 `crates/skilload-core/src/adapters/sqlite_library.rs`：每个创建目录携带 device/inode，first-import cleanup 只移除同一 identity 的空目录；新增 `first_import_cleanup_preserves_replaced_created_directory`。本轮 preliminary review commit 待创建。
+
+Evidence: `mise exec -- cargo test -p skilload-core --locked sqlite_library` 通过（14 tests）；workspace `cargo fmt --all --check`、Clippy `-D warnings`、all-features locked tests（7、12、52）和 build 均通过。待推送和 GitHub 回复。
+
+GitHub outcome: 待回复；thread unresolved。
+
+### PRRC_kwDOT7YN2s7jJWGm — human import 计划来源投影
+
+Source: 内联评论 `PRRC_kwDOT7YN2s7jJWGm`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3810877862)；线程 `PRRT_kwDOT7YN2s6aYP_-`，当前未解决。
+
+Problem: 非 JSON import 输出只显示集合长度，丢失 dry-run 与多 entry import 的 planned added/updated/kept canonical source 身份，违反同一 application outcome 的双投影约束。
+
+Disposition: fixed
+
+Status: open
+
+Resolution: 已修改 `crates/skilload-cli/src/human.rs`：每个 added/updated/kept/conflicts 集合在保留计数后稳定逐项输出 terminal-safe quoted canonical source；新增 `library_import_renderer_lists_quoted_planned_sources`。本轮 preliminary review commit 待创建。
+
+Evidence: `mise exec -- cargo test -p skilload-cli --locked human` 通过（3 unit tests、1 CLI integration test）；实际 dry-run CLI smoke 输出 quoted added source；workspace `cargo fmt --all --check`、Clippy `-D warnings`、all-features locked tests（7、12、52）和 build 均通过。待推送和 GitHub 回复。
+
+GitHub outcome: 待回复；thread unresolved。
+
+### PRRC_kwDOT7YN2s7jJWGr — state revision 溢出
+
+Source: 内联评论 `PRRC_kwDOT7YN2s7jJWGr`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3810877867)；线程 `PRRT_kwDOT7YN2s6aYQAA`，当前未解决。
+
+Problem: `state_revision = i64::MAX` 通过当前校验后，SQLite 加一可能存为 REAL 并提交，下一次读取才把本次制造的状态识别为损坏。
+
+Disposition: fixed
+
+Status: open
+
+Resolution: 已修改 `crates/skilload-core/src/adapters/sqlite_library.rs`：`state_revision` 在 additions 前以受上界约束的 SQL update 递增；不可递增时在写入任何 entry 前返回 `state_revision_not_incrementable`；新增 `nonincrementable_state_revision_rejects_import_without_mutation`。本轮 preliminary review commit 待创建。
+
+Evidence: `mise exec -- cargo test -p skilload-core --locked sqlite_library` 通过（14 tests）；workspace `cargo fmt --all --check`、Clippy `-D warnings`、all-features locked tests（7、12、52）和 build 均通过。待推送和 GitHub 回复。
+
+GitHub outcome: 待回复；thread unresolved。
 
 ## Context and Orientation
 
@@ -471,6 +594,10 @@ Library 是本机可搜索的来源元数据集合；在本交付中它只保存
 实施后更新 `docs/product-specs/README.md` 与 `docs/product-specs/library.md` 的 status prose，使其准确列出 `PLAN-0003` 仅完成 `SKL-LIB-009`/`SKL-LIB-010` Revision 3；同步 `docs/product-specs/database-recovery.md` 的显式 export output 调用与 salvage heading；除新的明确产品决定外，不得再修改这两个行为正文或 revision。同步 `ARCHITECTURE.md` 的当前实现模块/SQLite ownership 描述，以及 `docs/design-docs/application-and-persistence.md`、`docs/design-docs/cli-json-and-release.md` 的当前实现状态、P2 module names 和真实测试路径。若实现发现本计划中的文件传输语义或字段与 authoritative specification 冲突，先修正实现或在得到明确产品决定后更新产品规格和 Plan baseline；不得静默降低 acceptance。
 
 在 active Plan 中记录每个完成里程碑、所有发现和实际验证。完成实现后，先提交并推送代码、测试、锁文件、文档和 active Plan，再按 `docs/PLANS.md` 的 ready/review 原子事务转换 Draft PR。不要在计划状态中实施任何代码。
+
+## 评审实施补充
+
+2026-08-19 的最终 review remediation 细化而未扩大 Product Baseline：不增加命令、行为 ID 或产品 revision。除本 Plan 原有的 `rusqlite`、`unicode-normalization` 与 `libc` 外，workspace 直接声明已锁定的 `rustix 1.1.4`（`fs`），以安全 descriptor-relative `renameat` 完成 export publish。`portable_library.rs` 在创建 staging 后及最终 publish 前验证持有父目录的 identity；`sqlite_library.rs` 对既有 database 使用 no-create/no-follow 打开、对 schema/API 表示和 state revision 进行边界校验，并在 cleanup 保留 identity-mismatched directory；`human.rs` 逐项投影导入计划的 canonical source。所有这些修复都以现有 `SKL-LIB-009`/`SKL-LIB-010` 的原子性、恢复诊断和双投影 acceptance 为界。
 
 ## Concrete Steps
 

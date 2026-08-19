@@ -453,6 +453,7 @@ version = "0.0.1"
 dependencies = [
  "libc",
  "rusqlite",
+ "rustix",
  "serde",
  "serde_json",
  "tempfile",

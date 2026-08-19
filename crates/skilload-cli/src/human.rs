@@ -1,6 +1,6 @@
 use skilload_core::{
     AppError, ConfigEntries, ConfigEntry, ConfigValue, LibraryImportResult, NativePath,
-    PortableLibraryDocument,
+    PortableLibraryDocument, SourceIdentity,
 };
 use std::fmt::Write as _;
 use std::os::unix::ffi::OsStrExt;
@@ -23,15 +23,22 @@ pub fn render_entries(entries: &ConfigEntries) -> String {
 }
 
 pub fn render_library_import(outcome: &str, data: &LibraryImportResult) -> String {
-    format!(
-        "library.import: {outcome}\nformat_version: {}\ndry_run: {}\nadded: {}\nupdated: {}\nkept: {}\nconflicts: {}\n",
-        data.format_version,
-        data.dry_run,
-        data.added.len(),
-        data.updated.len(),
-        data.kept.len(),
-        data.conflicts.len(),
-    )
+    let mut output = format!(
+        "library.import: {outcome}\nformat_version: {}\ndry_run: {}\n",
+        data.format_version, data.dry_run,
+    );
+    append_sources(&mut output, "added", &data.added);
+    append_sources(&mut output, "updated", &data.updated);
+    append_sources(&mut output, "kept", &data.kept);
+    append_sources(&mut output, "conflicts", &data.conflicts);
+    output
+}
+
+fn append_sources(output: &mut String, label: &str, sources: &[SourceIdentity]) {
+    let _ = writeln!(output, "{label}: {}", sources.len());
+    for source in sources {
+        let _ = writeln!(output, "  - {}", quote_string(&source.canonical));
+    }
 }
 
 pub fn render_library_export(output: &NativePath, document: &PortableLibraryDocument) -> String {
@@ -294,5 +301,40 @@ mod tests {
         }
         assert!(!encoded.contains('\u{001b}'));
         assert!(!encoded.contains('\u{0007}'));
+    }
+    #[test]
+    fn library_import_renderer_lists_quoted_planned_sources() {
+        let source = SourceIdentity::new(
+            "github:owner/repository#skills/review@refs/heads/main".to_owned(),
+            "owner".to_owned(),
+            "repository".to_owned(),
+            "Repository".to_owned(),
+            "skills/review".to_owned(),
+            skilload_core::RefKind::Branch,
+            "refs/heads/main".to_owned(),
+        )
+        .unwrap();
+        let rendered = render_library_import(
+            "observed",
+            &LibraryImportResult {
+                format_version: 1,
+                dry_run: true,
+                added: vec![source.clone()],
+                updated: Vec::new(),
+                kept: vec![source],
+                conflicts: Vec::new(),
+            },
+        );
+
+        assert!(
+            rendered.contains(
+                "added: 1\n  - \"github:owner/repository#skills/review@refs/heads/main\"\n"
+            )
+        );
+        assert!(
+            rendered.contains(
+                "kept: 1\n  - \"github:owner/repository#skills/review@refs/heads/main\"\n"
+            )
+        );
     }
 }

@@ -414,10 +414,16 @@ fn metadata_identity(metadata: &fs::Metadata) -> (u64, u64) {
     (metadata.dev(), metadata.ino())
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct CreatedDirectory {
+    pub(crate) path: PathBuf,
+    pub(crate) identity: (u64, u64),
+}
+
 pub(crate) fn ensure_restrictive_directory(
     path: &Path,
     variable: &str,
-) -> Result<Vec<PathBuf>, AppError> {
+) -> Result<Vec<CreatedDirectory>, AppError> {
     let mut missing_directories = Vec::new();
     let mut ancestor = path;
     loop {
@@ -449,8 +455,11 @@ pub(crate) fn ensure_restrictive_directory(
 
     let mut created_directories = Vec::new();
     for directory in missing_directories.into_iter().rev() {
-        if create_restrictive_directory(&directory, variable)? {
-            created_directories.push(directory);
+        if let Some(identity) = create_restrictive_directory(&directory, variable)? {
+            created_directories.push(CreatedDirectory {
+                path: directory,
+                identity,
+            });
         }
     }
 
@@ -461,7 +470,10 @@ pub(crate) fn ensure_restrictive_directory(
     Ok(created_directories)
 }
 
-fn create_restrictive_directory(directory: &Path, variable: &str) -> Result<bool, AppError> {
+fn create_restrictive_directory(
+    directory: &Path,
+    variable: &str,
+) -> Result<Option<(u64, u64)>, AppError> {
     let created = match fs::create_dir(directory) {
         Ok(()) => true,
         Err(error) if error.kind() == io::ErrorKind::AlreadyExists => false,
@@ -483,7 +495,7 @@ fn create_restrictive_directory(directory: &Path, variable: &str) -> Result<bool
         .map_err(|error| environment_io(variable, directory, action, error))?;
     ensure_real_directory(directory, &metadata, variable)?;
     restrict_directory_permissions(directory, variable)?;
-    Ok(created)
+    Ok(created.then(|| metadata_identity(&metadata)))
 }
 
 fn ensure_real_directory(
@@ -507,14 +519,14 @@ fn restrict_directory_permissions(path: &Path, variable: &str) -> Result<(), App
 }
 
 pub(crate) fn sync_created_directory_entries(
-    created_directories: &[PathBuf],
+    created_directories: &[CreatedDirectory],
     variable: &str,
 ) -> Result<(), AppError> {
     for directory in created_directories.iter().rev() {
-        let parent = directory.parent().ok_or_else(|| {
+        let parent = directory.path.parent().ok_or_else(|| {
             AppError::invalid_environment(
                 variable,
-                Some(NativePath::new(directory.clone())),
+                Some(NativePath::new(directory.path.clone())),
                 "new directory has no parent",
             )
         })?;
@@ -692,7 +704,11 @@ mod tests {
         fs::create_dir(&directory).unwrap();
         fs::set_permissions(&directory, fs::Permissions::from_mode(0o600)).unwrap();
 
-        assert!(!create_restrictive_directory(&directory, "XDG_STATE_HOME").unwrap());
+        assert!(
+            create_restrictive_directory(&directory, "XDG_STATE_HOME")
+                .unwrap()
+                .is_none()
+        );
 
         assert_eq!(fs::metadata(&directory).unwrap().mode() & 0o777, 0o700);
     }

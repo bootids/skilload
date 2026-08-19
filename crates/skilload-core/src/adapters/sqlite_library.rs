@@ -1,6 +1,6 @@
 use crate::adapters::configuration::{
-    acquire_restrictive_lock, acquire_restrictive_lock_with_identity, ensure_restrictive_directory,
-    environment_io, sync_created_directory_entries,
+    CreatedDirectory, acquire_restrictive_lock, acquire_restrictive_lock_with_identity,
+    ensure_restrictive_directory, environment_io, sync_created_directory_entries,
 };
 use crate::adapters::xdg::{SystemEnvironment, XdgRootResolver};
 use crate::domain::configuration::{MutationOutcome, NativePath};
@@ -15,14 +15,15 @@ use crate::ports::configuration::{Environment, ResolvedRoots, StateRootResolver}
 use crate::ports::library::LibraryRepository;
 use rusqlite::{Connection, Error as SqlError, ErrorCode, OpenFlags, OptionalExtension, params};
 use std::collections::HashMap;
-use std::fs::{self, File};
+use std::fs::{self, File, OpenOptions};
 use std::io;
-use std::os::unix::fs::{MetadataExt, PermissionsExt};
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tempfile::Builder;
 
 const SCHEMA_VERSION: u64 = 1;
+const API_V1_UINT_MAX: i64 = 9_007_199_254_740_991;
 
 pub struct SqliteLibraryRepository {
     environment: Arc<dyn Environment>,
@@ -92,10 +93,56 @@ impl SqliteLibraryRepository {
             )),
         }
     }
+    fn database_identity_drift() -> AppError {
+        AppError::invalid_state(
+            "library_database",
+            "database_identity_drift",
+            ["the planned regular database file"],
+        )
+    }
+
+    fn existing_database_metadata(path: &Path) -> Result<fs::Metadata, AppError> {
+        match fs::symlink_metadata(path) {
+            Ok(metadata)
+                if metadata.file_type().is_file() && !metadata.file_type().is_symlink() =>
+            {
+                Ok(metadata)
+            }
+            Ok(_) => Err(Self::database_identity_drift()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                Err(Self::database_identity_drift())
+            }
+            Err(error) => Err(environment_io(
+                "XDG_DATA_HOME",
+                path,
+                "inspect planned skilload.db",
+                error,
+            )),
+        }
+    }
+
+    fn revalidate_database_identity(path: &Path, expected: (u64, u64)) -> Result<(), AppError> {
+        if metadata_identity(&Self::existing_database_metadata(path)?) == expected {
+            Ok(())
+        } else {
+            Err(Self::database_identity_drift())
+        }
+    }
+
+    fn open_existing_database(
+        path: &Path,
+        flags: OpenFlags,
+    ) -> Result<(Connection, (u64, u64)), AppError> {
+        let identity = metadata_identity(&Self::existing_database_metadata(path)?);
+        let connection = Connection::open_with_flags(path, flags | OpenFlags::SQLITE_OPEN_NOFOLLOW)
+            .map_err(|error| database_error(path, error))?;
+        Self::revalidate_database_identity(path, identity)?;
+        Ok((connection, identity))
+    }
 
     fn read_existing(&self, path: &Path) -> Result<Vec<PortableLibraryEntry>, AppError> {
-        let mut connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
-            .map_err(|error| database_error(path, error))?;
+        let (mut connection, identity) =
+            Self::open_existing_database(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
         let transaction = connection
             .transaction()
             .map_err(|error| database_error(path, error))?;
@@ -112,9 +159,11 @@ impl SqliteLibraryRepository {
                 path.to_path_buf(),
             )));
         }
+        Self::revalidate_database_identity(path, identity)?;
         transaction
             .commit()
             .map_err(|error| database_error(path, error))?;
+        Self::revalidate_database_identity(path, identity)?;
         Ok(entries)
     }
 
@@ -183,23 +232,23 @@ impl SqliteLibraryRepository {
             let roots = self.root_resolver.revalidate(roots)?;
             let database = Self::database_path(&roots);
             if !Self::database_exists(&database)? {
-                return Err(AppError::invalid_state(
-                    "library_database",
-                    "database_identity_drift",
-                    ["the planned regular database file"],
-                ));
+                return Err(Self::database_identity_drift());
             }
-            let mut connection =
-                Connection::open(&database).map_err(|error| database_error(&database, error))?;
+            let (mut connection, identity) =
+                Self::open_existing_database(&database, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
+            self.hooks.after_existing_database_open(&database)?;
+            Self::revalidate_database_identity(&database, identity)?;
             validate_database(&connection, &database)?;
             let existing = load_entries(&connection, &database)?;
             let plan = Self::plan(document, &existing, false)?;
             if plan.additions.is_empty() {
+                Self::revalidate_database_identity(&database, identity)?;
                 return Ok(LibraryImportOperation {
                     outcome: MutationOutcome::Unchanged,
                     data: plan.result,
                 });
             }
+            Self::revalidate_database_identity(&database, identity)?;
             let transaction = connection
                 .transaction()
                 .map_err(|error| database_error(&database, error))?;
@@ -208,11 +257,7 @@ impl SqliteLibraryRepository {
                 .commit()
                 .map_err(|error| database_error(&database, error))?;
             self.hooks.after_commit_before_sync()?;
-            File::open(&database)
-                .and_then(|file| file.sync_all())
-                .map_err(|error| {
-                    database_sync_error(&database, "sync committed database", error)
-                })?;
+            sync_existing_database(&database, identity)?;
             File::open(&roots.data.effective)
                 .and_then(|directory| directory.sync_all())
                 .map_err(|error| {
@@ -444,6 +489,10 @@ trait PersistenceHooks: Send + Sync {
     fn after_first_publish_destination_check(&self, _database: &Path) -> Result<(), AppError> {
         Ok(())
     }
+
+    fn after_existing_database_open(&self, _database: &Path) -> Result<(), AppError> {
+        Ok(())
+    }
 }
 
 struct NoopPersistenceHooks;
@@ -458,7 +507,7 @@ struct ImportPlan {
 struct FirstImportCleanup {
     lock_path: PathBuf,
     created_lock: Option<(u64, u64)>,
-    created_directories: Vec<PathBuf>,
+    created_directories: Vec<CreatedDirectory>,
     committed: bool,
 }
 
@@ -535,6 +584,11 @@ fn validate_database(connection: &Connection, path: &Path) -> Result<(), AppErro
         .query_row("SELECT version FROM schema_info", [], |row| row.get(0))
         .map_err(|error| database_error(path, error))?;
     if raw_version < 0 {
+        return Err(AppError::database_corrupt(NativePath::new(
+            path.to_path_buf(),
+        )));
+    }
+    if raw_version > API_V1_UINT_MAX {
         return Err(AppError::database_corrupt(NativePath::new(
             path.to_path_buf(),
         )));
@@ -678,6 +732,21 @@ fn apply_additions(
     additions: &[PortableLibraryEntry],
     path: &Path,
 ) -> Result<(), AppError> {
+    let changed_revision = connection
+        .execute(
+            "UPDATE state_revision
+             SET revision = revision + 1
+             WHERE typeof(revision) = 'integer' AND revision >= 0 AND revision < ?1",
+            params![i64::MAX],
+        )
+        .map_err(|error| database_error(path, error))?;
+    if changed_revision != 1 {
+        return Err(AppError::invalid_state(
+            "library_database",
+            "state_revision_not_incrementable",
+            ["a nonnegative state revision below i64::MAX"],
+        ));
+    }
     for entry in additions {
         let source = &entry.skill.source;
         connection
@@ -717,9 +786,6 @@ fn apply_additions(
                 .map_err(|error| database_error(path, error))?;
         }
     }
-    connection
-        .execute("UPDATE state_revision SET revision = revision + 1", [])
-        .map_err(|error| database_error(path, error))?;
     Ok(())
 }
 
@@ -752,7 +818,14 @@ fn database_error(path: &Path, error: SqlError) -> AppError {
         {
             AppError::database_corrupt(NativePath::new(path.to_path_buf()))
         }
-        SqlError::SqliteFailure(_, Some(message)) if message.contains("no such table") => {
+        SqlError::SqliteFailure(_, Some(message))
+            if message.contains("no such table") || message.contains("no such column") =>
+        {
+            AppError::database_corrupt(NativePath::new(path.to_path_buf()))
+        }
+        SqlError::SqlInputError { msg, .. }
+            if msg.contains("no such table") || msg.contains("no such column") =>
+        {
             AppError::database_corrupt(NativePath::new(path.to_path_buf()))
         }
         SqlError::FromSqlConversionFailure(..)
@@ -780,6 +853,29 @@ fn database_sync_error(path: &Path, action: &str, error: io::Error) -> AppError 
     )
 }
 
+fn sync_existing_database(path: &Path, identity: (u64, u64)) -> Result<(), AppError> {
+    SqliteLibraryRepository::revalidate_database_identity(path, identity)?;
+    let mut options = OpenOptions::new();
+    options
+        .read(true)
+        .write(true)
+        .custom_flags(libc::O_NOFOLLOW);
+    let file = options
+        .open(path)
+        .map_err(|_| SqliteLibraryRepository::database_identity_drift())?;
+    let opened_identity = metadata_identity(
+        &file
+            .metadata()
+            .map_err(|error| database_sync_error(path, "inspect committed database", error))?,
+    );
+    if opened_identity != identity {
+        return Err(SqliteLibraryRepository::database_identity_drift());
+    }
+    SqliteLibraryRepository::revalidate_database_identity(path, identity)?;
+    file.sync_all()
+        .map_err(|error| database_sync_error(path, "sync committed database", error))
+}
+
 fn metadata_identity(metadata: &fs::Metadata) -> (u64, u64) {
     (metadata.dev(), metadata.ino())
 }
@@ -787,7 +883,7 @@ fn metadata_identity(metadata: &fs::Metadata) -> (u64, u64) {
 fn cleanup_first_import(
     lock_path: &Path,
     created_lock: Option<(u64, u64)>,
-    created_directories: &[PathBuf],
+    created_directories: &[CreatedDirectory],
 ) {
     if let Some(identity) = created_lock
         && fs::symlink_metadata(lock_path)
@@ -797,13 +893,15 @@ fn cleanup_first_import(
         let _ = fs::remove_file(lock_path);
     }
     for directory in created_directories.iter().rev() {
-        if fs::symlink_metadata(directory)
+        if fs::symlink_metadata(&directory.path)
             .ok()
             .is_some_and(|metadata| {
-                metadata.file_type().is_dir() && !metadata.file_type().is_symlink()
+                metadata.file_type().is_dir()
+                    && !metadata.file_type().is_symlink()
+                    && metadata_identity(&metadata) == directory.identity
             })
         {
-            let _ = fs::remove_dir(directory);
+            let _ = fs::remove_dir(&directory.path);
         }
     }
 }
@@ -835,6 +933,7 @@ mod tests {
     use crate::ports::configuration::Environment;
     use std::collections::HashMap;
     use std::ffi::OsString;
+    use std::os::unix::fs::symlink;
     use tempfile::tempdir;
 
     #[derive(Default)]
@@ -1116,5 +1215,155 @@ mod tests {
             fs::read(temporary.path().join("data/skilload/skilload.db")).unwrap(),
             b"raced authoritative database"
         );
+    }
+    struct ExistingDatabaseReplacement {
+        database: PathBuf,
+        displaced: PathBuf,
+        replacement: PathBuf,
+    }
+
+    impl PersistenceHooks for ExistingDatabaseReplacement {
+        fn after_existing_database_open(&self, _database: &Path) -> Result<(), AppError> {
+            fs::rename(&self.database, &self.displaced).unwrap();
+            symlink(&self.replacement, &self.database).unwrap();
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn existing_import_rejects_a_database_replaced_after_open() {
+        let temporary = tempdir().unwrap();
+        let environment = Arc::new(TestEnvironment::with_roots(temporary.path()));
+        let initial = SqliteLibraryRepository::with_environment(
+            environment.clone(),
+            Arc::new(XdgRootResolver),
+        );
+        initial
+            .import(&document(vec![entry("skills/review", None)]), false)
+            .unwrap();
+        let database = temporary.path().join("data/skilload/skilload.db");
+        let replacement = temporary.path().join("foreign.db");
+        fs::write(&replacement, b"foreign database").unwrap();
+        let repository = SqliteLibraryRepository::with_hooks(
+            environment,
+            Arc::new(XdgRootResolver),
+            Arc::new(ExistingDatabaseReplacement {
+                database: database.clone(),
+                displaced: temporary.path().join("displaced.db"),
+                replacement: replacement.clone(),
+            }),
+        );
+
+        let error = repository
+            .import(&document(vec![entry("skills/new", None)]), false)
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            AppError::InvalidState { state, .. } if state == "database_identity_drift"
+        ));
+        assert_eq!(fs::read(replacement).unwrap(), b"foreign database");
+    }
+
+    #[test]
+    fn missing_schema_column_is_database_corrupt() {
+        let temporary = tempdir().unwrap();
+        let repository = SqliteLibraryRepository::with_environment(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(XdgRootResolver),
+        );
+        repository
+            .import(&document(vec![entry("skills/review", None)]), false)
+            .unwrap();
+        let database = temporary.path().join("data/skilload/skilload.db");
+        Connection::open(&database)
+            .unwrap()
+            .execute_batch("ALTER TABLE library_entries RENAME COLUMN name TO renamed_name")
+            .unwrap();
+
+        let error = repository.export().unwrap_err();
+        assert_eq!(error.code(), "database_corrupt", "{error:?}");
+    }
+
+    #[test]
+    fn schema_version_above_api_uint_range_is_database_corrupt() {
+        let temporary = tempdir().unwrap();
+        let repository = SqliteLibraryRepository::with_environment(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(XdgRootResolver),
+        );
+        repository
+            .import(&document(vec![entry("skills/review", None)]), false)
+            .unwrap();
+        let database = temporary.path().join("data/skilload/skilload.db");
+        Connection::open(&database)
+            .unwrap()
+            .execute(
+                "UPDATE schema_info SET version = ?1",
+                params![API_V1_UINT_MAX + 1],
+            )
+            .unwrap();
+
+        assert_eq!(repository.export().unwrap_err().code(), "database_corrupt");
+    }
+
+    #[test]
+    fn nonincrementable_state_revision_rejects_import_without_mutation() {
+        let temporary = tempdir().unwrap();
+        let repository = SqliteLibraryRepository::with_environment(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(XdgRootResolver),
+        );
+        repository
+            .import(&document(vec![entry("skills/review", None)]), false)
+            .unwrap();
+        let database = temporary.path().join("data/skilload/skilload.db");
+        Connection::open(&database)
+            .unwrap()
+            .execute("UPDATE state_revision SET revision = ?1", params![i64::MAX])
+            .unwrap();
+        let before = fs::read(&database).unwrap();
+
+        let error = repository
+            .import(&document(vec![entry("skills/new", None)]), false)
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            AppError::InvalidState { state, .. } if state == "state_revision_not_incrementable"
+        ));
+        assert_eq!(fs::read(database).unwrap(), before);
+    }
+
+    struct ReplaceCreatedLocksDirectory {
+        locks: PathBuf,
+    }
+
+    impl PersistenceHooks for ReplaceCreatedLocksDirectory {
+        fn before_first_lock(&self) -> Result<(), AppError> {
+            fs::remove_dir(&self.locks).unwrap();
+            fs::create_dir(&self.locks).unwrap();
+            Err(AppError::Internal {
+                incident_id: "replace-created-locks-directory".to_owned(),
+            })
+        }
+    }
+
+    #[test]
+    fn first_import_cleanup_preserves_replaced_created_directory() {
+        let temporary = tempdir().unwrap();
+        let locks = temporary.path().join("state/skilload/locks");
+        let repository = SqliteLibraryRepository::with_hooks(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(XdgRootResolver),
+            Arc::new(ReplaceCreatedLocksDirectory {
+                locks: locks.clone(),
+            }),
+        );
+
+        let error = repository
+            .import(&document(vec![entry("skills/review", None)]), false)
+            .unwrap_err();
+        assert_eq!(error.code(), "internal_invariant");
+        assert!(locks.is_dir());
+        assert!(temporary.path().join("state/skilload").is_dir());
     }
 }

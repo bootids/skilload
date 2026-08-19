@@ -4,13 +4,14 @@ use crate::domain::library::PortableLibraryDocument;
 use crate::error::AppError;
 use crate::ports::configuration::{Environment, ResolvedRoots, StateRootResolver};
 use crate::ports::library::LibraryTransferStore;
+use rustix::fs::renameat;
 use std::collections::HashSet;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tempfile::Builder;
+use tempfile::{Builder, NamedTempFile};
 
 const MAX_IMPORT_BYTES: u64 = 67_108_864;
 const MAX_IMPORT_ENTRIES: u64 = 10_000;
@@ -100,7 +101,7 @@ impl PortableLibraryTransferStore {
         let roots = self.resolve_roots()?;
         let output_path = output.as_path();
         let parent = validated_output_parent(output_path, output)?;
-        reject_protected_output(output_path, &parent, &roots, output)?;
+        reject_protected_output(output_path, &parent.path, &roots, output)?;
         ensure_regular_output(output_path, output)?;
 
         let mut document = document.clone();
@@ -116,8 +117,9 @@ impl PortableLibraryTransferStore {
         let mut staging = Builder::new()
             .prefix(".skilload-library-")
             .suffix(".tmp")
-            .tempfile_in(&parent)
+            .tempfile_in(&parent.path)
             .map_err(|error| export_io(output, "create export staging file", error))?;
+        parent.revalidate(output)?;
         staging
             .as_file()
             .set_permissions(fs::Permissions::from_mode(0o600))
@@ -132,16 +134,20 @@ impl PortableLibraryTransferStore {
         self.write_hooks.before_rename()?;
 
         let roots = self.root_resolver.revalidate(&roots)?;
-        let parent = validated_output_parent(output_path, output)?;
-        reject_protected_output(output_path, &parent, &roots, output)?;
+        parent.revalidate(output)?;
+        reject_protected_output(output_path, &parent.path, &roots, output)?;
         ensure_regular_output(output_path, output)?;
-        staging
-            .persist(output_path)
-            .map_err(|error| export_io(output, "atomically replace export output", error.error))?;
+        parent.revalidate(output)?;
+        self.write_hooks
+            .after_final_output_validation_before_publish(&parent.path)?;
+        publish_staging(&mut staging, &parent, output_path, output)?;
         self.write_hooks.after_rename_before_parent_sync()?;
-        File::open(&parent)
-            .and_then(|directory| directory.sync_all())
+        parent.revalidate(output)?;
+        parent
+            .directory
+            .sync_all()
             .map_err(|error| export_io(output, "sync export parent directory", error))?;
+        parent.revalidate(output)?;
         Ok(())
     }
 }
@@ -171,6 +177,13 @@ impl LibraryTransferStore for PortableLibraryTransferStore {
 
 trait TransferWriteHooks: Send + Sync {
     fn before_rename(&self) -> Result<(), AppError> {
+        Ok(())
+    }
+
+    fn after_final_output_validation_before_publish(
+        &self,
+        _output_parent: &Path,
+    ) -> Result<(), AppError> {
         Ok(())
     }
 
@@ -226,7 +239,34 @@ fn open_regular_input(
     Ok(file)
 }
 
-fn validated_output_parent(path: &Path, output: &NativePath) -> Result<PathBuf, AppError> {
+struct ValidatedOutputParent {
+    path: PathBuf,
+    identity: (u64, u64),
+    directory: File,
+}
+
+impl ValidatedOutputParent {
+    fn revalidate(&self, output: &NativePath) -> Result<(), AppError> {
+        let metadata = fs::symlink_metadata(&self.path).map_err(|_| {
+            AppError::validation("library_export_parent_identity_drift", Some(output.clone()))
+        })?;
+        if metadata.file_type().is_symlink()
+            || !metadata.file_type().is_dir()
+            || metadata_identity(&metadata) != self.identity
+        {
+            return Err(AppError::validation(
+                "library_export_parent_identity_drift",
+                Some(output.clone()),
+            ));
+        }
+        Ok(())
+    }
+}
+
+fn validated_output_parent(
+    path: &Path,
+    output: &NativePath,
+) -> Result<ValidatedOutputParent, AppError> {
     let absolute = absolute_path(path).map_err(|error| {
         AppError::validation(
             format!("library_export_output_path: {error}"),
@@ -244,9 +284,60 @@ fn validated_output_parent(path: &Path, output: &NativePath) -> Result<PathBuf, 
             Some(output.clone()),
         ));
     }
-    fs::canonicalize(parent).map_err(|_| {
+    let path = fs::canonicalize(parent).map_err(|_| {
         AppError::validation("library_export_parent_unresolvable", Some(output.clone()))
+    })?;
+    let metadata = fs::symlink_metadata(&path).map_err(|_| {
+        AppError::validation("library_export_parent_identity_drift", Some(output.clone()))
+    })?;
+    let mut options = OpenOptions::new();
+    options
+        .read(true)
+        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW);
+    let directory = options.open(&path).map_err(|_| {
+        AppError::validation("library_export_parent_identity_drift", Some(output.clone()))
+    })?;
+    let descriptor_metadata = directory.metadata().map_err(|_| {
+        AppError::validation("library_export_parent_identity_drift", Some(output.clone()))
+    })?;
+    if metadata.file_type().is_symlink()
+        || !metadata.file_type().is_dir()
+        || !descriptor_metadata.file_type().is_dir()
+        || !same_identity(&metadata, &descriptor_metadata)
+    {
+        return Err(AppError::validation(
+            "library_export_parent_identity_drift",
+            Some(output.clone()),
+        ));
+    }
+    Ok(ValidatedOutputParent {
+        path,
+        identity: metadata_identity(&metadata),
+        directory,
     })
+}
+
+fn publish_staging(
+    staging: &mut NamedTempFile,
+    parent: &ValidatedOutputParent,
+    output_path: &Path,
+    output: &NativePath,
+) -> Result<(), AppError> {
+    let staging_name = staging.path().file_name().ok_or_else(|| {
+        AppError::validation("library_export_staging_has_no_name", Some(output.clone()))
+    })?;
+    let output_name = output_path.file_name().ok_or_else(|| {
+        AppError::validation("library_export_output_has_no_name", Some(output.clone()))
+    })?;
+    renameat(
+        &parent.directory,
+        staging_name,
+        &parent.directory,
+        output_name,
+    )
+    .map_err(|error| export_io(output, "atomically replace export output", error.into()))?;
+    staging.disable_cleanup(true);
+    Ok(())
 }
 
 fn reject_protected_output(
@@ -347,8 +438,12 @@ fn absolute_path(path: &Path) -> io::Result<PathBuf> {
     }
 }
 
+fn metadata_identity(metadata: &fs::Metadata) -> (u64, u64) {
+    (metadata.dev(), metadata.ino())
+}
+
 fn same_identity(left: &fs::Metadata, right: &fs::Metadata) -> bool {
-    left.dev() == right.dev() && left.ino() == right.ino()
+    metadata_identity(left) == metadata_identity(right)
 }
 
 fn export_io(output: &NativePath, action: &str, error: io::Error) -> AppError {
@@ -1048,5 +1143,49 @@ mod tests {
         let error = store.write_export(&output, &document()).unwrap_err();
         assert_eq!(error.code(), "internal_invariant");
         assert_ne!(fs::read(output.as_path()).unwrap(), b"old output");
+    }
+    struct ParentReplacementAfterValidation {
+        output_parent: PathBuf,
+        displaced_parent: PathBuf,
+        protected_data: PathBuf,
+    }
+
+    impl TransferWriteHooks for ParentReplacementAfterValidation {
+        fn after_final_output_validation_before_publish(
+            &self,
+            _output_parent: &Path,
+        ) -> Result<(), AppError> {
+            fs::rename(&self.output_parent, &self.displaced_parent).unwrap();
+            symlink(&self.protected_data, &self.output_parent).unwrap();
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn export_does_not_publish_through_a_replaced_parent_directory() {
+        let temporary = tempdir().unwrap();
+        let protected_data = temporary.path().join("data/skilload");
+        fs::create_dir_all(&protected_data).unwrap();
+        let database = protected_data.join("skilload.db");
+        fs::write(&database, b"protected database").unwrap();
+        let output_parent = temporary.path().join("output");
+        let displaced_parent = temporary.path().join("displaced-output");
+        fs::create_dir(&output_parent).unwrap();
+        let output = NativePath::new(output_parent.join("library.json"));
+        let store = PortableLibraryTransferStore::with_write_hooks(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(XdgRootResolver),
+            Arc::new(ParentReplacementAfterValidation {
+                output_parent: output_parent.clone(),
+                displaced_parent: displaced_parent.clone(),
+                protected_data: protected_data.clone(),
+            }),
+        );
+
+        let error = store.write_export(&output, &document()).unwrap_err();
+        assert_eq!(error.code(), "validation_failed");
+        assert_eq!(fs::read(database).unwrap(), b"protected database");
+        assert!(!protected_data.join("library.json").exists());
+        assert!(displaced_parent.join("library.json").is_file());
     }
 }
