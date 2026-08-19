@@ -6,7 +6,10 @@ use crate::domain::library::{
 use crate::error::AppError;
 use crate::ports::configuration::{Environment, ResolvedRoots, StateRootResolver};
 use crate::ports::library::LibraryTransferStore;
-use rustix::fs::{AtFlags, fstat, linkat, renameat, statat, unlinkat};
+use rustix::fs::{
+    AtFlags, FileType, Mode, OFlags, RenameFlags, fstat, linkat, openat, renameat_with, statat,
+    unlinkat,
+};
 use std::collections::HashSet;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
@@ -131,20 +134,29 @@ impl PortableLibraryTransferStore {
         reject_protected_output(output_path, &parent.path, &roots, output)?;
         ensure_regular_output(output_path, output)?;
         parent.revalidate(output)?;
+        let expected_output = observe_output_target(output_path, output)?;
         self.write_hooks
             .after_final_output_validation_before_publish(&parent.path)?;
         publish_staging(
             &mut staging,
             &parent,
+            &roots,
+            expected_output,
             output_path,
             output,
-            || {
-                self.write_hooks
-                    .after_staging_identity_check_before_publish(&parent.path)
-            },
-            || {
-                self.write_hooks
-                    .after_publication_link_before_rename(&parent.path)
+            PublishStagingHooks {
+                after_identity_check: || {
+                    self.write_hooks
+                        .after_staging_identity_check_before_publish(&parent.path)
+                },
+                after_publication_link_before_rename: || {
+                    self.write_hooks
+                        .after_publication_link_before_rename(&parent.path)
+                },
+                after_publication_identity_check_before_exchange: || {
+                    self.write_hooks
+                        .after_publication_identity_check_before_exchange(&parent.path)
+                },
             },
         )?;
         self.write_hooks.after_rename_before_parent_sync()?;
@@ -209,6 +221,13 @@ trait TransferWriteHooks: Send + Sync {
     }
 
     fn after_publication_link_before_rename(&self, _output_parent: &Path) -> Result<(), AppError> {
+        Ok(())
+    }
+
+    fn after_publication_identity_check_before_exchange(
+        &self,
+        _output_parent: &Path,
+    ) -> Result<(), AppError> {
         Ok(())
     }
 
@@ -347,14 +366,194 @@ fn validated_output_parent(
     })
 }
 
-fn publish_staging(
-    staging: &mut NamedTempFile,
-    parent: &ValidatedOutputParent,
+#[derive(Clone, Copy)]
+enum OutputTargetIdentity {
+    Existing((u64, u64)),
+    Absent,
+}
+
+fn observe_output_target(
     output_path: &Path,
     output: &NativePath,
-    after_identity_check: impl FnOnce() -> Result<(), AppError>,
-    after_publication_link_before_rename: impl FnOnce() -> Result<(), AppError>,
-) -> Result<(), AppError> {
+) -> Result<OutputTargetIdentity, AppError> {
+    match fs::symlink_metadata(output_path) {
+        Ok(metadata) if metadata.file_type().is_file() && !metadata.file_type().is_symlink() => {
+            Ok(OutputTargetIdentity::Existing(metadata_identity(&metadata)))
+        }
+        Ok(_) => Err(AppError::validation(
+            "library_export_output_not_regular",
+            Some(output.clone()),
+        )),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(OutputTargetIdentity::Absent),
+        Err(_) => Err(AppError::validation(
+            "library_export_output_unavailable",
+            Some(output.clone()),
+        )),
+    }
+}
+
+struct OutputPublicationGuard<'parent> {
+    parent: &'parent ValidatedOutputParent,
+    name: std::ffi::OsString,
+    identity: (u64, u64),
+    created: bool,
+}
+
+impl<'parent> OutputPublicationGuard<'parent> {
+    fn capture(
+        parent: &'parent ValidatedOutputParent,
+        roots: &ResolvedRoots,
+        expected: OutputTargetIdentity,
+        output_name: std::ffi::OsString,
+        output: &NativePath,
+    ) -> Result<Self, AppError> {
+        let (identity, created) = match expected {
+            OutputTargetIdentity::Existing(expected_identity) => {
+                let entry = statat(&parent.directory, &output_name, AtFlags::SYMLINK_NOFOLLOW)
+                    .map_err(|error| {
+                        let error: io::Error = error.into();
+                        if error.kind() == io::ErrorKind::NotFound {
+                            AppError::validation(
+                                "library_export_publication_identity_drift",
+                                Some(output.clone()),
+                            )
+                        } else {
+                            export_io(output, "inspect export output", error)
+                        }
+                    })?;
+                if FileType::from_raw_mode(entry.st_mode) != FileType::RegularFile
+                    || (entry.st_dev as u64, entry.st_ino) != expected_identity
+                {
+                    return Err(AppError::validation(
+                        "library_export_publication_identity_drift",
+                        Some(output.clone()),
+                    ));
+                }
+                (expected_identity, false)
+            }
+            OutputTargetIdentity::Absent => {
+                match statat(&parent.directory, &output_name, AtFlags::SYMLINK_NOFOLLOW) {
+                    Ok(_) => {
+                        return Err(AppError::validation(
+                            "library_export_publication_identity_drift",
+                            Some(output.clone()),
+                        ));
+                    }
+                    Err(error) => {
+                        let error: io::Error = error.into();
+                        if error.kind() != io::ErrorKind::NotFound {
+                            return Err(export_io(output, "inspect export output", error));
+                        }
+                    }
+                }
+                let handle = openat(
+                    &parent.directory,
+                    &output_name,
+                    OFlags::CREATE | OFlags::EXCL | OFlags::WRONLY | OFlags::NOFOLLOW,
+                    Mode::from_bits_truncate(0o600),
+                )
+                .map_err(|error| {
+                    let error: io::Error = error.into();
+                    if error.kind() == io::ErrorKind::AlreadyExists {
+                        AppError::validation(
+                            "library_export_publication_identity_drift",
+                            Some(output.clone()),
+                        )
+                    } else {
+                        export_io(output, "create export publication guard", error)
+                    }
+                })?;
+                let held = fstat(&handle).map_err(|error| {
+                    export_io(output, "inspect export publication guard", error.into())
+                })?;
+                ((held.st_dev as u64, held.st_ino), true)
+            }
+        };
+        let guard = Self {
+            parent,
+            name: output_name,
+            identity,
+            created,
+        };
+        if !guard.matches(&guard.name) {
+            return Err(AppError::validation(
+                "library_export_publication_identity_drift",
+                Some(output.clone()),
+            ));
+        }
+        if protected_paths(roots).iter().any(|protected| {
+            fs::symlink_metadata(protected)
+                .ok()
+                .is_some_and(|metadata| metadata_identity(&metadata) == guard.identity)
+        }) {
+            return Err(AppError::validation(
+                "library_export_protected_target",
+                Some(output.clone()),
+            ));
+        }
+        Ok(guard)
+    }
+
+    fn matches(&self, name: &std::ffi::OsStr) -> bool {
+        statat(&self.parent.directory, name, AtFlags::SYMLINK_NOFOLLOW)
+            .ok()
+            .is_some_and(|entry| {
+                FileType::from_raw_mode(entry.st_mode) == FileType::RegularFile
+                    && (entry.st_dev as u64, entry.st_ino) == self.identity
+            })
+    }
+
+    fn remove_published_entry(
+        &mut self,
+        publication_name: &std::ffi::OsStr,
+        output: &NativePath,
+    ) -> Result<(), AppError> {
+        if !self.matches(publication_name) {
+            return Err(AppError::validation(
+                "library_export_publication_identity_drift",
+                Some(output.clone()),
+            ));
+        }
+        unlinkat(&self.parent.directory, publication_name, AtFlags::empty())
+            .map_err(|error| export_io(output, "remove replaced export output", error.into()))?;
+        self.created = false;
+        Ok(())
+    }
+}
+
+impl Drop for OutputPublicationGuard<'_> {
+    fn drop(&mut self) {
+        if self.created && self.matches(&self.name) {
+            let _ = unlinkat(&self.parent.directory, &self.name, AtFlags::empty());
+        }
+    }
+}
+
+struct PublishStagingHooks<AfterIdentityCheck, AfterPublicationLink, AfterPublicationIdentity> {
+    after_identity_check: AfterIdentityCheck,
+    after_publication_link_before_rename: AfterPublicationLink,
+    after_publication_identity_check_before_exchange: AfterPublicationIdentity,
+}
+
+fn publish_staging<AfterIdentityCheck, AfterPublicationLink, AfterPublicationIdentity>(
+    staging: &mut NamedTempFile,
+    parent: &ValidatedOutputParent,
+    roots: &ResolvedRoots,
+    expected_output: OutputTargetIdentity,
+    output_path: &Path,
+    output: &NativePath,
+    hooks: PublishStagingHooks<AfterIdentityCheck, AfterPublicationLink, AfterPublicationIdentity>,
+) -> Result<(), AppError>
+where
+    AfterIdentityCheck: FnOnce() -> Result<(), AppError>,
+    AfterPublicationLink: FnOnce() -> Result<(), AppError>,
+    AfterPublicationIdentity: FnOnce() -> Result<(), AppError>,
+{
+    let PublishStagingHooks {
+        after_identity_check,
+        after_publication_link_before_rename,
+        after_publication_identity_check_before_exchange,
+    } = hooks;
     let staging_name = staging
         .path()
         .file_name()
@@ -380,6 +579,19 @@ fn publish_staging(
         cleanup_staging_if_owned(staging, parent, &staging_name);
         return Err(error);
     }
+    let mut output_guard = match OutputPublicationGuard::capture(
+        parent,
+        roots,
+        expected_output,
+        output_name.clone(),
+        output,
+    ) {
+        Ok(guard) => guard,
+        Err(error) => {
+            cleanup_staging_if_owned(staging, parent, &staging_name);
+            return Err(error);
+        }
+    };
     if let Err(error) = verify_staging_identity(staging, parent, &staging_name, output) {
         cleanup_staging_if_owned(staging, parent, &staging_name);
         return Err(error);
@@ -406,21 +618,59 @@ fn publish_staging(
         cleanup_staging_if_owned(staging, parent, &staging_name);
         return Err(error);
     }
-    if let Err(error) = renameat(
+    if !output_guard.matches(&output_name) {
+        cleanup_staging_if_owned(staging, parent, &publication_name);
+        cleanup_staging_if_owned(staging, parent, &staging_name);
+        return Err(AppError::validation(
+            "library_export_publication_identity_drift",
+            Some(output.clone()),
+        ));
+    }
+    if let Err(error) = after_publication_identity_check_before_exchange() {
+        cleanup_staging_if_owned(staging, parent, &publication_name);
+        cleanup_staging_if_owned(staging, parent, &staging_name);
+        return Err(error);
+    }
+    if let Err(error) = renameat_with(
         &parent.directory,
         &publication_name,
         &parent.directory,
         &output_name,
+        RenameFlags::EXCHANGE,
     ) {
         cleanup_staging_if_owned(staging, parent, &staging_name);
         cleanup_staging_if_owned(staging, parent, &publication_name);
         return Err(export_io(
             output,
-            "atomically replace export output",
+            "exchange export publication with output guard",
             error.into(),
         ));
     }
-    if let Err(error) = verify_staging_identity(staging, parent, &output_name, output) {
+    if verify_staging_identity(staging, parent, &output_name, output).is_err()
+        || !output_guard.matches(&publication_name)
+    {
+        let restore = renameat_with(
+            &parent.directory,
+            &publication_name,
+            &parent.directory,
+            &output_name,
+            RenameFlags::EXCHANGE,
+        );
+        cleanup_staging_if_owned(staging, parent, &publication_name);
+        cleanup_staging_if_owned(staging, parent, &staging_name);
+        return match restore {
+            Ok(()) => Err(AppError::validation(
+                "library_export_publication_identity_drift",
+                Some(output.clone()),
+            )),
+            Err(error) => Err(export_io(
+                output,
+                "restore export target after publication identity drift",
+                error.into(),
+            )),
+        };
+    }
+    if let Err(error) = output_guard.remove_published_entry(&publication_name, output) {
         cleanup_staging_if_owned(staging, parent, &staging_name);
         return Err(error);
     }
@@ -1370,6 +1620,7 @@ mod tests {
             &self,
             _output_parent: &Path,
         ) -> Result<(), AppError> {
+            fs::remove_file(&self.output).unwrap();
             fs::create_dir(&self.output).unwrap();
             fs::write(self.output.join("preserve"), b"external directory").unwrap();
             Ok(())
@@ -1413,6 +1664,54 @@ mod tests {
             Arc::new(TestEnvironment::with_roots(temporary.path())),
             Arc::new(XdgRootResolver),
             Arc::new(PublicationLinkReplacement {
+                replacement: replacement.clone(),
+            }),
+        );
+
+        let error = store.write_export(&output, &document()).unwrap_err();
+
+        assert_eq!(error.code(), "validation_failed");
+        assert_eq!(fs::read(output.as_path()).unwrap(), b"old output");
+        assert_eq!(fs::read(&replacement).unwrap(), b"replacement bytes");
+    }
+
+    struct PublicationLinkReplacementAfterIdentityCheck {
+        replacement: PathBuf,
+    }
+
+    impl TransferWriteHooks for PublicationLinkReplacementAfterIdentityCheck {
+        fn after_publication_identity_check_before_exchange(
+            &self,
+            output_parent: &Path,
+        ) -> Result<(), AppError> {
+            let publication = fs::read_dir(output_parent)
+                .unwrap()
+                .map(|entry| entry.unwrap().path())
+                .find(|path| {
+                    path.file_name().is_some_and(|name| {
+                        name.to_string_lossy().starts_with(".skilload-publish-")
+                    })
+                })
+                .unwrap();
+            fs::remove_file(&publication).unwrap();
+            fs::hard_link(&self.replacement, publication).unwrap();
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn export_restores_the_old_output_when_publication_changes_after_final_check() {
+        let temporary = tempdir().unwrap();
+        let output_parent = temporary.path().join("output");
+        let output = NativePath::new(output_parent.join("library.json"));
+        let replacement = temporary.path().join("replacement.json");
+        fs::create_dir(&output_parent).unwrap();
+        fs::write(output.as_path(), b"old output").unwrap();
+        fs::write(&replacement, b"replacement bytes").unwrap();
+        let store = PortableLibraryTransferStore::with_write_hooks(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(XdgRootResolver),
+            Arc::new(PublicationLinkReplacementAfterIdentityCheck {
                 replacement: replacement.clone(),
             }),
         );
@@ -1564,6 +1863,50 @@ mod tests {
         assert_eq!(fs::read(database).unwrap(), b"protected database");
         assert!(!protected_data.join("library.json").exists());
         assert!(!displaced_parent.join("library.json").exists());
+    }
+
+    struct OutputReplacementAfterFinalValidation {
+        output: PathBuf,
+        displaced: PathBuf,
+        replacement: PathBuf,
+    }
+
+    impl TransferWriteHooks for OutputReplacementAfterFinalValidation {
+        fn after_final_output_validation_before_publish(
+            &self,
+            _output_parent: &Path,
+        ) -> Result<(), AppError> {
+            fs::rename(&self.output, &self.displaced).unwrap();
+            fs::hard_link(&self.replacement, &self.output).unwrap();
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn export_does_not_replace_an_output_changed_after_final_validation() {
+        let temporary = tempdir().unwrap();
+        let output_parent = temporary.path().join("output");
+        let output = NativePath::new(output_parent.join("library.json"));
+        let displaced = output_parent.join("displaced-library.json");
+        let replacement = temporary.path().join("replacement.json");
+        fs::create_dir(&output_parent).unwrap();
+        fs::write(output.as_path(), b"old output").unwrap();
+        fs::write(&replacement, b"foreign output").unwrap();
+        let store = PortableLibraryTransferStore::with_write_hooks(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(XdgRootResolver),
+            Arc::new(OutputReplacementAfterFinalValidation {
+                output: output.as_path().to_path_buf(),
+                displaced,
+                replacement: replacement.clone(),
+            }),
+        );
+
+        let error = store.write_export(&output, &document()).unwrap_err();
+
+        assert_eq!(error.code(), "validation_failed");
+        assert_eq!(fs::read(output.as_path()).unwrap(), b"foreign output");
+        assert_eq!(fs::read(&replacement).unwrap(), b"foreign output");
     }
     struct StagingReplacementAfterIdentityCheck {
         replacement: PathBuf,

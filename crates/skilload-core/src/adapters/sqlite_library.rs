@@ -18,7 +18,8 @@ use rusqlite::{
     Connection, Error as SqlError, ErrorCode, OpenFlags, OptionalExtension, ffi, params,
 };
 use rustix::fs::{
-    AtFlags, Mode, OFlags, RenameFlags, fstat, linkat, openat, renameat_with, statat, unlinkat,
+    AtFlags, FileType, Mode, OFlags, RenameFlags, fstat, linkat, openat, renameat_with, statat,
+    unlinkat,
 };
 use std::collections::HashMap;
 use std::ffi::OsString;
@@ -421,9 +422,10 @@ impl SqliteLibraryRepository {
                     .map_err(|error| database_error(&staging_path, error))?;
                 apply_additions(&transaction, &plan.additions, &staging_path)?;
                 self.hooks.before_commit(&staging_path)?;
-                transaction
-                    .commit()
-                    .map_err(|error| database_error(&staging_path, error))?;
+                if let Err(error) = transaction.commit() {
+                    staging.record_sidecars_after_commit_failure();
+                    return Err(database_error(&staging_path, error));
+                }
                 cleanup.committed = true;
                 self.hooks.after_commit_before_sync()?;
                 drop(connection);
@@ -453,30 +455,55 @@ impl SqliteLibraryRepository {
                     .file_name()
                     .ok_or_else(Self::database_identity_drift)?
                     .to_os_string();
+                let mut publication_guard = FirstImportPublicationGuard::create(
+                    &data_directory,
+                    database_name.clone(),
+                    &database,
+                )?;
                 let publication_name = staging.link_for_publication(&database)?;
                 self.hooks
                     .after_first_publication_link_before_rename(&database)?;
                 data_directory.revalidate()?;
                 staging.verify_entry(&publication_name)?;
+                if !publication_guard.matches(&database_name) {
+                    return Err(Self::database_identity_drift());
+                }
+                self.hooks
+                    .after_first_publication_identity_check_before_exchange(&database)?;
                 renameat_with(
                     &data_directory.handle,
                     &publication_name,
                     &data_directory.handle,
                     &database_name,
-                    RenameFlags::NOREPLACE,
+                    RenameFlags::EXCHANGE,
                 )
                 .map_err(|error| {
-                    let error: io::Error = error.into();
-                    if error.kind() == io::ErrorKind::AlreadyExists {
-                        AppError::invalid_state(
-                            "library_database",
-                            "database_identity_drift",
-                            ["an absent database before first import publish"],
-                        )
-                    } else {
-                        database_sync_error(&database, "publish committed staging database", error)
-                    }
+                    database_sync_error(
+                        &database,
+                        "exchange committed staging database with publication guard",
+                        error.into(),
+                    )
                 })?;
+                if staging.verify_entry(&database_name).is_err()
+                    || !publication_guard.matches(&publication_name)
+                {
+                    let restore = renameat_with(
+                        &data_directory.handle,
+                        &publication_name,
+                        &data_directory.handle,
+                        &database_name,
+                        RenameFlags::EXCHANGE,
+                    );
+                    return match restore {
+                        Ok(()) => Err(Self::database_identity_drift()),
+                        Err(error) => Err(database_sync_error(
+                            &database,
+                            "restore database target after publication identity drift",
+                            error.into(),
+                        )),
+                    };
+                }
+                publication_guard.remove_published_entry(&publication_name, &database)?;
                 staging.verify_entry(&database_name)?;
                 staging.mark_published(&database)?;
                 data_directory.revalidate()?;
@@ -616,6 +643,13 @@ trait PersistenceHooks: Send + Sync {
         Ok(())
     }
 
+    fn after_first_publication_identity_check_before_exchange(
+        &self,
+        _database: &Path,
+    ) -> Result<(), AppError> {
+        Ok(())
+    }
+
     fn after_first_publish_sync_before_success(&self, _database: &Path) -> Result<(), AppError> {
         Ok(())
     }
@@ -740,11 +774,106 @@ impl ValidatedDataDirectory {
     }
 }
 
+struct FirstImportPublicationGuard<'directory> {
+    directory: &'directory ValidatedDataDirectory,
+    name: OsString,
+    identity: (u64, u64),
+    armed: bool,
+}
+
+impl<'directory> FirstImportPublicationGuard<'directory> {
+    fn create(
+        directory: &'directory ValidatedDataDirectory,
+        name: OsString,
+        database: &Path,
+    ) -> Result<Self, AppError> {
+        let handle = openat(
+            &directory.handle,
+            &name,
+            OFlags::CREATE | OFlags::EXCL | OFlags::WRONLY | OFlags::NOFOLLOW,
+            Mode::from_bits_truncate(0o600),
+        )
+        .map_err(|error| {
+            let error: io::Error = error.into();
+            if error.kind() == io::ErrorKind::AlreadyExists {
+                SqliteLibraryRepository::database_identity_drift()
+            } else {
+                database_sync_error(database, "create database publication guard", error)
+            }
+        })?;
+        let held = fstat(&handle).map_err(|error| {
+            database_sync_error(database, "inspect database publication guard", error.into())
+        })?;
+        let guard = Self {
+            directory,
+            name,
+            identity: (held.st_dev as u64, held.st_ino),
+            armed: true,
+        };
+        if !guard.matches(&guard.name) {
+            return Err(SqliteLibraryRepository::database_identity_drift());
+        }
+        Ok(guard)
+    }
+
+    fn matches(&self, name: &std::ffi::OsStr) -> bool {
+        statat(&self.directory.handle, name, AtFlags::SYMLINK_NOFOLLOW)
+            .ok()
+            .is_some_and(|entry| {
+                FileType::from_raw_mode(entry.st_mode) == FileType::RegularFile
+                    && (entry.st_dev as u64, entry.st_ino) == self.identity
+            })
+    }
+
+    fn remove_published_entry(
+        &mut self,
+        publication_name: &std::ffi::OsStr,
+        database: &Path,
+    ) -> Result<(), AppError> {
+        if !self.matches(publication_name) {
+            return Err(SqliteLibraryRepository::database_identity_drift());
+        }
+        unlinkat(&self.directory.handle, publication_name, AtFlags::empty()).map_err(|error| {
+            database_sync_error(database, "remove database publication guard", error.into())
+        })?;
+        self.armed = false;
+        Ok(())
+    }
+}
+
+impl Drop for FirstImportPublicationGuard<'_> {
+    fn drop(&mut self) {
+        if self.armed && self.matches(&self.name) {
+            let _ = unlinkat(&self.directory.handle, &self.name, AtFlags::empty());
+        }
+    }
+}
+
+struct OwnedStagingSidecar {
+    name: OsString,
+    identity: (u64, u64),
+    handle: File,
+}
+
+impl OwnedStagingSidecar {
+    fn is_held(&self, directory: &ValidatedDataDirectory) -> bool {
+        fstat(&self.handle)
+            .ok()
+            .zip(statat(&directory.handle, &self.name, AtFlags::SYMLINK_NOFOLLOW).ok())
+            .is_some_and(|(held, entry)| {
+                FileType::from_raw_mode(entry.st_mode) == FileType::RegularFile
+                    && (held.st_dev as u64, held.st_ino) == self.identity
+                    && (entry.st_dev as u64, entry.st_ino) == self.identity
+            })
+    }
+}
+
 struct FirstImportStaging<'directory> {
     file: NamedTempFile,
     directory: &'directory ValidatedDataDirectory,
     name: OsString,
     publication_name: Option<OsString>,
+    owned_sidecars: Vec<OwnedStagingSidecar>,
     published: bool,
 }
 
@@ -763,6 +892,7 @@ impl<'directory> FirstImportStaging<'directory> {
             directory,
             name,
             publication_name: None,
+            owned_sidecars: Vec::new(),
             published: false,
         })
     }
@@ -788,6 +918,47 @@ impl<'directory> FirstImportStaging<'directory> {
         self.verify_entry(&self.name)?;
         configure_connection(&connection, path)?;
         Ok(connection)
+    }
+
+    fn record_sidecars_after_commit_failure(&mut self) {
+        for suffix in ["-journal", "-wal", "-shm"] {
+            let mut name = self.name.clone();
+            name.push(suffix);
+            if self
+                .owned_sidecars
+                .iter()
+                .any(|sidecar| sidecar.name == name)
+            {
+                continue;
+            }
+            let handle = match openat(
+                &self.directory.handle,
+                &name,
+                OFlags::NOFOLLOW | OFlags::NONBLOCK,
+                Mode::empty(),
+            ) {
+                Ok(handle) => File::from(handle),
+                Err(_) => continue,
+            };
+            let held = match fstat(&handle) {
+                Ok(held) => held,
+                Err(_) => continue,
+            };
+            let entry = match statat(&self.directory.handle, &name, AtFlags::SYMLINK_NOFOLLOW) {
+                Ok(entry) => entry,
+                Err(_) => continue,
+            };
+            let identity = (held.st_dev as u64, held.st_ino);
+            if FileType::from_raw_mode(entry.st_mode) == FileType::RegularFile
+                && (entry.st_dev as u64, entry.st_ino) == identity
+            {
+                self.owned_sidecars.push(OwnedStagingSidecar {
+                    name,
+                    identity,
+                    handle,
+                });
+            }
+        }
     }
 
     fn mark_published(&mut self, database: &Path) -> Result<(), AppError> {
@@ -882,6 +1053,11 @@ impl Drop for FirstImportStaging<'_> {
     fn drop(&mut self) {
         if self.published {
             return;
+        }
+        for sidecar in &self.owned_sidecars {
+            if sidecar.is_held(self.directory) {
+                let _ = unlinkat(&self.directory.handle, &sidecar.name, AtFlags::empty());
+            }
         }
         if let Some(publication_name) = &self.publication_name {
             self.cleanup_entry_if_held(publication_name);
@@ -1709,6 +1885,30 @@ mod tests {
     }
 
     #[test]
+    fn first_import_staging_removes_recorded_sqlite_sidecars() {
+        let temporary = tempdir().unwrap();
+        let data_directory_path = temporary.path().join("data/skilload");
+        fs::create_dir_all(&data_directory_path).unwrap();
+        let data_directory = ValidatedDataDirectory::open(&data_directory_path).unwrap();
+        let staging_file = Builder::new()
+            .prefix(".skilload-library-db-")
+            .suffix(".tmp")
+            .tempfile_in(&data_directory_path)
+            .unwrap();
+        let mut staging = FirstImportStaging::new(staging_file, &data_directory).unwrap();
+        let mut sidecar_name = staging.name.clone();
+        sidecar_name.push("-journal");
+        let sidecar = data_directory_path.join(&sidecar_name);
+        fs::write(&sidecar, b"SQLite journal").unwrap();
+
+        staging.record_sidecars_after_commit_failure();
+
+        assert_eq!(staging.owned_sidecars.len(), 1);
+        drop(staging);
+        assert!(!sidecar.exists());
+    }
+
+    #[test]
     fn first_import_postcommit_failure_is_not_reported_as_success() {
         let temporary = tempdir().unwrap();
         let repository = SqliteLibraryRepository::with_hooks(
@@ -2111,6 +2311,56 @@ mod tests {
             Arc::new(TestEnvironment::with_roots(temporary.path())),
             Arc::new(XdgRootResolver),
             Arc::new(FirstImportPublicationLinkReplacement {
+                replacement: replacement.clone(),
+            }),
+        );
+
+        let error = repository
+            .import(&document(vec![entry("skills/review", None)]), false)
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            AppError::InvalidState { state, .. } if state == "database_identity_drift"
+        ));
+        assert!(!database.exists());
+        assert_eq!(fs::read(replacement).unwrap(), b"foreign database");
+    }
+
+    struct FirstImportPublicationLinkReplacementAfterIdentityCheck {
+        replacement: PathBuf,
+    }
+
+    impl PersistenceHooks for FirstImportPublicationLinkReplacementAfterIdentityCheck {
+        fn after_first_publication_identity_check_before_exchange(
+            &self,
+            database: &Path,
+        ) -> Result<(), AppError> {
+            let publication = fs::read_dir(database.parent().unwrap())
+                .unwrap()
+                .map(|entry| entry.unwrap().path())
+                .find(|path| {
+                    path.file_name().is_some_and(|name| {
+                        name.to_string_lossy().starts_with(".skilload-db-publish-")
+                    })
+                })
+                .unwrap();
+            fs::remove_file(&publication).unwrap();
+            fs::hard_link(&self.replacement, publication).unwrap();
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn first_import_restores_absence_when_publication_changes_after_final_check() {
+        let temporary = tempdir().unwrap();
+        let replacement = temporary.path().join("replacement.db");
+        let database = temporary.path().join("data/skilload/skilload.db");
+        fs::write(&replacement, b"foreign database").unwrap();
+        let repository = SqliteLibraryRepository::with_hooks(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(XdgRootResolver),
+            Arc::new(FirstImportPublicationLinkReplacementAfterIdentityCheck {
                 replacement: replacement.clone(),
             }),
         );

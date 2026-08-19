@@ -237,6 +237,10 @@ where
 
 fn validate_owner(value: &str) -> Result<(), AppError> {
     if value.is_empty()
+        || value.len() > 39
+        || value.starts_with('-')
+        || value.ends_with('-')
+        || value.contains("--")
         || !value
             .bytes()
             .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
@@ -583,6 +587,40 @@ mod tests {
             ),
             Err(AppError::Validation { constraint, .. }) if constraint == "source_repository"
         ));
+    }
+
+    #[test]
+    fn portable_source_rejects_impossible_github_owner_logins() {
+        for owner in [
+            "-owner".to_owned(),
+            "owner-".to_owned(),
+            "owner--name".to_owned(),
+            "a".repeat(40),
+        ] {
+            assert!(matches!(
+                source_with(
+                    &owner,
+                    "repository",
+                    "Repository",
+                    "skills/review",
+                    RefKind::Branch,
+                    "refs/heads/main",
+                ),
+                Err(AppError::Validation { constraint, .. }) if constraint == "source_owner"
+            ));
+        }
+
+        assert!(
+            source_with(
+                &format!("a-{}", "b".repeat(37)),
+                "repository",
+                "Repository",
+                "skills/review",
+                RefKind::Branch,
+                "refs/heads/main",
+            )
+            .is_ok()
+        );
     }
 
     #[test]

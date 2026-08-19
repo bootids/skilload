@@ -13,6 +13,7 @@ Scope: GitHub.com REST/GraphQL, repository naming and rename/transfer behavior, 
 * GitHub redirects repository web and Git operations after rename or transfer, but redirects can disappear if the old path is reused. A redirect is therefore discovery help, not identity proof.
 * `Get a repository` may return `301 Moved Permanently`, and following it yields the current repository metadata. skilload compares fresh proposed-name metadata with stored identity before proposing a migration; an old-path response is discovery/warning evidence only because that path may have been reused.
 * GitHub repository names are at most 100 characters and contain only ASCII letters, digits, `.`, `-`, and `_`. The REST metadata name is therefore the authoritative unescaped display spelling for repository-root Skill-name derivation; URL percent-decoding or caller spelling is not a second naming input.
+* GitHub portable owner identity 使用 login 的 canonical lowercase 形式：1–39 个 ASCII bytes，只能由字母/数字或单个 hyphen 组成，且不得 leading/trailing 或 consecutive hyphen。GitHub Enterprise Cloud documentation 独立确认 39-character maximum；下列 pinned validation expression 记录 P2 使用的完整 login grammar，使不可能的 owner 不会进入 durable source evidence。
 * Public repository metadata can be requested without authentication. Private repository metadata requires an authenticated token with repository Metadata read access (or equivalent classic-token access).
 * An unauthenticated or insufficiently authorized REST request can return `403` or deliberately indistinguishable `404` responses.
 * Git uses `GIT_SSH` or `GIT_SSH_COMMAND` instead of the default `ssh`; `GIT_SSH_COMMAND` takes precedence over `GIT_SSH` and is interpreted by a shell.
@@ -67,8 +68,10 @@ A transfer preserves repository content and many associated objects, and GitHub 
 * [Git worktree details: per-worktree Git directories and indexes](https://git-scm.com/docs/git-worktree#_details)
 * [Git config: `core.sshCommand` and `ssh.variant`](https://git-scm.com/docs/git-config#Documentation/git-config.txt-coresshCommand)
 * [GitHub repository-name constraints](https://docs.github.com/en/repositories/creating-and-managing-repositories/creating-a-new-repository)
+* [GitHub Enterprise Cloud username considerations](https://docs.github.com/enterprise-cloud@latest/admin/managing-iam/iam-configuration-reference/username-considerations-for-external-authentication)
+* [GitHub login validation expression](https://raw.githubusercontent.com/shinnn/github-username-regex/master/index.js)
 * [Git fetch options and object filtering](https://git-scm.com/docs/git-fetch)
 * [Git index-pack input-size limit](https://git-scm.com/docs/git-index-pack)
 * [Git 2.50.1 fetch-pack receive/index flow](https://github.com/git/git/blob/v2.50.1/fetch-pack.c)
 
-Last updated: 2026-08-18.
+Last updated: 2026-08-20.

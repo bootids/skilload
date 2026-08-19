@@ -17,7 +17,11 @@ A **source** identifies one Skill location and one intended Git ref on GitHub. *
 
 The normalized GitHub repository component MUST be 1 through 100 ASCII bytes from lowercase letters, digits, `.`, `-`, and `_`; `repository_display` preserves only the case spelling of that same repository identity. For a commit intent, the resolved commit carried by portable evidence MUST equal the full SHA in `ref_value`; a record cannot claim immutable source SHA A while its resolved metadata names SHA B.
 
+规范化 GitHub owner component MUST 为 1 至 39 个 ASCII bytes，只能含 lowercase ASCII 字母、数字或单个 `-`；它不得以 `-` 开头或结尾，也不得含连续 `--`。这是 GitHub 账户 login 约束在 canonical lowercase identity 中的直接投影。
+
 **Acceptance.** A repository with `refs/heads/release` and `refs/tags/release` produces distinct identities ending in `@refs/heads/release` and `@refs/tags/release`, even when the refs currently resolve to the same commit. Path `skills/foo@bar` at branch `main` serializes as `github:owner/repo#skills/foo%40bar@refs/heads/main`, while path `skills/foo` at branch `bar@main` serializes as `github:owner/repo#skills/foo@refs/heads/bar%40main`; parsing, export/import, database keys, and exact Trust keep all four tuples distinct.
+
+规范化 `a-b` owner 必须被接受；`-owner`、`owner-`、`owner--name` 与 40-byte owner 必须在任何持久化状态改变前以 structured source validation error 失败。
 
 ## SKL-SRC-003 - Default ref normalization (Revision 1)
 
