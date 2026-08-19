@@ -112,7 +112,7 @@ Revision 2 的 `SKL-CLI-004`、`SKL-CLI-005` 与 `SKL-CLI-012` 以 API-v2 curren
 - [ ] (2026-08-20) `PRRC_kwDOT7YN2s7jWsuw` 仍等待人类决定：需要可证明的跨 macOS/Linux create-and-hold directory primitive，或明确调整首次 import 在目录创建 race 下的 absent-root/foreign-path 保证；该 inline thread 必须保持 open。
 - [x] (2026-08-20) 四个 fixed source 已使用 `752c0f77b24a5300dffe7edcca952809688fdc1f` 的实现/验证证据逐一回复并在 reply 成功后关闭；`PRRC_kwDOT7YN2s7jWsuw` 已收到 exact decision question，保持 blocked/open。
 - [x] (2026-08-20) 四个 ordinary remediation 已由 `282fd97dcd04dea37d0ff30848ecd26be603937f` 推送并逐源回复、关闭；最终读取确认 10 条 top-level trigger 均为 `@codex`、96 个 review body 无独立问题、75 个 inline source 全部有 Plan heading，74 个已解决。唯一 `PRRC_kwDOT7YN2s7jWsuw` 因未决 create-and-hold 方向维持 pending/blocked/open。
-- [x] (2026-08-20) 已完整读取 PR #3 当前 11 条 top-level trigger、13 个非空自动 review body 与 80 个 inline thread；前两类没有独立问题，75 个既有 inline source 仍与 Plan log 对应。两个 ordinary export remediation 已完成本地代码/文档与回归：focused portable tests 19/19、fmt、Clippy、locked workspace tests（11、12、100）与 build 通过，实际 CLI API-v2 export smoke 证明 symlink-parent `..` 写入 kernel 解析的路径。两个 held-file/sidecar provenance 缺口保持 pending，API error-category 建议为 no-fix；待 preliminary commit/push 后按 source 回复。
+- [x] (2026-08-20) 已完整读取 PR #3 当前 11 条 top-level trigger、13 个非空自动 review body 与 80 个 inline thread；前两类没有独立问题，75 个既有 inline source 仍与 Plan log 对应。两个 ordinary export remediation 已由 `0892f3ea7b515f6bdd0f8e371516af71eb390c9a` 推送：focused portable tests 19/19、fmt、Clippy、locked workspace tests（11、12、100）与 build 通过，实际 CLI API-v2 export smoke 证明 symlink-parent `..` 写入 kernel 解析的路径。五个新 source 均已获得 GitHub reply；两个 fixed 与一个 no-fix thread 已关闭，两个 held-file/sidecar provenance source 与既有 directory identity source 均保持 pending/blocked/open，等待人类决定。
 - [ ] 收到明确人类合并授权后，完成预检、评审会话记录、completed 事务、必要检查、合并、默认分支更新和本地交付分支清理。
 
 ## Surprises & Discoveries
@@ -348,6 +348,8 @@ P2 implementation 与完整验证已完成，PR #3 已于 2026-08-19 05:57Z 转�
 2026-08-20 的最新 ordinary remediation 已由 `282fd97dcd04dea37d0ff30848ecd26be603937f` 推送：`database_exists` 拒绝 orphaned sidecar，first-import staging 在 SQLite error/rollback path 记录 held sidecar，live database 仅由 direct `linkat` 发布，`PortableLibraryDocument` 的 tag sort 传播 validation error；`application-and-persistence.md` 与 Rust/SQLite reference 已同步。core 98 tests、format、Clippy、locked workspace tests（11、12、98）、build 和双隔离 XDG CLI dry-run/import/export byte-identical round trip 均通过。最终会话读取显示 10 条 top-level trigger 均为 `@codex`、96 个 review body 均为空或通用自动化文字、75 个 inline source 均有 Plan heading；四个 fixed thread 均已回复并 resolved，directory identity source 仍按缺少人类决定保持 pending/blocked/open。
 
 2026-08-20 的本轮 local remediation 移除 absent export output 的 zero-byte guard，改以 hidden publication link 和 `RenameFlags::NOREPLACE` 只在完整 document ready 时发布；同时停止词法折叠用户 native output path 中位于 symlink 后的 `..`。`rust-sqlite-unicode-library-foundation.md` 与 `application-and-persistence.md` 已同步该协议及 first-import/sidecar provenance 的未决限制。focused portable 19 tests、fmt、Clippy、locked workspace tests（11、12、100）、build 和隔离 CLI API-v2 smoke 均通过。`PRRC_kwDOT7YN2s7jiT5X`、`PRRC_kwDOT7YN2s7jiT5i` 保持 pending，`PRRC_kwDOT7YN2s7jiT5n` 有 product-contract no-fix rationale；下一步提交/push preliminary ledger 后逐 source 回复并关闭可处理 thread。
+
+2026-08-20 的 reply reconciliation 已确认五个本轮 source 都有 GitHub 回复：absent-target 与 native-path fixed thread、error-category no-fix thread 均在 reply 成功后 `isResolved: true`；first-import publication source identity 与 sidecar provenance 分别收到明确的 primitive-or-guarantee 决策问题，并与先前 directory identity source 一同保持 `pending`/`blocked`/open。最终 Plan ledger commit 推送后必须重新读取全量会话与 PR head，确认 80 个 source 的记录、回复与 thread state 一致。
 
 ## Review Conversation Log
 
@@ -1560,29 +1562,29 @@ Problem: `FirstImportStaging::link_to_absent_database` 在 `verify_entry` 后仍
 
 Disposition: pending
 
-Status: open
+Status: blocked
 
 Resolution: 需要可审计、同时适用于 macOS/Linux 的“从 held file descriptor 发布 hard link”原语，或明确调整 first-import 对 foreign database target/absence 的保证。锁定的 `rustix::fs::linkat` 接口只接受 directory descriptor 与 source pathname；Linux 的 `AT_EMPTY_PATH` 不是 macOS 接口，当前 `deny(unsafe_code)`/架构例外也不允许把未经决定的 native I/O FFI 加入此切片。额外 pathname revalidation 不能证明 link source 是 held inode；本次 preliminary commit 只记录该事实，不创建伪修复。
 
-Evidence: `FirstImportStaging::link_to_absent_database` 与 locked `rustix 1.1.4` `linkat` interface 仍按 name 解析 source；`ARCHITECTURE.md` ownership invariant 禁止把 foreign path 变为本调用的 authoritative state。需要产品/architecture 决定。
+Evidence: preliminary review ledger commit `0892f3ea7b515f6bdd0f8e371516af71eb390c9a` 已推送；无代码伪修复。`FirstImportStaging::link_to_absent_database` 与 locked `rustix 1.1.4` `linkat` interface 仍按 name 解析 source；`ARCHITECTURE.md` ownership invariant 禁止把 foreign path 变为本调用的 authoritative state。需要产品/architecture 决定。
 
-GitHub outcome: 尚未回复；thread resolved: false。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_r3817530466，明确请求 held-file publication primitive 或 first-import guarantee 决定；thread resolved: false，等待明确决定。
 
 ### PRRC_kwDOT7YN2s7jiT5c — absent export target visibility
 
-Source: 内联评论 `PRRC_kwDOT7YN2s7jiT5c`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3817422428)；线程 `PRRT_kwDOT7YN2s6apE24`，当前未解决。
+Source: 内联评论 `PRRC_kwDOT7YN2s7jiT5c`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3817422428)；线程 `PRRT_kwDOT7YN2s6apE24`，当前已解决。
 
 Problem: absent output 目前由 `OutputPublicationGuard::capture` 在 requested output name 创建 zero-byte guard，再 exchange 完整 staging document；因此并发 reader 或中断可观察/保留无效 zero-byte output，而不是保持 pre-publication absence。
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: `crates/skilload-core/src/adapters/portable_library.rs` 已将 absent branch 从 `OutputPublicationGuard` 分离：先建立/验证 hidden publication link，再以 `RenameFlags::NOREPLACE` 原子发布，不在 requested name 安装 zero-byte guard；existing output 仍走 reversible exchange。新增 `export_keeps_an_absent_output_absent_until_no_clobber_publish`。
 
-Evidence: 本次 preliminary commit 将包含实现、`docs/design-docs/application-and-persistence.md` 与 `docs/references/rust-sqlite-unicode-library-foundation.md`；focused portable tests 19/19、`cargo fmt --all --check`、workspace Clippy、locked tests（11、12、100）、workspace build 和实际 CLI API-v2 smoke 均通过。
+Evidence: code/preliminary review log commit `0892f3ea7b515f6bdd0f8e371516af71eb390c9a` 已推送；focused portable tests 19/19、`cargo fmt --all --check`、workspace Clippy、locked tests（11、12、100）、workspace build 和实际 CLI API-v2 smoke 均通过。
 
-GitHub outcome: 尚未回复；thread resolved: false。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_r3817530991；thread resolved: true。
 
 ### PRRC_kwDOT7YN2s7jiT5i — first-import sidecar provenance
 
@@ -1592,45 +1594,45 @@ Problem: `record_owned_sidecars` 以 first observed matching FD/identity 将 `-j
 
 Disposition: pending
 
-Status: open
+Status: blocked
 
 Resolution: 需要可证明 SQLite 创建 sidecar 的 provenance，或明确调整 pre-commit failure 对新 data directory 的 absent-root cleanup 保证。当前 no-follow FD 只能证明“现在是该 inode”，不能证明是 SQLite/本调用创建；保守地永不清理则会留下 sidecar/目录，违背已记录的 P2 cleanup acceptance。不能以更频繁 pathname scan 伪装解决；本次 preliminary commit 只记录该事实，不创建伪修复。
 
-Evidence: `FirstImportStaging::record_owned_sidecars` 在观察后才记录 ownership，`first_import_precommit_failure_preserves_foreign_staging_sidecar` 只在 record 后创建 fixture；`ARCHITECTURE.md` 禁止删除 foreign state。需要产品/architecture 决定。
+Evidence: preliminary review ledger commit `0892f3ea7b515f6bdd0f8e371516af71eb390c9a` 已推送；无代码伪修复。`FirstImportStaging::record_owned_sidecars` 在观察后才记录 ownership，`first_import_precommit_failure_preserves_foreign_staging_sidecar` 只在 record 后创建 fixture；`ARCHITECTURE.md` 禁止删除 foreign state。需要产品/architecture 决定。
 
-GitHub outcome: 尚未回复；thread resolved: false。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_r3817531868，明确请求 SQLite sidecar provenance primitive 或 pre-commit cleanup guarantee 决定；thread resolved: false，等待明确决定。
 
 ### PRRC_kwDOT7YN2s7jiT5n — export I/O error category
 
-Source: 内联评论 `PRRC_kwDOT7YN2s7jiT5n`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3817422439)；线程 `PRRT_kwDOT7YN2s6apE3A`，当前未解决。
+Source: 内联评论 `PRRC_kwDOT7YN2s7jiT5n`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3817422439)；线程 `PRRT_kwDOT7YN2s6apE3A`，当前已解决。
 
 Problem: feedback 建议将 export staging I/O 的 `PermissionDenied` 从当前带 native output `PathValue` 的 `validation_failed` 改为 API-v2 `permission_denied`/`inaccessible` 加 `AccessDetails`。
 
 Disposition: no-fix
 
-Status: open
+Status: resolved
 
 Resolution: `SKL-LIB-009` 未把 export destination access failure 指定为 access error；当前 `validation_failed` 通过 `ValidationDetails.path` 精确投影 native output，且不会报告成功。API-v2 的 `AccessDetails` 强制携带 `TargetRef`，但该 closed scope enum 只有 workspace/global/manager/cache/database，未定义用户选择的 portable export destination；把它伪称为 database 或新增 enum 都会改变 API-v2 product contract，超出当前 Baseline。保留既有 documented validation projection；本次 preliminary commit 不改 code。
 
-Evidence: `docs/product-specs/library.md` `SKL-LIB-009` Revision 3、`docs/product-specs/api-v2.md` 的 `TargetRef`/`AccessDetails` 定义，以及 `export_io`→`ValidationDetails.path` current projection。无代码变更；待 GitHub rationale。
+Evidence: preliminary review ledger commit `0892f3ea7b515f6bdd0f8e371516af71eb390c9a` 已推送；`docs/product-specs/library.md` `SKL-LIB-009` Revision 3、`docs/product-specs/api-v2.md` 的 `TargetRef`/`AccessDetails` 定义，以及 `export_io`→`ValidationDetails.path` current projection 支持该 no-fix。无代码变更；待 GitHub rationale。
 
-GitHub outcome: 尚未回复；thread resolved: false。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_r3817532412；thread resolved: true。
 
 ### PRRC_kwDOT7YN2s7jiT5s — symlinked-parent native path semantics
 
-Source: 内联评论 `PRRC_kwDOT7YN2s7jiT5s`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3817422444)；线程 `PRRT_kwDOT7YN2s6apE3E`，当前未解决。
+Source: 内联评论 `PRRC_kwDOT7YN2s7jiT5s`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3817422444)；线程 `PRRT_kwDOT7YN2s6apE3E`，当前已解决。
 
 Problem: `absolute_path` 在通过 filesystem resolution 绑定 parent 前调用 `normalize_absolute`，会将 symlinked ancestor 后的 `..` 按词法折叠到不同目录；export 因而可能成功写入不是用户请求原生路径所指的位置。
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: `crates/skilload-core/src/adapters/portable_library.rs` 的 `absolute_path` 现只为 relative input prepend current directory，不再折叠 user-supplied `.`/`..`；`validated_output_parent` 继续 canonicalize/hold 实际 filesystem parent。新增 `export_preserves_native_symlink_parent_dotdot_semantics`，证明 export 只出现在 kernel 解析的 target。
 
-Evidence: 本次 preliminary commit 将包含实现与技术文档同步；focused portable tests 19/19、`cargo fmt --all --check`、workspace Clippy、locked tests（11、12、100）、workspace build，以及实际 CLI API-v2 smoke（physical output true、lexical output false）均通过。
+Evidence: code/preliminary review log commit `0892f3ea7b515f6bdd0f8e371516af71eb390c9a` 已推送；focused portable tests 19/19、`cargo fmt --all --check`、workspace Clippy、locked tests（11、12、100）、workspace build，以及实际 CLI API-v2 smoke（physical output true、lexical output false）均通过。
 
-GitHub outcome: 尚未回复；thread resolved: false。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_r3817533169；thread resolved: true。
 
 ## Context and Orientation
 
