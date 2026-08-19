@@ -122,13 +122,13 @@ Problem: P2 的 SQLite 打开路径只计划返回 `SchemaDetails` 或 `InvalidS
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: 已由 `91e52913477d46682e32ba1fefefc3515ba80b77` 更新本 Plan：P2 对已识别的 SQLite 损坏返回 `database_corrupt` 的 `DatabaseCorruptDetails`，携带数据库 `PathValue`、空 P2 已知 backup/export 集合和 `database-corruption-v1`，并保留原数据库；同步修正恢复过程的显式 export 文件调用。
 
 Evidence: 修订提交 `91e52913477d46682e32ba1fefefc3515ba80b77` 已推送，PR #3 头提交已核对为同一 SHA；文档一致性断言和 `git diff --check` 均通过。
 
-GitHub outcome: 待推送、回复并解决线程。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_r3809773334；thread resolved: true。
 
 ### PRRC_kwDOT7YN2s7jExK9 — alias 冲突 API 表示
 
@@ -138,13 +138,13 @@ Problem: `SKL-LIB-010` 要求 alias 冲突失败，但 API-v1 未规定 `Conflic
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: 已由 `91e52913477d46682e32ba1fefefc3515ba80b77` 更新 `docs/product-specs/api-v1.md` 与本 Plan：Library 唯一 alias 冲突使用既有 `internal_duplicate`，`name` 为 alias、`source` 为被拒绝 entry，`agent`/`path` 为 null；无需新增 API-v1 枚举值。
 
 Evidence: 修订提交 `91e52913477d46682e32ba1fefefc3515ba80b77` 已推送，PR #3 头提交已核对为同一 SHA；API catalog/`SKL-LIB-010` 字段一致性断言和 `git diff --check` 均通过。
 
-GitHub outcome: 待推送、回复并解决线程。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_r3809773891；thread resolved: true。
 
 ### PRRC_kwDOT7YN2s7jExK_ — 文件传输行为修订
 
@@ -154,13 +154,13 @@ Problem: 当前 PR 为 `SKL-LIB-009` 和 `SKL-LIB-010` 新增了强制文件参�
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: 已由 `91e52913477d46682e32ba1fefefc3515ba80b77` 将 `docs/product-specs/library.md` 的 `SKL-LIB-009` 与 `SKL-LIB-010` 提升为 Revision 2，并把强制 file options、文件/命令结果分离、原子输出和 alias error 语义纳入正文与 acceptance；本 Plan 的 Product Baseline、进度、决策和后续 status 文字已同步。
 
 Evidence: 修订提交 `91e52913477d46682e32ba1fefefc3515ba80b77` 已推送，PR #3 头提交已核对为同一 SHA；对 `origin/main` Revision 1 的对比、文档一致性断言和 `git diff --check` 均通过。
 
-GitHub outcome: 待推送、回复并解决线程。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_r3809774313；thread resolved: true。
 
 ## Context and Orientation
 
