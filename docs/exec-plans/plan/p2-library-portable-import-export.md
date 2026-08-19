@@ -189,7 +189,7 @@ Status: resolved
 
 Resolution: 提交 `e7467f70d55cc48548f4c17e4df067d529719e34` 已更新 `docs/product-specs/library.md`、`docs/design-docs/application-and-persistence.md` 与本计划：export 在 staging 前拒绝活动 database/WAL/SHM/database lock target，并以 rename 前/后不同的 failure contract 和 fixture 验收；本轮 planning 未改运行时代码。
 
-Evidence: `e7467f70d55cc48548f4c17e4df067d529719e34` 已推送且 PR #3 head 已核对为同一 SHA；`mise exec -- node /tmp/skilload-pr3-doc-check.cjs` 与 `git diff --check` 通过。
+Evidence: `e7467f70d55cc48548f4c17e4df067d529719e34` 已推送且 PR #3 head 已核对为同一 SHA；一次性文档一致性断言确认 Revision 3 export target/failure contract、设计和 Plan 对齐，`git diff --check` 通过。
 
 GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_r3810093425；thread resolved: true。
 
@@ -205,7 +205,7 @@ Status: resolved
 
 Resolution: 提交 `e7467f70d55cc48548f4c17e4df067d529719e34` 已更新 `docs/product-specs/library.md`、`docs/design-docs/application-and-persistence.md` 与本计划：import 以 no-follow、nonblocking descriptor 和 `fstat` 证明 regular file、拒绝 symlink/directory/FIFO/socket/device/identity drift，并加入 FIFO/device fixture。
 
-Evidence: `e7467f70d55cc48548f4c17e4df067d529719e34` 已推送且 PR #3 head 已核对为同一 SHA；`mise exec -- node /tmp/skilload-pr3-doc-check.cjs` 与 `git diff --check` 通过。
+Evidence: `e7467f70d55cc48548f4c17e4df067d529719e34` 已推送且 PR #3 head 已核对为同一 SHA；一次性文档一致性断言确认 Revision 3 regular-input gate、设计和 Plan 对齐，`git diff --check` 通过。
 
 GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_r3810094616；thread resolved: true。
 
@@ -221,7 +221,7 @@ Status: resolved
 
 Resolution: 提交 `e7467f70d55cc48548f4c17e4df067d529719e34` 已更新 `docs/product-specs/library.md`、`docs/product-specs/api-v1.md` 与本计划：同一 batch 的后出现 canonical source duplicate 是原子 `internal_duplicate` conflict，使用 `name: null` 和该 entry source；`SKL-LIB-010` 升为 Revision 3 并加入 fixture。
 
-Evidence: `e7467f70d55cc48548f4c17e4df067d529719e34` 已推送且 PR #3 head 已核对为同一 SHA；`mise exec -- node /tmp/skilload-pr3-doc-check.cjs` 与 `git diff --check` 通过。
+Evidence: `e7467f70d55cc48548f4c17e4df067d529719e34` 已推送且 PR #3 head 已核对为同一 SHA；一次性文档一致性断言确认 API catalog 与 Revision 3 canonical-duplicate shape 对齐，`git diff --check` 通过。
 
 GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_r3810095767；thread resolved: true。
 
@@ -237,7 +237,7 @@ Status: resolved
 
 Resolution: 提交 `e7467f70d55cc48548f4c17e4df067d529719e34` 已更新 `docs/product-specs/library.md`、`docs/design-docs/application-and-persistence.md` 与本计划：absent database 使用同目录 staging publish，commit 前清理仅由调用创建的 database/sidecar/lock/空目录，commit 后 durability-sync error 不伪称旧状态。
 
-Evidence: `e7467f70d55cc48548f4c17e4df067d529719e34` 已推送且 PR #3 head 已核对为同一 SHA；`mise exec -- node /tmp/skilload-pr3-doc-check.cjs` 与 `git diff --check` 通过。
+Evidence: `e7467f70d55cc48548f4c17e4df067d529719e34` 已推送且 PR #3 head 已核对为同一 SHA；一次性文档一致性断言确认 Revision 3 first-import staging/cleanup contract、设计和 Plan 对齐，`git diff --check` 通过。
 
 GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_r3810097033；thread resolved: true。
 
@@ -253,7 +253,7 @@ Status: resolved
 
 Resolution: 提交 `e7467f70d55cc48548f4c17e4df067d529719e34` 已更新 `docs/product-specs/library.md`、`docs/design-docs/application-and-persistence.md` 与本计划：rename 前 failure 保留旧 target/无 target，rename 后 parent-sync failure 返回 error 且允许新 target 已发布。
 
-Evidence: `e7467f70d55cc48548f4c17e4df067d529719e34` 已推送且 PR #3 head 已核对为同一 SHA；`mise exec -- node /tmp/skilload-pr3-doc-check.cjs` 与 `git diff --check` 通过。
+Evidence: `e7467f70d55cc48548f4c17e4df067d529719e34` 已推送且 PR #3 head 已核对为同一 SHA；一次性文档一致性断言确认 Revision 3 rename 前/后 failure contract、设计和 Plan 对齐，`git diff --check` 通过。
 
 GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_r3810097641；thread resolved: true。
 
@@ -269,7 +269,7 @@ Status: resolved
 
 Resolution: 提交 `e7467f70d55cc48548f4c17e4df067d529719e34` 已更新 `docs/product-specs/database-recovery.md`，在 salvage 段落前恢复 `## 2. Salvage Readable Product Data` 标题；procedure 内容和版本未变。
 
-Evidence: `e7467f70d55cc48548f4c17e4df067d529719e34` 已推送且 PR #3 head 已核对为同一 SHA；`mise exec -- node /tmp/skilload-pr3-doc-check.cjs` 与 `git diff --check` 通过。
+Evidence: `e7467f70d55cc48548f4c17e4df067d529719e34` 已推送且 PR #3 head 已核对为同一 SHA；一次性 heading/交叉引用断言确认 recovery 的 1/2/3 小节顺序，`git diff --check` 通过。
 
 GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_r3810098110；thread resolved: true。
 
