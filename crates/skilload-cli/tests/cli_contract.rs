@@ -602,7 +602,7 @@ fn parser_failures_are_terminal_safe_and_preserve_json_configuration_operations(
     assert_eq!(malformed_json.status.code(), Some(2));
     assert!(malformed_json.stderr.is_empty());
     let document: Value = serde_json::from_slice(&malformed_json.stdout).unwrap();
-    assert_eq!(document["api_version"], 1);
+    assert_eq!(document["api_version"], 2);
     assert_eq!(document["operation"], "config.set");
     assert_eq!(document["ok"], false);
     assert_eq!(document["error"]["code"], "usage_error");

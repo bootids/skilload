@@ -262,15 +262,31 @@ pub(crate) fn acquire_restrictive_lock_with_identity(
     lock_name: &str,
     lock_domain: &str,
 ) -> Result<(File, Option<(u64, u64)>), AppError> {
+    acquire_restrictive_lock_with_identity_after_path_inspection(
+        roots,
+        lock_name,
+        lock_domain,
+        |_| {},
+    )
+}
+
+fn acquire_restrictive_lock_with_identity_after_path_inspection(
+    roots: &ResolvedRoots,
+    lock_name: &str,
+    lock_domain: &str,
+    mut after_path_inspection: impl FnMut(&Path),
+) -> Result<(File, Option<(u64, u64)>), AppError> {
     let state_root = &roots.state.effective;
     ensure_restrictive_directory(state_root, "XDG_STATE_HOME")?;
     let locks = state_root.join("locks");
     ensure_restrictive_directory(&locks, "XDG_STATE_HOME")?;
     let lock_path = locks.join(lock_name);
-    let (file, created_lock) = match fs::symlink_metadata(&lock_path) {
+    let (file, created_lock, expected_identity) = match fs::symlink_metadata(&lock_path) {
         Ok(metadata) => {
             ensure_regular_lock_file(&lock_path, &metadata, lock_domain)?;
-            (open_restrictive_lock(&lock_path)?, None)
+            let identity = metadata_identity(&metadata);
+            after_path_inspection(&lock_path);
+            (open_restrictive_lock(&lock_path)?, None, identity)
         }
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             match create_restrictive_lock(&lock_path) {
@@ -283,7 +299,8 @@ pub(crate) fn acquire_restrictive_lock_with_identity(
                             error,
                         )
                     })?;
-                    (file, Some(metadata_identity(&metadata)))
+                    let identity = metadata_identity(&metadata);
+                    (file, Some(identity), identity)
                 }
                 Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
                     let metadata = fs::symlink_metadata(&lock_path).map_err(|error| {
@@ -295,7 +312,9 @@ pub(crate) fn acquire_restrictive_lock_with_identity(
                         )
                     })?;
                     ensure_regular_lock_file(&lock_path, &metadata, lock_domain)?;
-                    (open_restrictive_lock(&lock_path)?, None)
+                    let identity = metadata_identity(&metadata);
+                    after_path_inspection(&lock_path);
+                    (open_restrictive_lock(&lock_path)?, None, identity)
                 }
                 Err(error) => {
                     return Err(environment_io(
@@ -318,6 +337,7 @@ pub(crate) fn acquire_restrictive_lock_with_identity(
     };
 
     let lock_result: Result<(), AppError> = (|| {
+        ensure_opened_lock_identity(&lock_path, expected_identity, &file, lock_domain)?;
         file.set_permissions(fs::Permissions::from_mode(0o600))
             .map_err(|error| {
                 environment_io("XDG_STATE_HOME", &lock_path, "restrict durable lock", error)
@@ -326,7 +346,10 @@ pub(crate) fn acquire_restrictive_lock_with_identity(
         let start = Instant::now();
         loop {
             match file.try_lock() {
-                Ok(()) => return Ok(()),
+                Ok(()) => {
+                    ensure_opened_lock_identity(&lock_path, expected_identity, &file, lock_domain)?;
+                    return Ok(());
+                }
                 Err(std::fs::TryLockError::WouldBlock) => {
                     if start.elapsed() >= LOCK_WAIT {
                         return Err(AppError::Busy {
@@ -401,6 +424,31 @@ fn ensure_regular_lock_file(
     }
 }
 
+fn ensure_opened_lock_identity(
+    path: &Path,
+    expected_identity: (u64, u64),
+    file: &File,
+    lock_domain: &str,
+) -> Result<(), AppError> {
+    let path_metadata = fs::symlink_metadata(path)
+        .map_err(|error| environment_io("XDG_STATE_HOME", path, "inspect durable lock", error))?;
+    ensure_regular_lock_file(path, &path_metadata, lock_domain)?;
+    let descriptor_metadata = file.metadata().map_err(|error| {
+        environment_io("XDG_STATE_HOME", path, "inspect opened durable lock", error)
+    })?;
+    if metadata_identity(&path_metadata) != expected_identity
+        || metadata_identity(&descriptor_metadata) != expected_identity
+        || metadata_identity(&path_metadata) != metadata_identity(&descriptor_metadata)
+    {
+        return Err(AppError::invalid_state(
+            lock_domain,
+            "lock_path_identity_drift",
+            ["the inspected durable lock file"],
+        ));
+    }
+    Ok(())
+}
+
 fn remove_created_lock(path: &Path, created_identity: (u64, u64), handle: &File) {
     if fs::symlink_metadata(path)
         .ok()
@@ -430,6 +478,14 @@ pub(crate) struct CreatedDirectory {
 pub(crate) fn ensure_restrictive_directory(
     path: &Path,
     variable: &str,
+) -> Result<Vec<CreatedDirectory>, AppError> {
+    ensure_restrictive_directory_after_creation(path, variable, |_| Ok(()))
+}
+
+fn ensure_restrictive_directory_after_creation(
+    path: &Path,
+    variable: &str,
+    mut after_creation: impl FnMut(&CreatedDirectory) -> Result<(), AppError>,
 ) -> Result<Vec<CreatedDirectory>, AppError> {
     let mut missing_directories = Vec::new();
     let mut ancestor = path;
@@ -461,16 +517,28 @@ pub(crate) fn ensure_restrictive_directory(
     }
 
     let mut created_directories = Vec::new();
-    for directory in missing_directories.into_iter().rev() {
-        if let Some(created_directory) = create_restrictive_directory(&directory, variable)? {
-            created_directories.push(created_directory);
+    let result = (|| {
+        for directory in missing_directories.into_iter().rev() {
+            if let Some(created_directory) = create_restrictive_directory(&directory, variable)? {
+                created_directories.push(created_directory);
+                after_creation(
+                    created_directories
+                        .last()
+                        .expect("created directory was just appended"),
+                )?;
+            }
         }
-    }
 
-    let metadata = fs::symlink_metadata(path)
-        .map_err(|error| environment_io(variable, path, "inspect directory", error))?;
-    ensure_real_directory(path, &metadata, variable)?;
-    restrict_directory_permissions(path, variable)?;
+        let metadata = fs::symlink_metadata(path)
+            .map_err(|error| environment_io(variable, path, "inspect directory", error))?;
+        ensure_real_directory(path, &metadata, variable)?;
+        restrict_directory_permissions(path, variable)?;
+        Ok(())
+    })();
+    if let Err(error) = result {
+        cleanup_created_directories(&created_directories);
+        return Err(error);
+    }
     Ok(created_directories)
 }
 
@@ -540,6 +608,23 @@ fn create_restrictive_directory(
         identity: metadata_identity(&metadata),
         handle,
     }))
+}
+
+fn cleanup_created_directories(created_directories: &[CreatedDirectory]) {
+    for directory in created_directories.iter().rev() {
+        if fs::symlink_metadata(&directory.path)
+            .ok()
+            .zip(directory.handle.metadata().ok())
+            .is_some_and(|(metadata, handle_metadata)| {
+                metadata.file_type().is_dir()
+                    && !metadata.file_type().is_symlink()
+                    && metadata_identity(&metadata) == directory.identity
+                    && metadata_identity(&handle_metadata) == directory.identity
+            })
+        {
+            let _ = fs::remove_dir(&directory.path);
+        }
+    }
 }
 
 fn ensure_real_directory(
@@ -755,6 +840,58 @@ mod tests {
         );
 
         assert_eq!(fs::metadata(&directory).unwrap().mode() & 0o777, 0o700);
+    }
+
+    #[test]
+    fn restrictive_directory_rolls_back_partial_created_prefix() {
+        let temporary = tempdir().unwrap();
+        let directory = temporary.path().join("first/second");
+
+        let error =
+            ensure_restrictive_directory_after_creation(&directory, "XDG_STATE_HOME", |created| {
+                if created.path.ends_with("second") {
+                    Err(AppError::Internal {
+                        incident_id: "after-second-directory-create".to_owned(),
+                    })
+                } else {
+                    Ok(())
+                }
+            })
+            .unwrap_err();
+
+        assert_eq!(error.code(), "internal_invariant");
+        assert!(!temporary.path().join("first").exists());
+    }
+
+    #[test]
+    fn lock_rejects_replacement_after_path_inspection() {
+        let temporary = tempdir().unwrap();
+        let environment = TestEnvironment::isolated(temporary.path());
+        let roots = XdgRootResolver.resolve(&environment).unwrap();
+        let locks = roots.state.effective.join("locks");
+        let lock = locks.join("database.lock");
+        let displaced = temporary.path().join("displaced.lock");
+        let replacement = temporary.path().join("replacement.lock");
+        fs::create_dir_all(&locks).unwrap();
+        fs::write(&lock, b"inspected lock").unwrap();
+        fs::write(&replacement, b"replacement lock").unwrap();
+
+        let error = acquire_restrictive_lock_with_identity_after_path_inspection(
+            &roots,
+            "database.lock",
+            "database",
+            |path| {
+                fs::rename(path, &displaced).unwrap();
+                fs::rename(&replacement, path).unwrap();
+            },
+        )
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            AppError::InvalidState { state, .. } if state == "lock_path_identity_drift"
+        ));
+        assert_eq!(fs::read(lock).unwrap(), b"replacement lock");
     }
 
     #[test]

@@ -75,7 +75,7 @@ pub fn render_error(error: &AppError) -> String {
                 .map(|path| format!(" for {}", quote_path(path)))
                 .unwrap_or_default()
         ),
-        AppError::InputLimit {
+        AppError::LibraryInputLimit {
             limit_kind,
             measured,
             allowed,

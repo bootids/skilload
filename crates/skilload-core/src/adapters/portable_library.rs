@@ -4,7 +4,7 @@ use crate::domain::library::PortableLibraryDocument;
 use crate::error::AppError;
 use crate::ports::configuration::{Environment, ResolvedRoots, StateRootResolver};
 use crate::ports::library::LibraryTransferStore;
-use rustix::fs::renameat;
+use rustix::fs::{AtFlags, fstat, renameat, statat, unlinkat};
 use std::collections::HashSet;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
@@ -81,7 +81,7 @@ impl PortableLibraryTransferStore {
             }
             let next = bytes.len() as u64 + read as u64;
             if next > MAX_IMPORT_BYTES {
-                return Err(AppError::input_limit(
+                return Err(AppError::library_input_limit(
                     "library_import_bytes",
                     next,
                     MAX_IMPORT_BYTES,
@@ -140,7 +140,10 @@ impl PortableLibraryTransferStore {
         parent.revalidate(output)?;
         self.write_hooks
             .after_final_output_validation_before_publish(&parent.path)?;
-        publish_staging(&mut staging, &parent, output_path, output)?;
+        publish_staging(&mut staging, &parent, output_path, output, || {
+            self.write_hooks
+                .after_staging_identity_check_before_publish(&parent.path)
+        })?;
         self.write_hooks.after_rename_before_parent_sync()?;
         parent.revalidate(output)?;
         parent
@@ -181,6 +184,13 @@ trait TransferWriteHooks: Send + Sync {
     }
 
     fn after_final_output_validation_before_publish(
+        &self,
+        _output_parent: &Path,
+    ) -> Result<(), AppError> {
+        Ok(())
+    }
+
+    fn after_staging_identity_check_before_publish(
         &self,
         _output_parent: &Path,
     ) -> Result<(), AppError> {
@@ -250,9 +260,14 @@ impl ValidatedOutputParent {
         let metadata = fs::symlink_metadata(&self.path).map_err(|_| {
             AppError::validation("library_export_parent_identity_drift", Some(output.clone()))
         })?;
+        let descriptor_metadata = self.directory.metadata().map_err(|_| {
+            AppError::validation("library_export_parent_identity_drift", Some(output.clone()))
+        })?;
         if metadata.file_type().is_symlink()
             || !metadata.file_type().is_dir()
+            || !descriptor_metadata.file_type().is_dir()
             || metadata_identity(&metadata) != self.identity
+            || metadata_identity(&descriptor_metadata) != self.identity
         {
             return Err(AppError::validation(
                 "library_export_parent_identity_drift",
@@ -322,22 +337,82 @@ fn publish_staging(
     parent: &ValidatedOutputParent,
     output_path: &Path,
     output: &NativePath,
+    after_identity_check: impl FnOnce() -> Result<(), AppError>,
 ) -> Result<(), AppError> {
-    let staging_name = staging.path().file_name().ok_or_else(|| {
-        AppError::validation("library_export_staging_has_no_name", Some(output.clone()))
-    })?;
-    let output_name = output_path.file_name().ok_or_else(|| {
-        AppError::validation("library_export_output_has_no_name", Some(output.clone()))
-    })?;
+    let staging_name = staging
+        .path()
+        .file_name()
+        .ok_or_else(|| {
+            AppError::validation("library_export_staging_has_no_name", Some(output.clone()))
+        })?
+        .to_os_string();
+    let output_name = output_path
+        .file_name()
+        .ok_or_else(|| {
+            AppError::validation("library_export_output_has_no_name", Some(output.clone()))
+        })?
+        .to_os_string();
+    if let Err(error) = verify_staging_identity(staging, parent, &staging_name, output) {
+        cleanup_staging_if_owned(staging, parent, &staging_name);
+        return Err(error);
+    }
+    after_identity_check()?;
     renameat(
         &parent.directory,
-        staging_name,
+        &staging_name,
         &parent.directory,
-        output_name,
+        &output_name,
     )
     .map_err(|error| export_io(output, "atomically replace export output", error.into()))?;
+    if let Err(error) = verify_staging_identity(staging, parent, &output_name, output) {
+        staging.disable_cleanup(true);
+        return Err(error);
+    }
     staging.disable_cleanup(true);
     Ok(())
+}
+
+fn verify_staging_identity(
+    staging: &NamedTempFile,
+    parent: &ValidatedOutputParent,
+    staging_name: &std::ffi::OsStr,
+    output: &NativePath,
+) -> Result<(), AppError> {
+    let held = fstat(staging.as_file()).map_err(|_| {
+        AppError::validation(
+            "library_export_staging_identity_drift",
+            Some(output.clone()),
+        )
+    })?;
+    let entry =
+        statat(&parent.directory, staging_name, AtFlags::SYMLINK_NOFOLLOW).map_err(|_| {
+            AppError::validation(
+                "library_export_staging_identity_drift",
+                Some(output.clone()),
+            )
+        })?;
+    if held.st_dev != entry.st_dev || held.st_ino != entry.st_ino {
+        return Err(AppError::validation(
+            "library_export_staging_identity_drift",
+            Some(output.clone()),
+        ));
+    }
+    Ok(())
+}
+
+fn cleanup_staging_if_owned(
+    staging: &mut NamedTempFile,
+    parent: &ValidatedOutputParent,
+    staging_name: &std::ffi::OsStr,
+) {
+    let owned = fstat(staging.as_file())
+        .ok()
+        .zip(statat(&parent.directory, staging_name, AtFlags::SYMLINK_NOFOLLOW).ok())
+        .is_some_and(|(held, entry)| held.st_dev == entry.st_dev && held.st_ino == entry.st_ino);
+    if owned {
+        let _ = unlinkat(&parent.directory, staging_name, AtFlags::empty());
+    }
+    staging.disable_cleanup(true);
 }
 
 fn reject_protected_output(
@@ -447,10 +522,9 @@ fn same_identity(left: &fs::Metadata, right: &fs::Metadata) -> bool {
 }
 
 fn export_io(output: &NativePath, action: &str, error: io::Error) -> AppError {
-    AppError::invalid_state(
-        "library_export",
-        format!("{action}: {error}"),
-        [output.as_path().display().to_string()],
+    AppError::validation(
+        format!("library_export_io: {action}: {error}"),
+        Some(output.clone()),
     )
 }
 
@@ -763,7 +837,7 @@ impl<'a> JsonScanner<'a> {
     }
 
     fn limit(&self, kind: &str, measured: u64, allowed: u64) -> AppError {
-        AppError::input_limit(kind, measured, allowed, self.input.clone())
+        AppError::library_input_limit(kind, measured, allowed, self.input.clone())
     }
 
     fn malformed(&self) -> AppError {
@@ -821,7 +895,7 @@ mod tests {
     use crate::ports::configuration::Environment;
     use std::collections::HashMap;
     use std::ffi::OsString;
-    use std::os::unix::fs::symlink;
+    use std::os::unix::{ffi::OsStringExt, fs::symlink};
     use tempfile::tempdir;
 
     #[derive(Default)]
@@ -979,8 +1053,10 @@ mod tests {
     }
 
     fn assert_limit(bytes: &[u8], kind: &str) {
-        match scanner_error(bytes) {
-            AppError::InputLimit {
+        let error = scanner_error(bytes);
+        assert_eq!(error.code(), "library_input_limit_exceeded");
+        match error {
+            AppError::LibraryInputLimit {
                 limit_kind,
                 allowed,
                 ..
@@ -1104,7 +1180,7 @@ mod tests {
             .write_all(b" ")
             .unwrap();
         match store.read_input(&input).unwrap_err() {
-            AppError::InputLimit {
+            AppError::LibraryInputLimit {
                 limit_kind,
                 measured,
                 allowed,
@@ -1187,5 +1263,72 @@ mod tests {
         assert_eq!(fs::read(database).unwrap(), b"protected database");
         assert!(!protected_data.join("library.json").exists());
         assert!(displaced_parent.join("library.json").is_file());
+    }
+    struct StagingReplacementAfterIdentityCheck {
+        replacement: PathBuf,
+    }
+
+    impl TransferWriteHooks for StagingReplacementAfterIdentityCheck {
+        fn after_staging_identity_check_before_publish(
+            &self,
+            output_parent: &Path,
+        ) -> Result<(), AppError> {
+            let staging = fs::read_dir(output_parent)
+                .unwrap()
+                .map(|entry| entry.unwrap().path())
+                .find(|path| {
+                    path.file_name().is_some_and(|name| {
+                        name.to_string_lossy().starts_with(".skilload-library-")
+                    })
+                })
+                .unwrap();
+            fs::remove_file(&staging).unwrap();
+            fs::hard_link(&self.replacement, &staging).unwrap();
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn export_reports_staging_replacement_after_identity_check() {
+        let temporary = tempdir().unwrap();
+        let output_parent = temporary.path().join("output");
+        let output = NativePath::new(output_parent.join("library.json"));
+        let replacement = temporary.path().join("replacement.json");
+        fs::create_dir(&output_parent).unwrap();
+        fs::write(output.as_path(), b"old output").unwrap();
+        fs::write(&replacement, b"replacement bytes").unwrap();
+        let store = PortableLibraryTransferStore::with_write_hooks(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(XdgRootResolver),
+            Arc::new(StagingReplacementAfterIdentityCheck {
+                replacement: replacement.clone(),
+            }),
+        );
+
+        let error = store.write_export(&output, &document()).unwrap_err();
+        assert_eq!(error.code(), "validation_failed");
+        assert_eq!(fs::read(output.as_path()).unwrap(), b"replacement bytes");
+        assert_eq!(fs::read(replacement).unwrap(), b"replacement bytes");
+    }
+
+    #[test]
+    fn export_io_uses_a_typed_native_output_path() {
+        let output = NativePath::new(PathBuf::from(OsString::from_vec(
+            b"/tmp/library-output-\xff.json".to_vec(),
+        )));
+
+        let error = export_io(
+            &output,
+            "write export staging file",
+            io::Error::other("fault"),
+        );
+
+        assert!(matches!(
+            error,
+            AppError::Validation {
+                path: Some(path),
+                ..
+            } if path == output
+        ));
     }
 }

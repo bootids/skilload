@@ -77,6 +77,12 @@ impl SourceIdentity {
                 None,
             ));
         }
+        if !repository_display.eq_ignore_ascii_case(&repository) {
+            return Err(AppError::validation(
+                "source_repository_display_mismatch",
+                None,
+            ));
+        }
         validate_path(&path)?;
         validate_ref(ref_kind, &ref_value)?;
 
@@ -499,7 +505,7 @@ mod tests {
         );
         let invalid_root = source_with(
             "owner",
-            "repository",
+            "___",
             "___",
             "",
             RefKind::Branch,
@@ -509,6 +515,22 @@ mod tests {
         assert!(matches!(
             resolved_skill(invalid_root, "review"),
             Err(AppError::Validation { constraint, .. }) if constraint == "invalid_root_skill_name"
+        ));
+    }
+
+    #[test]
+    fn portable_source_rejects_mismatched_repository_display() {
+        assert!(matches!(
+            source_with(
+                "owner",
+                "repository",
+                "unrelated",
+                "",
+                RefKind::Branch,
+                "refs/heads/main",
+            ),
+            Err(AppError::Validation { constraint, .. })
+                if constraint == "source_repository_display_mismatch"
         ));
     }
 

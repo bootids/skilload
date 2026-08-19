@@ -1,10 +1,10 @@
 # CLI, JSON, Testing, and Release Design
 
-Status: 部分实现的 0.1 CLI MVP design。`PLAN-0002` 实现 `0.0.1` configuration slice 的 `SKL-CLI-002`、`SKL-CLI-003` 与 `SKL-CLI-011`；`PLAN-0003` 实现 `library import`/`library export` 的可移植传输表面与其适用的 API-v1 projection，其他 CLI、release 与 compatibility design 仍为 planned。
+Status: 部分实现的 0.1 CLI MVP design。`PLAN-0002` 实现 `0.0.1` configuration slice 的 `SKL-CLI-002`、`SKL-CLI-003` 与 `SKL-CLI-011`；`PLAN-0003` 实现 `library import`/`library export` 的可移植传输表面与其适用的 API-v2 projection，其他 CLI、release 与 compatibility design 仍为 planned。
 
 ## Behavior Traceability
 
-* Command parsing, common arguments, the field-level API-v1 catalog, confirmation, errors, idempotency, streams, and compatibility implement `SKL-CLI-001` through `SKL-CLI-012`.
+* Command parsing, common arguments, the field-level API-v2 catalog, confirmation, errors, idempotency, streams, and compatibility implement `SKL-CLI-001` through `SKL-CLI-012`.
 * Offline dispatch, credentials, diagnostics, and network enforcement implement the CLI-facing portions of `SKL-OPS-005` and `SKL-OPS-007` through `SKL-OPS-009`.
 * The default fixture and fault suites cover the acceptance mechanisms and scale targets named throughout `SKL-SRC-*`, `SKL-TRUST-*`, `SKL-LIB-*`, `SKL-WSP-*`, `SKL-GLB-*`, `SKL-MGR-*`, and `SKL-CACHE-*`.
 * Build, platform matrix, version policy, checksums, attestations, license inclusion, and compatibility fixtures implement `SKL-PROD-002` and `SKL-PROD-004` through `SKL-PROD-007`.
@@ -41,7 +41,7 @@ Each leaf converts validated syntax into one application request with a stable d
 
 The version-1 configuration key registry is exactly `cache_limit_bytes`, `agents.claude.executable`, and `agents.codex.executable`. The two Agent setters consume one absolute path argument and unset restores basename lookup rather than storing a default string. Source-bearing operations accept a fully qualified `--ref refs/heads/...`, `--ref refs/tags/...`, or full SHA when URL/shorthand input needs disambiguation. `workspace sync` alone accepts `--rebind-from <OLD-WORKSPACE>` and still requires explicit Agents including every Agent recorded by the old local manifest. `library list` and `library search` alone accept `--limit` and `--offset` with the exact `SKL-LIB-005` ranges/defaults. These are options on existing leaves, not additional commands or aliases.
 
-可移植 Library 传输叶子使用原生路径选项，而不是隐式标准输入协议：`library import --input <PATH> [--dry-run]` 读取一个受限的可移植 `LibraryExportData` 文档，`library export --output <PATH>` 以原子方式写入该文档。命令正常的人类结果或 API-v1 JSON 信封与输出文件保持分离，因此调用方无需剥离信封即可在随后导入前检查操作结果。这些选项属于既有叶子，不创建别名或另一命令族。
+可移植 Library 传输叶子使用原生路径选项，而不是隐式标准输入协议：`library import --input <PATH> [--dry-run]` 读取一个受限的可移植 `LibraryExportData` 文档，`library export --output <PATH>` 以原子方式写入该文档。命令正常的人类结果或 API-v2 JSON 信封与输出文件保持分离，因此调用方无需剥离信封即可在随后导入前检查操作结果。这些选项属于既有叶子，不创建别名或另一命令族。
 
 ## Common Arguments
 
@@ -59,10 +59,10 @@ Human interactive confirmation reads the terminal only after the application ret
 
 ## JSON Envelope
 
-Serialize exactly one compact or pretty-but-single JSON object to stdout. Version-1 success shape:
+Serialize exactly one compact or pretty-but-single JSON object to stdout. Version-2 success shape:
 
     {
-      "api_version": 1,
+      "api_version": 2,
       "operation": "workspace.sync",
       "ok": true,
       "result": {
@@ -71,10 +71,10 @@ Serialize exactly one compact or pretty-but-single JSON object to stdout. Versio
       }
     }
 
-Version-1 error/confirmation shape:
+Version-2 error/confirmation shape:
 
     {
-      "api_version": 1,
+      "api_version": 2,
       "operation": "library.add",
       "ok": false,
       "error": {
@@ -88,7 +88,7 @@ Version-1 error/confirmation shape:
       }
     }
 
-The authoritative [`../product-specs/api-v1.md`](../product-specs/api-v1.md) catalog defines required versus optional notation, scalar encodings, closed producer objects, consumer forward compatibility, deterministic ordering, reusable records, and the exact `result.data` type plus allowed outcome for each of the 50 non-meta operation leaves. Read-only operations use `observed`; mutations use only the narrowed `changed`, `unchanged`, `already_exists`, or `already_immutable` values listed for their operation. Domain data uses explicit typed fields, injectively percent-encoded canonical source strings from `SKL-SRC-002` with `refs/heads/`, `refs/tags/`, or lowercase full commit SHA intent, `sha256:` integrity, opaque profile/workspace-instance IDs, and the required path shape below. Every potentially full-range `u64` domain value, including repository IDs, source ceilings/counts, cache byte quantities, and pagination offsets/totals, serializes as a bounded decimal string to avoid IEEE-754 precision loss in common consumers; only catalog values bounded at or below the exact JSON-integer maximum use `UInt`. Lists follow the catalog's stable ordering.
+The authoritative [`../product-specs/api-v2.md`](../product-specs/api-v2.md) catalog defines required versus optional notation, scalar encodings, closed producer objects, Version-2 consumer forward compatibility, deterministic ordering, reusable records, and the exact `result.data` type plus allowed outcome for each of the 50 non-meta operation leaves. Read-only operations use `observed`; mutations use only the narrowed `changed`, `unchanged`, `already_exists`, or `already_immutable` values listed for their operation. Domain data uses explicit typed fields, injectively percent-encoded canonical source strings from `SKL-SRC-002` with `refs/heads/`, `refs/tags/`, or lowercase full commit SHA intent, `sha256:` integrity, opaque profile/workspace-instance IDs, and `PathValue` for every native filesystem path.
 
 Every field with domain type `NativePath` serializes as the same object in success, preview, confirmation, status, and error details:
 
@@ -103,11 +103,11 @@ A preview or result for an operation that can acquire/promote external content i
 
 Progress and diagnostics go to stderr. In JSON mode, stderr remains optional operational diagnostics and never carries data required to complete the workflow. Secrets and confirmation tokens are redacted from debug output; the token appears only in its JSON response and is stored hashed.
 
-API version 1 only gains optional fields. Required-field removal/rename, enum narrowing/reinterpretation, an operation's result-type change, or an error code's details-type change requires a new top-level API version and compatibility/migration design. `clap` operation metadata and Rust result/error types are the implementation source, but generated validator fixtures must prove exact agreement with the normative catalog rather than treating Rust serialization as self-authorizing.
+API version 2 only gains optional fields. Required-field removal/rename, enum narrowing/reinterpretation, an operation's result-type change, or an error code's details-type change requires a new top-level API version and compatibility/migration design. `clap` operation metadata and Rust result/error types are the implementation source, but generated validator fixtures must prove exact agreement with the normative catalog rather than treating Rust serialization as self-authorizing.
 
 ## Errors and Exit Status
 
-Define stable string error codes and typed detail structs in `skilload-core`; rendering never derives either from prose. The API-v1 catalog's error table is exhaustive and maps every code to exactly one details type and exit category. In particular, independent resource/security failures remain distinguishable as `fetch_limit_exceeded`, `agent_input_limit_exceeded`, `portable_path_collision`, `filesystem_path_collision`, `unsupported_interpreter`, `cache_quota_exceeded`, `cache_repair_space_insufficient`, and `database_corrupt`, rather than collapsing into a validation string. `source_limit_exceeded` uses its dedicated two-dimension record, while repository/ref/path discovery errors use `SourceLocator` so null unknown path/ref state cannot masquerade as a repository-root Skill. Confirmation has separate required-details variants for required, invalid, expired, and stale tokens. No API-v1 handler may emit an unlisted code, omit a required details field, or substitute a free-form object.
+Define stable string error codes and typed detail structs in `skilload-core`; rendering never derives either from prose. The API-v2 catalog's error table is exhaustive and maps every code to exactly one details type and exit category. `library_input_limit_exceeded` distinguishes the six bounded Library-import dimensions from API-v1's archived `agent_input_limit_exceeded`; both use `LimitDetails` without collapsing resource/security failures into a validation string. `source_limit_exceeded` uses its dedicated two-dimension record, while repository/ref/path discovery errors use `SourceLocator` so null unknown path/ref state cannot masquerade as a resolved identity.
 
 Exit categories are stable but callers use JSON `error.code` for detail:
 
@@ -191,4 +191,4 @@ Code signing and macOS notarization are future hardening, not hidden 0.1 accepta
 
 ## Compatibility Checks
 
-Maintain versioned fixtures for every JSON API 1 operation/outcome/error document, workspace config/lock 1, Library export 1, config 1, database migrations, and manager markers. The released 0.1.0 corpus becomes an immutable compatibility input. Every 0.1.x build reads prior patch fixtures, preserves all required fields, encodings, discriminators, ordering, and enum meanings, and proves its consumer ignores newly added optional fields. A breaking format or command change requires a new product behavior revision, explicit migration, and later minor version.
+Archive Version-1 fixtures as historical evidence and maintain current Version-2 fixtures for every JSON operation/outcome/error document, workspace config/lock 1, Library export 1, config 1, database migrations, and manager markers. Every 0.1.x Version-2 build preserves all required Version-2 fields, encodings, discriminators, ordering, and enum meanings while its consumer ignores newly added optional fields. A later breaking format or command change requires a new product behavior revision, explicit migration, and later minor version.

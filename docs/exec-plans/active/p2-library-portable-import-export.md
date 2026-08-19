@@ -16,21 +16,23 @@ depends_on: [PLAN-0002]
 ## Delivery Metadata
 
 
-本交付是完成的 `PLAN-0002`（Rust 工作区与配置垂直切片）之后的直接后继。`PLAN-0002` 已在默认分支完成并提供了 Cargo 工作区、`skilload-core` 的内向应用边界、`skilload-cli` 的薄展示适配器、严格 XDG 根解析以及当前 API-v1 的配置渲染模式；`PLAN-0001` 是其已完成的文档前提，因而不重复列为直接依赖。
+本交付是完成的 `PLAN-0002`（Rust 工作区与配置垂直切片）之后的直接后继。`PLAN-0002` 已在默认分支完成并提供了 Cargo 工作区、`skilload-core` 的内向应用边界、`skilload-cli` 的薄展示适配器、严格 XDG 根解析以及当时的 API-v1 配置渲染模式；本 Plan 的 active rework 将 current producer 统一切换到 API-v2。`PLAN-0001` 是其已完成的文档前提，因而不重复列为直接依赖。
 
 本交付只建立可移植 Library 元数据传输与为它服务的最小 SQLite 持久化边界。它不实现 GitHub 输入解析、网络解析、首次 Trust 审批、Library add/remove/list/search/get/refresh、直接元数据编辑、FTS 查询、缓存、工作区、全局部署、manager、doctor 或数据库迁移/恢复命令。未实现的命令必须继续是 usage error，不能注册占位叶子。本计划在 `plan` 状态及 Draft PR 中仅定义和发布工作；只有后续明确的人类执行授权才可以移动到 `active` 并改动实现。
 
 ## Product Baseline
 
 
-本交付完整实现并验证以下两个原子行为，均为 Revision 3。
+本交付完整实现并验证以下两个原子行为：`SKL-LIB-009` 为 Revision 3，`SKL-LIB-010` 为 Revision 4。
 
-* `docs/product-specs/library.md` 中 Revision 3 的 `SKL-LIB-009` 要求 `library export --output <PATH>` 将确定性、版本化且仅含 Library 来源/元数据的 `LibraryExportData` 原子写入请求路径；文件排除 Trust、全局/工作区状态、profile、绝对本机路径、凭据、缓存内容和操作时间，命令自身仍产生既定人类或 API-v1 结果。它在创建 staging 前拒绝活动 database、WAL、SHM 或 database lock target；rename 前失败保留旧 output 或无 output，rename 后父目录 sync 失败返回错误且不声称旧 output 仍在。
-* 同一文件中 Revision 3 的 `SKL-LIB-010` 要求 `library import --input <PATH> [--dry-run]` 在读取前以 no-follow、nonblocking descriptor 和 `fstat` 拒绝非常规或发生 identity drift 的 input，并在构建任何模型或 `ImportPlan` 前执行流式、非模型预验证。它必须分别限制输入到 67,108,864 字节、10,000 个条目对象、1,000,000 个 JSON 值、八层对象/数组嵌套、每个字符串 1,048,576 UTF-8 字节和每个数字 128 字节；拒绝重复对象键、无效 JSON、未知字段、错误类型和无效元数据。整个批次要么提交、要么不改变 durable Library；默认保留只出现一次的已有 canonical source，alias 或同一 batch 的 canonical source 冲突使整个批次以 `ConflictDetails` 中的 `internal_duplicate` 失败，后者以 null `name` 和被拒绝 source 表示。首次 import 的 commit 前失败清理仅由调用创建的 state，commit 后 durability-sync 失败返回错误但不伪称 state 未改变；dry-run 必须报告与同一未变基线上的实际导入相同的 added/updated/kept/conflicts 集合且不创建 state。
+* `docs/product-specs/library.md` 中 Revision 3 的 `SKL-LIB-009` 要求 `library export --output <PATH>` 将确定性、版本化且仅含 Library 来源/元数据的 `LibraryExportData` 原子写入请求路径；文件排除 Trust、全局/工作区状态、profile、绝对本机路径、凭据、缓存内容和操作时间，命令自身仍产生既定人类或 API-v2 结果。它在创建 staging 前拒绝活动 database、WAL、SHM 或 database lock target；rename 前失败保留旧 output 或无 output，rename 后父目录 sync 失败返回错误且不声称旧 output 仍在。
+* 同一文件中 Revision 4 的 `SKL-LIB-010` 要求 `library import --input <PATH> [--dry-run]` 在读取前以 no-follow、nonblocking descriptor 和 `fstat` 拒绝非常规或 identity-drift input，并在构建任何 model 或 `ImportPlan` 前执行流式非模型预验证。它分别限制 67,108,864 bytes、10,000 entry objects、1,000,000 JSON values、八层 object/array、1,048,576-byte string token 和 128-byte number token，拒绝 duplicate object key、invalid JSON、unknown field、wrong type 和 invalid metadata；整个 batch 要么提交、要么不改变 durable Library，alias 或同 batch canonical duplicate 均以规定的 `internal_duplicate` conflict rollback，dry-run 与未变基线上的实际 import 报告相同计划。
 
-导入文件中的 `ResolvedSkill`、`SourceIdentity`、完整 SHA、完整性摘要、已验证名称、描述和计数必须满足 API-v1 的可移植表示。为防止损坏的本地记录，本交付会复用 `SKL-SRC-002`、`SKL-SRC-007` 与 `SKL-SRC-012` 的 canonical source、名称与摘要约束，并对 alias/category/tag/note 执行 `SKL-LIB-008` 的大小、Unicode 15.1.0、NFC、`White_Space` 裁剪和 C/F 完整默认大小写折叠规则。这些约束的局部复用不表示来源获取、直接元数据命令或完整 Source/Library 行为已经完成；`SKL-SRC-*`、`SKL-LIB-001`、`SKL-LIB-004`、`SKL-LIB-005`、`SKL-LIB-008` 和 `SKL-LIB-011` 仍保持 planned，直到各自完整 acceptance 被独立交付。
+  Revision 4 还要求六种 ceiling 以 API-v2 独立 code `library_input_limit_exceeded` 返回 `LimitDetails` 的 first exceeded dimension、无损 measured/allowed decimal 值和 input `PathValue`；该 code 不得重用 API-v1 仅适用于 Agent project-input 的 `agent_input_limit_exceeded`。首次 import 在 data-directory descriptor 内 no-clobber 发布 staging database；commit 前失败只清理本调用创建且 identity 未变的 state，commit 后 durability-sync failure 返回错误且不伪称 state 未改变。
 
-`SKL-CLI-004`、`SKL-CLI-005`、`SKL-CLI-007`、`SKL-CLI-009`、`SKL-CLI-012`、`SKL-OPS-002`、`SKL-OPS-003`、`SKL-OPS-004`、`SKL-OPS-005` 和 `SKL-OPS-008` 同样不在本次完成基线中。本交付会遵守它们适用于新增叶子的部分：JSON stdout 只写一个 API-v1 信封、常见成功结果正确区分 observed/changed/unchanged、路径用 `PathValue`、读和 dry-run 不联网且不创建 skilload 根、导入写入仅在完整验证之后发生；未知较高 schema 拒绝写入，已识别的数据库损坏绝不被静默替换且必须返回 `database_corrupt` 的 `DatabaseCorruptDetails`。P2 不创建备份或导出位置索引，因此该诊断如实返回空 `backups` 和 `recoverable_exports` 集合、数据库 `PathValue` 与 `database-corruption-v1`；但不会宣称这些跨全产品行为的全部 acceptance 已满足。
+导入文件中的 `ResolvedSkill`、`SourceIdentity`、完整 SHA、完整性摘要、已验证名称、描述和计数必须满足 API-v2 的可移植表示。为防止损坏的本地记录，本交付会复用 `SKL-SRC-002`、`SKL-SRC-007` 与 `SKL-SRC-012` 的 canonical source、名称与摘要约束，并对 alias/category/tag/note 执行 `SKL-LIB-008` 的大小、Unicode 15.1.0、NFC、`White_Space` 裁剪和 C/F 完整默认大小写折叠规则。这些约束的局部复用不表示来源获取、直接元数据命令或完整 Source/Library 行为已经完成；`SKL-SRC-*`、`SKL-LIB-001`、`SKL-LIB-004`、`SKL-LIB-005`、`SKL-LIB-008` 和 `SKL-LIB-011` 仍保持 planned，直到各自完整 acceptance 被独立交付。
+
+Revision 2 的 `SKL-CLI-004`、`SKL-CLI-005` 与 `SKL-CLI-012` 以 API-v2 current-producer cutover 的最小必要范围加入本交付；它不增加命令、双版本协商或 API-v1 compatibility mode。其余 `SKL-CLI-*`、`SKL-OPS-*` 不在本次完成基线中。本交付遵守适用约束：JSON stdout 只写一个 API-v2 信封、常见成功结果正确区分 observed/changed/unchanged、路径用 `PathValue`、读和 dry-run 不联网且不创建 skilload 根、导入写入仅在完整验证之后发生；未知较高 schema 拒绝写入，已识别的数据库损坏绝不被静默替换且必须返回 `database_corrupt` 的 `DatabaseCorruptDetails`。P2 不创建备份或导出位置索引，因此该诊断如实返回空 `backups` 和 `recoverable_exports` 集合、数据库 `PathValue` 与 `database-corruption-v1`；但不会宣称这些跨全产品行为的全部 acceptance 已满足。
 
 完成时的可观测证明是：用户先对合法 regular-file 导入文件运行带 `--dry-run --json` 的命令，得到 `library.import` 的 `observed` 结果且 XDG data/state 根仍不存在；再运行实际导入，得到 `changed` 或 `unchanged`，只建立所需的 data SQLite 文件与写锁；运行 export 后得到确定性 `LibraryExportData` 文件。重复导入不重写数据库；混入无效条目、重复 JSON 键、超限输入、非常规 input、重复 canonical source 或 alias 冲突的批次不产生部分条目或持久写入。首次 import 的 commit 前注入失败后 data/state 根恢复为 absent；commit 后 sync 失败不报告成功或 absence。export 拒绝 database generation/lock target；rename 前输出失败保留旧 target，而 rename 后父目录 sync 失败返回错误且新 target 可能已发布。对损坏数据库的 import/export 返回带路径、空 P2 已知恢复集合和 `database-corruption-v1` 的 `database_corrupt`，并保持原文件及持久状态不变。
 
@@ -41,7 +43,7 @@ depends_on: [PLAN-0002]
 
 `docs/design-docs/application-and-persistence.md` 已指定 `data/skilload.db` 为 durable 数据库、查询缺失状态时返回内存空视图、写入仅在输入验证达到持久阶段后创建数据库、以及 Library export 不携带本机数据库行 ID 或操作时间。本交付采用该方向，但只创建 v1 的 `schema_info`、`state_revision`、`library_entries` 和 `library_tags` 最小表；不得假装 Trust、global、profile、workspace、owned link、confirmation token 或 FTS 已有真实业务所有者。
 
-`docs/design-docs/cli-json-and-release.md` 规定每个已注册叶子只映射一个应用请求，CLI 不自行编排仓库调用；本分支已将可移植传输参数澄清为 `--input <PATH>`、`--output <PATH>`，使文件中只有可导入数据，而命令结果仍保留正常 API-v1 信封。`docs/design-docs/application-and-persistence.md` 还要求 P2 以 no-follow、nonblocking input descriptor 维持 scanner resource bound、以 staging database 避免首次失败发布 partial state，并区分 rename 前与 rename 后的 export sync failure。`docs/references/rust-sqlite-unicode-library-foundation.md` 记录了本交付的依赖事实：使用无默认特性的 `rusqlite 0.40.2` 加 `bundled`，以及精确 `unicode-normalization =0.1.23`；后者的表是 Unicode 15.1.0，而当前较新版本是 Unicode 17.0.0，不能使用。
+`docs/design-docs/cli-json-and-release.md` 规定每个已注册叶子只映射一个应用请求，CLI 不自行编排仓库调用；本分支已将可移植传输参数澄清为 `--input <PATH>`、`--output <PATH>`，使文件中只有可导入数据，而命令结果仍保留正常 API-v2 信封。`docs/design-docs/application-and-persistence.md` 还要求 P2 以 no-follow、nonblocking input descriptor 维持 scanner resource bound、以 staging database 避免首次失败发布 partial state，并区分 rename 前与 rename 后的 export sync failure。`docs/references/rust-sqlite-unicode-library-foundation.md` 记录了本交付的依赖事实：使用无默认特性的 `rusqlite 0.40.2` 加 `bundled`，以及精确 `unicode-normalization =0.1.23`；后者的表是 Unicode 15.1.0，而当前较新版本是 Unicode 17.0.0，不能使用。
 
 ## Purpose / Big Picture
 
@@ -77,8 +79,10 @@ depends_on: [PLAN-0002]
 
 - [x] (2026-08-19 08:56Z) 已完整读取 PR #3 的 4 条 top-level 评论、32 个 review body 和 32 个 inline thread；其中 23 个既有 ledger source 仍与 GitHub 的 resolved state 一致，新增 9 个未解决实际问题已逐项登记。
 - [x] (2026-08-19 08:56Z) 发现 `agent_input_limit_exceeded` 被错误用于 Library import 的 six-limit scanner，而 API-v1 明确将该 code 保留给 Agent project-input，并禁止为不同条件复用 code；已将 ready PR 恢复为 Draft，待 active rework。
-- [ ] 等待明确产品决定：Library import limit 是否以新 API major version 和独立 error code 交付；当前 API-v1 没有合规的 `LimitDetails` code。
-- [ ] 在收到该决定和明确重新执行授权后，通过 `execute-exec-plan` 完成九项记录的 active rework、回归测试、产品/API 文档同步和完整门禁。
+- [x] (2026-08-19 09:00Z) 人类已选择 API-v2 并授权 active rework：新增独立 `library_input_limit_exceeded` code，保留 `LimitDetails` 的 measured/allowed 字段；不保留 API-v1 dual-output mode。
+- [x] (2026-08-19 10:17Z) 已实现九项 active remediation：API-v2 full producer cutover 与独立 Library limit code；repository display identity；partial directory cleanup；lock/data-directory/staging descriptor identity binding；schema cardinality、tag comparison-key corruption 诊断；以及 export native path 的 `PathValue` validation projection。
+- [x] (2026-08-19 10:17Z) 已通过 focused core（61 tests）和 CLI（9 unit、12 integration）测试，以及 `cargo fmt --all --check`、workspace Clippy `-D warnings`、workspace all-features locked tests、build；隔离 CLI smoke 验证 API-v2 dry-run/import/export 和 `library_input_limit_exceeded` details。
+- [ ] 检查完整 diff、运行 `git diff --check`，提交并推送代码、测试、产品/API/设计/reference 文档和 preliminary review ledger。
 - [ ] 在所有 rework 已提交推送后重新执行 ready/review 原子事务，再重新运行完整 PR 会话处理。
 - [ ] 收到明确人类合并授权后，完成预检、评审会话记录、completed 事务、必要检查、合并、默认分支更新和本地交付分支清理。
 
@@ -110,8 +114,12 @@ depends_on: [PLAN-0002]
 
 
 
-- Observation: 当前 `InputLimit` 固定投影为 `agent_input_limit_exceeded`，但该 code 在 API-v1 中只表示 `agent-project-input-v1`；Library import 的受限 JSON scanner 没有可用的、同时保留 `LimitDetails` 的独立 API-v1 code。
-  Evidence: `crates/skilload-core/src/error.rs` 的 `AppError::InputLimit` 与 `code()`，`docs/product-specs/api-v1.md` 的 `LimitDetails`、error catalog 及“不同条件复用 code 需要新 API version”规则。
+- Observation: review 发现初始实现将 Library scanner ceiling 复用为 `agent_input_limit_exceeded`，但该 API-v1 code 只表示 `agent-project-input-v1`；人类选择 API-v2 后，rework 将其替换为专用 `AppError::LibraryInputLimit` 和 `library_input_limit_exceeded`。
+  Evidence: 2026-08-19 review source `PRRC_kwDOT7YN2s7jLbvB`；当前 `crates/skilload-core/src/error.rs`、`crates/skilload-cli/src/json.rs` 和 `docs/product-specs/api-v2.md` 均使用独立 code。
+
+
+- Observation: `rustix 1.1.4` 同时提供 macOS/Linux 的 descriptor-relative `renameat_with(..., RenameFlags::NOREPLACE)` 与 `fstat`/`statat(..., SYMLINK_NOFOLLOW)`，可分别维持首次 database no-clobber 和检测 export staging identity drift。
+  Evidence: 锁定 crate 的 `src/fs/at.rs`、`src/fs/fd.rs` 和 platform `RenameFlags` 定义；新增 `first_import_rejects_a_replaced_data_directory_before_publish` 与 `export_reports_staging_replacement_after_identity_check` 回归测试。
 
 ## Decision Log
 
@@ -175,6 +183,16 @@ depends_on: [PLAN-0002]
   Rationale: `SKL-LIB-010` 要求 import ceiling error 保留 measured/allowed 的 `LimitDetails`，而 `agent_input_limit_exceeded` 已被 API-v1 专用于不同的 Agent 输入条件；选择新 major API version 或其他产品契约属于需要人类确认的重大行为决定。其余八项是既有 P2 boundary 内的实施缺口，但必须与该 rework 一起通过 active Plan 生命周期完成。
   Date/Author: 2026-08-19 / Codex
 
+
+- Decision: API-v2 是唯一的 current JSON producer；它新增 `library_input_limit_exceeded` → `LimitDetails`，API-v1 仅作为历史契约保留。
+  Rationale: 人类在 review 中明确选择独立 API major version。全 CLI 一致发出 `api_version: 2` 避免同一二进制按 operation 或 outcome 混用 major version；Version 1 的已有记录仍留在规格中而不被错误重解释。
+  Date/Author: 2026-08-19 / 用户确认、Codex 记录
+
+
+- Decision: data/staging publication 使用 held directory/file descriptor identity，而不是在 final validation 后再次信任可替换路径名。
+  Rationale: `renameat_with(NOREPLACE)` 将首次 database publish 限制在已验证 data-directory descriptor；export 在 rename 前后将 held staging FD 与 parent-relative entry 比较。任何检测到的 drift 返回错误且不报告成功，cleanup 只删除已证实仍由本调用持有的 entry。
+  Date/Author: 2026-08-19 / Codex
+
 ## Outcomes & Retrospective
 
 
@@ -192,6 +210,9 @@ P2 implementation 与完整验证已完成，PR #3 已于 2026-08-19 05:57Z 转�
 
 
 2026-08-19 08:56Z 的完整 review 重读发现九个新的 inline 问题。八项文件 identity、SQLite corruption、portable evidence 与 typed path 修复均落在既有 P2 基线内；但 Library scanner 上限错误 code 与 API-v1 的强制语义相冲突，无法在不作产品决定的前提下满足既有 `LimitDetails` acceptance。已运行 `gh pr ready https://github.com/bootids/skilload/pull/3 --undo` 并确认 PR 仍 open、`isDraft: true` 且 head 为 `ae76b9fab46ea22147a8ce044a255b07659be2b9`；本 Plan 随本提交回到 `active`，所有新线程保持 open，等待人类 API 决定和重新执行授权。
+
+
+2026-08-19 10:17Z 的 active rework 已完成本地实现和验收。API-v2 catalog 成为唯一 current producer contract，保留 API-v1 历史定义；六个 Library scanner ceiling 现在投影为 `library_input_limit_exceeded`/`LimitDetails`。九个 review defect 均有回归覆盖：data/lock/staging descriptor races、partial directory rollback、schema/tag durable corruption、source display binding 和 lossless error path。下一步是审阅完整 diff、推送 preliminary commit，再按原 PR review workflow 回复并关闭线程。
 
 ## Review Conversation Log
 
@@ -574,9 +595,9 @@ Disposition: fixed
 
 Status: open
 
-Resolution: active rework 将在 `crates/skilload-core/src/adapters/sqlite_library.rs` 以持有的 no-follow data-directory descriptor 相对发布 staging database，并在 publish 期间验证目录 identity；增加替换 `roots.data.effective` 的 race fixture。
+Resolution: `crates/skilload-core/src/adapters/sqlite_library.rs` 新增持有 no-follow data-directory descriptor 和 `renameat_with(..., RenameFlags::NOREPLACE)`；首次 staging 的 cleanup 也通过 held descriptor 删除同 inode entry。publish 前后重验 directory identity，`DataDirectoryReplacement` fixture 证明 replacement 后不会在新旧目录发布 database。
 
-Evidence: `docs/design-docs/application-and-persistence.md` 要求 first-import 持有并验证目录 device/inode；当前 `import_first` 在 revalidate 后仍于路径上调用 `NamedTempFile::persist_noclobber`。
+Evidence: `first_import_rejects_a_replaced_data_directory_before_publish`；`mise exec -- cargo test -p skilload-core --locked` 通过（61 tests），workspace fmt/Clippy/all-features locked test/build 和隔离 CLI smoke 均通过；待本次 preliminary commit SHA。
 
 GitHub outcome: 未回复；thread resolved: false。
 
@@ -590,9 +611,9 @@ Disposition: fixed
 
 Status: open
 
-Resolution: active rework 将在 `crates/skilload-core/src/adapters/sqlite_library.rs` 要求 schema table 恰有一条可表示的 version row，并把缺失或额外 row 分类为 `database_corrupt`；新增 delete/extra-row fixtures。
+Resolution: `crates/skilload-core/src/adapters/sqlite_library.rs` 的 `singleton_i64` 要求 `schema_info` 恰有一条可解码 version；缺失、额外或错误类型均返回 `database_corrupt`。新增 `missing_schema_version_row_is_database_corrupt` 与 `multiple_schema_version_rows_are_database_corrupt`。
 
-Evidence: 当前 `validate_database` 的 `SELECT version FROM schema_info` 使用 `query_row`，而 Product Baseline 要求识别到的损坏返回 `DatabaseCorruptDetails`。
+Evidence: `mise exec -- cargo test -p skilload-core --locked` 通过（61 tests），含两个新 cardinality fixture；待本次 preliminary commit SHA。
 
 GitHub outcome: 未回复；thread resolved: false。
 
@@ -606,9 +627,9 @@ Disposition: fixed
 
 Status: open
 
-Resolution: active rework 将在 `crates/skilload-core/src/domain/source.rs` 要求 `repository_display` 的 ASCII-lowercased 值等于 canonical `repository`，并覆盖 portable root source 的 mismatch rejection。
+Resolution: `crates/skilload-core/src/domain/source.rs` 在 `SourceIdentity::new` 要求 `repository_display.eq_ignore_ascii_case(repository)`，并新增 `portable_source_rejects_mismatched_repository_display`。
 
-Evidence: `docs/design-docs/github-resolution-and-integrity.md` 规定 repository identity case-insensitive 且 display spelling 仅作保留；当前 constructor 只检查 nonempty。
+Evidence: `mise exec -- cargo test -p skilload-core --locked` 通过（61 tests）；该 regression 证明 root Skill 不能从不相关 display spelling 导出 name；待本次 preliminary commit SHA。
 
 GitHub outcome: 未回复；thread resolved: false。
 
@@ -622,9 +643,9 @@ Disposition: fixed
 
 Status: open
 
-Resolution: active rework 将使 `crates/skilload-core/src/adapters/configuration.rs` 在 helper 内回滚已创建目录或逐步交给 cleanup guard，并添加 partial-creation failure fixture。
+Resolution: `crates/skilload-core/src/adapters/configuration.rs` 将 `ensure_restrictive_directory` 的创建过程包入 failure cleanup：任何后续 create/open/restrict/hook error 都按 held descriptor 与 device/inode 逆序删除空、仍属本调用的目录。新增 `restrictive_directory_rolls_back_partial_created_prefix`。
 
-Evidence: 当前 helper 仅在全部成功后返回 `Vec<CreatedDirectory>`；Product Baseline 要求 COMMIT 前失败恢复本调用创建的 data/state 根。
+Evidence: `mise exec -- cargo test -p skilload-core --locked` 通过（61 tests）；待本次 preliminary commit SHA。
 
 GitHub outcome: 未回复；thread resolved: false。
 
@@ -634,15 +655,15 @@ Source: 内联评论 `PRRC_kwDOT7YN2s7jLbvB`，[GitHub](https://github.com/booti
 
 Problem: six 个 Library import JSON ceiling 当前均返回 `agent_input_limit_exceeded`，但 API-v1 将该 code 保留给 `agent-project-input-v1`，并禁止对不同条件复用 code。
 
-Disposition: pending
+Disposition: fixed
 
-Status: blocked
+Status: open
 
-Resolution: 需要人类决定 Library import limit 的权威 API 合约：引入含独立 Library limit code 的新 API major version，或批准另一项明确的产品契约。不得仅因 ExecPlan 曾建议复用 `agent_input_limit_exceeded` 而违反更高优先级 API catalog。
+Resolution: 新增 `docs/product-specs/api-v2.md`，将 current CLI producer 统一切换为 `api_version: 2`，并定义 `library_input_limit_exceeded` → `LimitDetails`；`AppError::LibraryInputLimit` 只由六个 Library scanner ceiling 构造。`api-v1.md` 保留为历史 contract，`SKL-LIB-010` 升为 Revision 4、相关 CLI IDs 升为 Revision 2。
 
-Evidence: `docs/product-specs/api-v1.md` 将 `agent_input_limit_exceeded` 映射到 `LimitDetails`，并在 error catalog 后明确新增/复用 code 需要新 API version；`SKL-LIB-010` 和本 Plan 的 Product Baseline 又要求每个 ceiling 返回 structured measured/allowed details。
+Evidence: `api_v2_library_limit_uses_its_dedicated_code` 和 scanner limit regressions；隔离 CLI smoke 返回 `library_input_limit_exceeded`、`library_import_number_bytes`、`129`/`128` 与 input `PathValue`；workspace gates 通过，待本次 preliminary commit SHA。
 
-GitHub outcome: 未回复；thread resolved: false，等待产品决定。
+GitHub outcome: 未回复；thread resolved: false，待实现、推送和验证。
 
 ### PRRC_kwDOT7YN2s7jLbvG — database lock descriptor identity
 
@@ -654,9 +675,9 @@ Disposition: fixed
 
 Status: open
 
-Resolution: active rework 将在 `crates/skilload-core/src/adapters/configuration.rs` 将 path inspection、opened descriptor 和 `AlreadyExists` race branch 的 device/inode 绑定，并添加 lock replacement race fixture。
+Resolution: `crates/skilload-core/src/adapters/configuration.rs` 将 inspected path、opened descriptor 和 expected device/inode 绑定，并在取得 advisory lock 后再次比较；existing 与 `AlreadyExists` race branch 均覆盖。新增 `lock_rejects_replacement_after_path_inspection`。
 
-Evidence: 当前 `acquire_restrictive_lock_with_identity` 只在 `create_new` 成功时记录 descriptor identity；持久 database mutation 依赖此 lock 提供并发边界。
+Evidence: `mise exec -- cargo test -p skilload-core --locked` 通过（61 tests）；fixture 保留 replacement lock 且返回 `lock_path_identity_drift`；待本次 preliminary commit SHA。
 
 GitHub outcome: 未回复；thread resolved: false。
 
@@ -670,9 +691,9 @@ Disposition: fixed
 
 Status: open
 
-Resolution: active rework 将在 `crates/skilload-core/src/adapters/sqlite_library.rs` 同时读取 `comparison_key` 与 display，以 Unicode-15.1 normalizer 复算并比较，任何不匹配均返回 `database_corrupt`；新增 durable row corruption fixture。
+Resolution: `crates/skilload-core/src/adapters/sqlite_library.rs` 的 `load_tags` 同时读取 `comparison_key` 与 display，以固定 Unicode-15.1 normalizer 验证两者都为 canonical stored value；mismatch 返回 `database_corrupt`。新增 `malformed_tag_comparison_key_is_database_corrupt`。
 
-Evidence: `library_tags.comparison_key` 是 primary-key/排序 identity，`SKL-LIB-008` 规定比较 key 必须使用固定 Unicode-15.1 algorithm；当前 query 丢弃该列。
+Evidence: `mise exec -- cargo test -p skilload-core --locked` 通过（61 tests）；待本次 preliminary commit SHA。
 
 GitHub outcome: 未回复；thread resolved: false。
 
@@ -686,9 +707,9 @@ Disposition: fixed
 
 Status: open
 
-Resolution: active rework 将在 `crates/skilload-core/src/adapters/portable_library.rs` 让 staging file descriptor 的 identity 与持有 parent descriptor 下的 entry 在 `renameat` 前相匹配，不匹配即失败；新增 final-validation hook replacement fixture。
+Resolution: `crates/skilload-core/src/adapters/portable_library.rs` 以 `fstat` 与 parent-descriptor-relative `statat(..., SYMLINK_NOFOLLOW)` 在 rename 前后验证 held staging inode；drift 不报告成功，且 `NamedTempFile` cleanup 不会删除未知 replacement。新增 `export_reports_staging_replacement_after_identity_check`。
 
-Evidence: `docs/design-docs/application-and-persistence.md` 要求最终 publish bind staging inode；当前 `publish_staging` 只传 relative filename 给 `renameat`。
+Evidence: `mise exec -- cargo test -p skilload-core --locked` 通过（61 tests）；fixture 在 identity check 后替换 staging，命令返回 `validation_failed` 而非 success；待本次 preliminary commit SHA。
 
 GitHub outcome: 未回复；thread resolved: false。
 
@@ -702,22 +723,23 @@ Disposition: fixed
 
 Status: open
 
-Resolution: active rework 将在 `crates/skilload-core/src/adapters/portable_library.rs` 改用 API-v1 支持 `PathValue` 的 typed error detail，并新增 invalid-UTF-8 output path 的 JSON projection fixture。
+Resolution: `crates/skilload-core/src/adapters/portable_library.rs` 的 `export_io` 改为 `AppError::Validation` 并携带原始 `NativePath`，JSON 由 API-v2 `ValidationDetails.path: PathValue` 投影；不再将 lossy path display 放入 `InvalidStateDetails.expected`。新增 core 与 CLI JSON native-byte fixtures。
 
-Evidence: `docs/product-specs/api-v1.md` 要求 host filesystem path 使用 `PathValue`，且 `InvalidStateDetails.expected` 只表示 logical expected state；当前 `export_io` 把 `display()` 字符串放入该字段。
+Evidence: `export_io_uses_a_typed_native_output_path`、`api_v2_error_paths_preserve_native_bytes`；workspace gates 通过，待本次 preliminary commit SHA。
 
 GitHub outcome: 未回复；thread resolved: false。
 
 ## Context and Orientation
 
 
-仓库是一个 Rust Cargo workspace。`crates/skilload-core` 负责 domain、application、ports 和 adapters；`crates/skilload-cli` 是唯一进程入口，负责 clap 参数、终端文本和 API-v1 JSON。P2 已在 `domain/source.rs`、`domain/library.rs`、`domain/unicode_15_1.rs`、`application/library.rs`、`ports/library.rs`、`adapters/portable_library.rs` 与 `adapters/sqlite_library.rs` 实现可移植传输；CLI 的 `args.rs`、`main.rs`、`json.rs`、`human.rs` 除 `config get|set|unset|list` 外只支持 `library import` 与 `library export`。任何后续 Library 行为仍必须沿相同内向方向加入，command handler 不得直接操作 SQLite 或文件。
+仓库是一个 Rust Cargo workspace。`crates/skilload-core` 负责 domain、application、ports 和 adapters；`crates/skilload-cli` 是唯一进程入口，负责 clap 参数、终端文本和 API-v2 JSON。P2 已在 `domain/source.rs`、`domain/library.rs`、`domain/unicode_15_1.rs`、`application/library.rs`、`ports/library.rs`、`adapters/portable_library.rs` 与 `adapters/sqlite_library.rs` 实现可移植传输；CLI 的 `args.rs`、`main.rs`、`json.rs`、`human.rs` 除 `config get|set|unset|list` 外只支持 `library import` 与 `library export`。任何后续 Library 行为仍必须沿相同内向方向加入，command handler 不得直接操作 SQLite 或文件。
 
 Library 是本机可搜索的来源元数据集合；在本交付中它只保存一个可移植记录：`ResolvedSkill` 的 canonical source、数字 repository ID、40 位 commit、`sha256:` integrity、验证过的 name/description 和 entry/byte count，加上可选 alias/category/tags/note。canonical source 是带有小写 owner/repository、规范化 Skill path 和完整 branch/tag/SHA ref intent 的字符串身份；它不是 URL、缓存路径或 Trust 凭据。导入的记录永远没有 Trust；未来 Trust 查询可以把它投影为 `missing`，但 P2 不创建 Trust 表或命令。
 
-可移植文档是恰好一个 JSON 对象：顶层 `format_version: 1` 和 `entries` 数组；每个元素是 API-v1 `PortableLibraryEntry`。export 按 canonical source 的二进制字节序排序 entries，按 tag 的 Unicode-15.1 comparison key 排序 tags，并使用稳定 JSON 序列化。导入 parser 先以 no-follow、nonblocking descriptor 和 `fstat` 确认 native input 是同一 regular file，随后才将其路径用于 `PathValue` 错误；每个 source identity 必须能重新渲染为与其 `canonical` 相同的字符串，`repository_display` 可保留当前显示拼写，但不能改变小写 identity。每个 batch 的 canonical source 只允许一个 entry，后出现的相同 source 作为 null-name `internal_duplicate` conflict 使整个 batch 失败。
+可移植文档是恰好一个 JSON 对象：顶层 `format_version: 1` 和 `entries` 数组；每个元素是 API-v2 `PortableLibraryEntry`。export 按 canonical source 的二进制字节序排序 entries，按 tag 的 Unicode-15.1 comparison key 排序 tags，并使用稳定 JSON 序列化。导入 parser 先以 no-follow、nonblocking descriptor 和 `fstat` 确认 native input 是同一 regular file，随后才将其路径用于 `PathValue` 错误；每个 source identity 必须能重新渲染为与其 `canonical` 相同的字符串，`repository_display` 可保留当前显示拼写，但其 ASCII-lowercase identity 必须等于 canonical repository。每个 batch 的 canonical source 只允许一个 entry，后出现的相同 source 作为 null-name `internal_duplicate` conflict 使整个 batch 失败。
 
-“原子导入”表示在一次 SQLite 事务中写入全部新增 entries、tags 和递增的 `state_revision`，或一个也不写；对原本不存在的 database，它还表示只在 staging database commit 后发布 live file，并在 commit 前失败时清理本调用创建的 database/sidecar/lock/空目录。commit 后 durability-sync failure 不承诺 absence。“预验证”表示 scanner 先在不建立 portable domain model 或 ImportPlan 的情况下、从已验证的 regular-file descriptor 验证 JSON 语法、键唯一性和每个资源限制，随后才以 `serde` 的 closed schema 解析同一已验证字节。无数据库时 export 和 dry-run 的读取返回内存空库，绝不创建 XDG data/state/config/cache 根。
+“原子导入”表示在一次 SQLite 事务中写入全部新增 entries、tags 和递增的 `state_revision`，或一个也不写；对原本不存在的 database，它还表示只在 staging database commit 后经 held data-directory descriptor no-clobber 发布 live file，并在 commit 前失败时清理本调用创建的 database/sidecar/lock/空目录。commit 后 durability-sync failure 不承诺 absence。“预验证”表示 scanner 先在不建立 portable domain model 或 ImportPlan 的情况下、从已验证的 regular-file descriptor 验证 JSON 语法、键唯一性和每个资源限制，随后才以 `serde` 的 closed schema 解析同一已验证字节；ceiling error 使用 API-v2 `library_input_limit_exceeded` 的 measured/allowed `LimitDetails`。无数据库时 export 和 dry-run 的读取返回内存空库，绝不创建 XDG data/state/config/cache 根。
+
 
 ## Plan of Work
 
@@ -736,7 +758,7 @@ Library 是本机可搜索的来源元数据集合；在本交付中它只保存
 
 在 `crates/skilload-core/src/ports/` 新增 `library.rs`，定义 `LibraryRepository` 和 `LibraryTransferStore`。repository 接收并返回经过 domain 验证的值；transfer store 负责 native input/output 路径、受限读、严格解析、同目录原子输出及 output 与 skilload-owned database generation/lock 的碰撞拒绝。不要将 `rusqlite::Connection`、SQL 行或未验证 JSON 泄漏给 application/domain。必要时把 `adapters/configuration.rs` 中可复用的目录创建、锁获取、XDG 重验和安全 I/O 错误映射抽到一个专门 adapter 模块，并让现有 configuration 测试保持原有行为；不能复制第二套 XDG 或锁策略。
 
-新增 `crates/skilload-core/src/adapters/portable_library.rs`。它必须先以 `OpenOptionsExt` 和 `libc::O_NOFOLLOW | libc::O_NONBLOCK` 打开 input，先后比对 no-follow path metadata 与 descriptor `fstat` 的 file identity，并在任何读取前拒绝 symlink、directory、FIFO、socket、device 或 identity drift；regular descriptor 保持有界读取且错误携带 input `PathValue`。随后以增量字节状态机完成第一个 JSON pass：检查 UTF-8/JSON 语法，统计对象、数组、字符串、数字、Boolean、null 的总值，检查嵌套深度、顶层 `entries` 的对象数、字符串解码后 UTF-8 字节数、数字 token 字节数，以及每一个对象中的重复键。它必须在第一个越界点返回 `agent_input_limit_exceeded` 的 `LimitDetails`，以 `limit_kind` 区分 `library_import_bytes`、`library_import_entries`、`library_import_values`、`library_import_depth`、`library_import_string_bytes` 和 `library_import_number_bytes`，并报告 measured、allowed 与 input `PathValue`。通过 scanner 后，用同一受限字节缓冲的严格 `#[serde(deny_unknown_fields)]` 结构解析 `format_version: 1` 与所有嵌套对象；不能让 serde 的默认未知字段忽略或最后键覆盖行为绕开首 pass。
+新增 `crates/skilload-core/src/adapters/portable_library.rs`。它必须先以 `OpenOptionsExt` 和 `libc::O_NOFOLLOW | libc::O_NONBLOCK` 打开 input，先后比对 no-follow path metadata 与 descriptor `fstat` 的 file identity，并在任何读取前拒绝 symlink、directory、FIFO、socket、device 或 identity drift；regular descriptor 保持有界读取且错误携带 input `PathValue`。随后以增量字节状态机完成第一个 JSON pass：检查 UTF-8/JSON 语法，统计对象、数组、字符串、数字、Boolean、null 的总值，检查嵌套深度、顶层 `entries` 的对象数、字符串解码后 UTF-8 字节数、数字 token 字节数，以及每一个对象中的重复键。它必须在第一个越界点返回 API-v2 `library_input_limit_exceeded` 的 `LimitDetails`，以 `limit_kind` 区分 `library_import_bytes`、`library_import_entries`、`library_import_values`、`library_import_depth`、`library_import_string_bytes` 和 `library_import_number_bytes`，并报告 measured、allowed 与 input `PathValue`。通过 scanner 后，用同一受限字节缓冲的严格 `#[serde(deny_unknown_fields)]` schema 反序列化。
 
 新增 `crates/skilload-core/src/adapters/sqlite_library.rs`。它必须从已有 `StateRootResolver` 取得 data/state roots：没有 `data/skilload.db` 时 export 和 dry-run 返回空库且不建目录；实际 import 在全部文件/schema/domain 验证与冲突规划完成后才创建 data/state root 和 `state/locks/database.lock`。锁的等待和 typed busy 行为沿用配置的两秒有界策略。若 live database 原先不存在，在同一 data directory 创建 restrictive、唯一的 staging database，完整建立 schema、执行 transaction、处理 sidecar、sync staged file、重验 roots 后才原子 rename 为 `data/skilload.db` 并 sync 父目录；commit 前任何失败都关闭并移除仅由本调用创建的 staging database/sidecar/lock/空目录，绝不触碰预先存在或 identity 不匹配的路径。commit 后 file 或 parent sync 失败返回 typed error，不报告 success 或 state absence。数据库路径、锁和已有文件都必须拒绝 symlink/非预期文件类型，创建目录和数据库使用 restrictive current-user permissions，并在提交前重验根绑定。
 
@@ -751,18 +773,18 @@ Library 是本机可搜索的来源元数据集合；在本交付中它只保存
 
 扩展 `crates/skilload-cli/src/args.rs`：注册 `library import --input <PATH> [--dry-run]` 和 `library export --output <PATH>`，不注册任何其他 library 叶子、别名或隐藏 shortcut。将仅识别 configuration 的 JSON-operation 预扫描泛化为所有已实现叶子，使 Library 参数错误在 `--json` 下仍使用正确的 `library.import` 或 `library.export` operation。更新 parser/help 测试，证明这两个叶子存在、未实现的 Library 名称仍失败，且 `--input`/`--output` 不会被错误放到其他叶子。
 
-扩展 `main.rs` 的 `Projection` 和 dispatch，使 CLI 只转换参数并调用 application。扩展 `json.rs` 以投影 `SourceIdentity`、`ResolvedSkill`、`PortableLibraryEntry`、`LibraryExportData` 与 `LibraryImportData`；成功 envelope 仍是单一 JSON 值。为本交付新增的限制、alias 冲突、路径校验和数据库状态错误补足与 API-v1 catalog 对应的 `LimitDetails`、带 `internal_duplicate` 字段约束的 `ConflictDetails`、`ValidationDetails`、`SchemaDetails`、`DatabaseCorruptDetails` 或 `InvalidStateDetails`，不能把数字限制或恢复证据塞进散文错误字符串。扩展 `human.rs`，保持英文主要输出和既有注入安全字段编码；人类 import 输出 dry-run/changed/unchanged 加集合计数，人类 export 输出写入的安全引用路径和条目计数。绝不把输入文件、输出文件或异常数据未经编码写到 terminal。
+扩展 `main.rs` 的 `Projection` 和 dispatch，使 CLI 只转换参数并调用 application。扩展 `json.rs` 以投影 `SourceIdentity`、`ResolvedSkill`、`PortableLibraryEntry`、`LibraryExportData` 与 `LibraryImportData`；成功 envelope 始终是单一 API-v2 JSON 值。为本交付新增的限制、alias 冲突、路径校验和数据库状态错误补足与 API-v2 catalog 对应的 `LimitDetails`、带 `internal_duplicate` 字段约束的 `ConflictDetails`、`ValidationDetails`、`SchemaDetails`、`DatabaseCorruptDetails` 或 `InvalidStateDetails`，不能把数字限制或恢复证据塞进散文错误字符串。扩展 `human.rs`，保持英文主要输出和既有注入安全字段编码；人类 import 输出 dry-run/changed/unchanged 加集合计数，人类 export 输出写入的安全引用路径和条目计数。绝不把输入文件、输出文件或异常数据未经编码写到 terminal。
 
 ### 里程碑 4：同步文档并完成可观察验收
 
 
-实施后更新 `docs/product-specs/README.md` 与 `docs/product-specs/library.md` 的 status prose，使其准确列出 `PLAN-0003` 仅完成 `SKL-LIB-009`/`SKL-LIB-010` Revision 3；同步 `docs/product-specs/database-recovery.md` 的显式 export output 调用与 salvage heading；除新的明确产品决定外，不得再修改这两个行为正文或 revision。同步 `ARCHITECTURE.md` 的当前实现模块/SQLite ownership 描述，以及 `docs/design-docs/application-and-persistence.md`、`docs/design-docs/cli-json-and-release.md` 的当前实现状态、P2 module names 和真实测试路径。若实现发现本计划中的文件传输语义或字段与 authoritative specification 冲突，先修正实现或在得到明确产品决定后更新产品规格和 Plan baseline；不得静默降低 acceptance。
+实施后更新 `docs/product-specs/README.md`、`docs/product-specs/library.md`、`api-v1.md` 历史契约和新的 `api-v2.md` current catalog，使状态 prose 准确列出 `SKL-LIB-009` Revision 3、`SKL-LIB-010` Revision 4 和 API-v2 的 `SKL-CLI-004`/`005`/`012` Revision 2；同步 `docs/product-specs/database-recovery.md` 的显式 export output 调用与 salvage heading；除新的明确产品决定外，不得再修改这些行为正文或 revision。同步 `ARCHITECTURE.md` 的当前实现模块/SQLite ownership 描述，以及 `docs/design-docs/application-and-persistence.md`、`docs/design-docs/cli-json-and-release.md` 的当前实现状态、P2 module names 和真实测试路径。若实现发现本计划中的文件传输语义或字段与 authoritative specification 冲突，先修正实现或在得到明确产品决定后更新产品规格和 Plan baseline；不得静默降低 acceptance。
 
 在 active Plan 中记录每个完成里程碑、所有发现和实际验证。完成实现后，先提交并推送代码、测试、锁文件、文档和 active Plan，再按 `docs/PLANS.md` 的 ready/review 原子事务转换 Draft PR。不要在计划状态中实施任何代码。
 
 ## 评审实施补充
 
-2026-08-19 的最终 review remediation 细化而未扩大 Product Baseline：不增加命令、行为 ID 或产品 revision。除本 Plan 原有的 `rusqlite`、`unicode-normalization` 与 `libc` 外，workspace 直接声明已锁定的 `rustix 1.1.4`（`fs`），以安全 descriptor-relative `renameat` 完成 export publish。`portable_library.rs` 在创建 staging 后及最终 publish 前验证持有父目录的 identity；`sqlite_library.rs` 对既有 database 使用 no-create/no-follow 打开、对 schema/API 表示和 state revision 进行边界校验，并在 cleanup 保留 identity-mismatched directory；`human.rs` 逐项投影导入计划的 canonical source。所有这些修复都以现有 `SKL-LIB-009`/`SKL-LIB-010` 的原子性、恢复诊断和双投影 acceptance 为界。
+2026-08-19 的 active review rework 扩展 Product Baseline，但不增加命令或双版本协商：人类选择 API-v2 current-producer cutover，`library_input_limit_exceeded` 以既有 `LimitDetails` 表示 P2 six-limit scanner。`rustix 1.1.4` 的 descriptor-relative `renameat_with(NOREPLACE)` 绑定首次 database publish，`fstat`/`statat(SYMLINK_NOFOLLOW)` 绑定 export staging FD；data/lock/staging replacement 只会返回 typed error，不能报告 success。`sqlite_library.rs` 还验证 schema_info 恰一 row 和持久 tag comparison key，`source.rs` 绑定 display/canonical repository identity，`configuration.rs` 回滚 partial directory 创建并在 lock acquisition 前后比较 inode，`portable_library.rs` 将 output I/O path 投影为 `ValidationDetails.path: PathValue`。所有修复保持现有命令面、SQLite schema v1 和 P2 离线边界。
 
 ## Concrete Steps
 
@@ -811,7 +833,7 @@ Library 是本机可搜索的来源元数据集合；在本交付中它只保存
 
 第一组 core tests 用手写的 `LibraryExportData` 验证 canonical source 的 branch/tag/SHA 区分、40 位 SHA、`sha256:` 摘要、描述与计数；验证文件中 Trust/state/cache/path 字段或未知字段被严格拒绝。测试导入 `Review` 和等价 `review` 标签、NFC/NFD 的 `café`、控制字符、双向格式字符、边界 scalar/byte 长度和第 65 个 tag。它们必须确认有效导入只保留第一个 display spelling，非法值在 SQLite transaction 前失败，并确认同一 batch 的重复 canonical source 无论 metadata 是否相同都返回规定的 null-name `internal_duplicate`。
 
-第二组 parser tests 对每个上界生成精确输入和超一输入。它们检查不建立 `PortableLibraryDocument` 或 `ImportPlan` 的错误路径、重复键不被“最后键覆盖”、JSON string escape 的解码后 UTF-8 计数正确、每一对象层级的重复 key 都被发现，且 JSON error 的 `LimitDetails` 同时有 `limit_kind`、decimal measured/allowed 与 input `PathValue`。同组以 FIFO、directory、symlink、device（可用时）和 lstat/open identity swap 证明 input descriptor 在 scanner 前被拒绝，且测试不依赖 writer/EOF 才完成。
+第二组 parser tests 对每个上界生成精确输入和超一输入。它们检查不建立 `PortableLibraryDocument` 或 `ImportPlan` 的错误路径、重复键不被“最后键覆盖”、JSON string escape 的解码后 UTF-8 计数正确、每一对象层级的重复 key 都被发现，且 API-v2 `library_input_limit_exceeded` 的 `LimitDetails` 同时有 `limit_kind`、decimal measured/allowed 与 input `PathValue`。同组以 FIFO、directory、symlink、device（可用时）和 lstat/open identity swap 证明 input descriptor 在 scanner 前被拒绝，且测试不依赖 writer/EOF 才完成。
 
 第三组 repository tests 从无数据库开始：空 export/dry-run 返回空集合且不创建根；合法 commit import 创建 schema 和 entries/tags；第二次相同 import 返回 unchanged 且数据库内容和文件 identity 不变化；一批中一个 invalid record、alias conflict 或 canonical source duplicate rollback 全部，分别以规定的 `internal_duplicate` alias/name/source 或 null-name/source `ConflictDetails` 失败；首次 import 的 schema/write/commit 前 fault injection 后 data/state 根恢复为 absent，而 commit 后 sync fault 返回错误且不声称 absence。output 目录中的临时写失败不会改数据库或留下最终半文件；database/WAL/SHM/database-lock target 在 staging 前被拒绝；rename 前失败保留旧 output，rename 后 parent sync failure 返回错误且允许新 output 已存在。外部创建的 symlink/非普通 database、lock 或 output 不能被接受。损坏 SQLite fixture 必须保留原文件且返回 `database_corrupt`：database `PathValue`、空 `backups`/`recoverable_exports` 和 `database-corruption-v1` 都与 API catalog 一致。测试还要以 bundled connection 创建临时 FTS5 virtual table 或等价 compile-option probe，证明架构要求的嵌入式能力，而不是把宿主 SQLite 当作依据。
 
@@ -822,6 +844,8 @@ Library 是本机可搜索的来源元数据集合；在本交付中它只保存
     skilload library export --output ./round-trip.json --json
 
 第一条必须是 `library.import`、`ok: true`、`outcome: "observed"`、`dry_run: true`，且不创建 skilload 状态；第二条只能是 `changed` 或在完全相同既有状态下 `unchanged`；第三条必须是 `library.export` 的 observed envelope，并在 `round-trip.json` 中写出仅含 `format_version` 与 `entries` 的可移植 document。用第二个隔离 XDG home 导入该文件并重新导出，规范化 JSON 必须相等，Trust/缓存/绝对路径字符串不得出现。人为插入无效 entry、alias collision、重复 canonical source、重复 JSON key、超限文件或 FIFO input 时，CLI 必须非零退出、JSON stdout 仍只有一个合法 error envelope，并且导入前后 SQLite 可导出数据相同；alias collision 的 envelope 必须含规定的 `internal_duplicate`、alias 与被拒绝 source，canonical duplicate 的 envelope 必须有 null `name`。将 `--output` 指向 database/WAL/SHM/database lock 必须在 staging 前失败且不改动 target；模拟 rename 后 parent sync failure 必须失败且不假称旧 output 保留。损坏数据库 fixture 必须返回 `database_corrupt` 的 `DatabaseCorruptDetails` 且不改写数据库。
+
+本次 active rework 的 smoke 还必须验证所有 success/error envelope 都是 `api_version: 2`；对 129-byte number token 的 import 必须非零退出且返回 `library_input_limit_exceeded`、`library_import_number_bytes`、`measured: "129"`、`allowed: "128"` 和原生 input `PathValue`。
 
 ## Idempotence and Recovery
 
@@ -940,3 +964,7 @@ Library 是本机可搜索的来源元数据集合；在本交付中它只保存
 计划修订说明（2026-08-19 06:51Z）：已重新读取完整 PR 会话并完成逐源 reconciliation。七项 fixed entry 已设为 resolved，记录 pushed implementation SHA、验证、每个回复 URL 和 resolved thread state；所有 16 个 inline thread 当前均为 resolved。两条 timeout-induced duplicate reply 作为真实 GitHub 审计结果保留并在相应条目中说明。
 
 计划修订说明（2026-08-19 08:56Z）：完整读取 PR #3 会话后发现九个新增 inline 问题。八项属于既有 P2 文件 identity、SQLite durable-state、portable source 和 JSON path 约束；另一项揭示 `SKL-LIB-010` 的 `LimitDetails` acceptance 与 API-v1 独占 `agent_input_limit_exceeded` 之间的未决产品冲突。已先将 ready PR 恢复为 Draft 并确认 GitHub head 不变，随后本 Plan 从 `review/` 逆向移回 `active/`，记录 source-complete open/blocked ledger；不在本次 review workflow 中伪造 API 选择、实现或关闭线程，等待人类决定和 `execute-exec-plan` 重新执行授权。
+
+计划修订说明（2026-08-19 09:00Z）：人类已选择 API-v2 独立 `library_input_limit_exceeded` code 并明确授权执行 active rework。Product Baseline 将 `SKL-LIB-010` 提升为 Revision 4，纳入 API-v2 current-producer cutover 的最小 `SKL-CLI-004`/`005`/`012` Revision 2 范围；API-v1 留作历史规格，不提供双输出 mode。下一步实现全部九项 open review remediation、验证、推送并按正常 ready/review 事务重新进入 review。
+
+计划修订说明（2026-08-19 10:17Z）：已在 active rework 本地完成九项 review remediation、API-v2 catalog/cutover、产品/设计/reference 同步、focused tests、workspace gates 和隔离 CLI smoke。Review Conversation Log 的九项 fixed entry 现在记录具体 changed paths、回归测试和待写入的 preliminary commit SHA；所有线程仍保持 open，直到该 commit 推送、逐源 GitHub 回复并关闭后才设为 resolved。

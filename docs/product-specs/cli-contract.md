@@ -44,15 +44,15 @@ The CLI is both the human interface and the stable machine interface used by the
 
 **Acceptance.** Representative `add`, `rm`, `use`, `init`, `claude`, `codex`, `tui`, `web`, and `collection` invocations fail as unknown commands and make no state change.
 
-## SKL-CLI-004 - Single versioned JSON envelope (Revision 1)
+## SKL-CLI-004 - Single versioned JSON envelope (Revision 2)
 
-**Behavior.** Every operation with machine output MUST support the documented JSON mode and write exactly one JSON value to stdout. The envelope, common domain records, confirmation preview, exhaustive error-detail union, and required result data for every operation identifier MUST match the authoritative [JSON API version 1 schema catalog](api-v1.md). Fields marked required there MUST always be present even when their array is empty or their documented value is `null`; fields marked optional MAY be added but MUST follow `SKL-CLI-012`. Progress and diagnostics MUST never contaminate JSON stdout. Every result, preview, or error field whose domain type is a host filesystem path MUST use the same required `PathValue` object, never a bare JSON string: `display` is the content of the terminal-safe field encoding from `SKL-CLI-009` without its surrounding double quotes, and `bytes_base64` is RFC 4648 standard-alphabet base64 with required `=` padding and no whitespace over the exact native path bytes. This shape applies even when the path is valid UTF-8. Repository-relative Skill paths, canonical sources, URLs, and other non-filesystem strings remain their documented string types, and a filesystem path MUST NOT be used as a JSON object key. `--help` and `--version` remain conventional text-only meta invocations and MUST reject `--json` rather than invent undocumented operation payloads.
+**Behavior.** Every operation with machine output MUST support the documented JSON mode and write exactly one JSON value to stdout. The envelope, common domain records, confirmation preview, exhaustive error-detail union, and required result data for every operation identifier MUST match the authoritative [JSON API version 2 schema catalog](api-v2.md), and every current producer response MUST carry `api_version: 2`. API-v1 remains an archived historical contract, not a second current output mode; fields marked required in API-v2 MUST always be present even when their array is empty or their documented value is `null`, while optional fields MAY be added only under `SKL-CLI-012`.
 
 **Acceptance.** Parsing stdout requires one JSON decode with no prefix/suffix lines. A schema coverage test extracts every non-meta leaf from `SKL-CLI-001`, requires exactly one catalog row and golden success fixture for it, and rejects extra operation identifiers; confirmation and every error code have discriminator-valid fixtures. Native bytes `/tmp/\xFF` serialize as `{"display":"/tmp/\\xFF","bytes_base64":"L3RtcC//"}`, while valid UTF-8 `/tmp/foo` still serializes as `{"display":"/tmp/foo","bytes_base64":"L3RtcC9mb28="}`; decoding `bytes_base64` recovers the exact path in every workspace, Agent, executable, configuration-location, ownership, and diagnostic field.
 
-## SKL-CLI-005 - Structured errors and exit status (Revision 1)
+## SKL-CLI-005 - Structured errors and exit status (Revision 2)
 
-**Behavior.** Successful and idempotent outcomes MUST exit zero. Usage and operational failures MUST exit nonzero and include one stable machine error code, human-readable message, and the code-discriminated required details in the API-v1 schema catalog. Numeric exit categories and every version-1 error-code value MUST match that catalog and the CLI design.
+**Behavior.** Successful and idempotent outcomes MUST exit zero. Usage and operational failures MUST exit nonzero and include one stable machine error code, human-readable message, and the code-discriminated required details in the API-v2 schema catalog. Numeric exit categories and every current error-code value MUST match that catalog; Library import ceiling failures specifically use `library_input_limit_exceeded` with `LimitDetails`, never the API-v1 Agent-input code.
 
 **Acceptance.** A caller can distinguish invalid arguments, `not_found`, Trust requirement, confirmation requirement, conflict, `busy`, network/authentication, integrity, and recovery failures without parsing prose.
 
@@ -92,8 +92,8 @@ The CLI is both the human interface and the stable machine interface used by the
 
 **Acceptance.** Supported keys round-trip through human and JSON modes. Unknown or wrong-typed keys return a structured error without rewriting configuration.
 
-## SKL-CLI-012 - Offline reads and API evolution (Revision 1)
+## SKL-CLI-012 - Offline reads and API evolution (Revision 2)
 
-**Behavior.** Read-only CLI commands MUST obey the network and lazy-creation boundaries in `SKL-OPS-005` and `SKL-OPS-008`. JSON API version 1 MAY add optional fields but MUST NOT remove, rename, or reinterpret existing required fields; breaking machine-output changes require a new API version.
+**Behavior.** Read-only CLI commands MUST obey the network and lazy-creation boundaries in `SKL-OPS-005` and `SKL-OPS-008`. JSON API version 2 MAY add optional fields but MUST NOT remove, rename, or reinterpret existing required fields; breaking machine-output changes require a new API version. API-v1 remains archival evidence only, so the current producer MUST emit version 2 consistently for success and error envelopes.
 
-**Acceptance.** A version-1 consumer fixture continues to parse later 0.1.x optional-field responses. Offline read tests observe neither network nor filesystem creation.
+**Acceptance.** A version-2 consumer fixture continues to parse later 0.1.x optional-field responses, and current success plus error fixtures consistently carry `api_version: 2`. Offline read tests observe neither network nor filesystem creation.

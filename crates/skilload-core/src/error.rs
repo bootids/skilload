@@ -16,8 +16,8 @@ pub enum AppError {
         constraint: String,
         path: Option<NativePath>,
     },
-    #[error("agent input exceeds {limit_kind} limit")]
-    InputLimit {
+    #[error("Library import exceeds {limit_kind} limit")]
+    LibraryInputLimit {
         limit_kind: String,
         measured: u64,
         allowed: u64,
@@ -108,13 +108,13 @@ impl AppError {
         }
     }
 
-    pub fn input_limit(
+    pub fn library_input_limit(
         limit_kind: impl Into<String>,
         measured: u64,
         allowed: u64,
         path: NativePath,
     ) -> Self {
-        Self::InputLimit {
+        Self::LibraryInputLimit {
             limit_kind: limit_kind.into(),
             measured,
             allowed,
@@ -162,7 +162,7 @@ impl AppError {
         match self {
             Self::Usage { .. } => "usage_error",
             Self::Validation { .. } => "validation_failed",
-            Self::InputLimit { .. } => "agent_input_limit_exceeded",
+            Self::LibraryInputLimit { .. } => "library_input_limit_exceeded",
             Self::Conflict { .. } => "conflict",
             Self::InvalidEnvironment { .. } => "invalid_environment_path",
             Self::OverlappingStateRoots { .. } => "overlapping_state_roots",
@@ -179,7 +179,7 @@ impl AppError {
         match self {
             Self::Usage { .. } => 2,
             Self::Validation { .. }
-            | Self::InputLimit { .. }
+            | Self::LibraryInputLimit { .. }
             | Self::Conflict { .. }
             | Self::InvalidEnvironment { .. }
             | Self::OverlappingStateRoots { .. }

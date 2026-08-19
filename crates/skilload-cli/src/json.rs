@@ -6,6 +6,8 @@ use skilload_core::{
 };
 use std::os::unix::ffi::OsStrExt;
 
+const API_VERSION: u8 = 2;
+
 #[derive(Serialize)]
 struct SuccessEnvelope<T: Serialize> {
     api_version: u8,
@@ -170,7 +172,7 @@ pub fn entry(
     entry: ConfigEntry,
 ) -> serde_json::Result<Vec<u8>> {
     serde_json::to_vec(&SuccessEnvelope {
-        api_version: 1,
+        api_version: API_VERSION,
         operation,
         ok: true,
         result: SuccessResult {
@@ -185,7 +187,7 @@ pub fn entry(
 
 pub fn entries(operation: &'static str, entries: ConfigEntries) -> serde_json::Result<Vec<u8>> {
     serde_json::to_vec(&SuccessEnvelope {
-        api_version: 1,
+        api_version: API_VERSION,
         operation,
         ok: true,
         result: SuccessResult {
@@ -204,7 +206,7 @@ pub fn library_import(
     data: LibraryImportResult,
 ) -> serde_json::Result<Vec<u8>> {
     serde_json::to_vec(&SuccessEnvelope {
-        api_version: 1,
+        api_version: API_VERSION,
         operation,
         ok: true,
         result: SuccessResult { outcome, data },
@@ -216,7 +218,7 @@ pub fn library_export(
     document: PortableLibraryDocument,
 ) -> serde_json::Result<Vec<u8>> {
     serde_json::to_vec(&SuccessEnvelope {
-        api_version: 1,
+        api_version: API_VERSION,
         operation,
         ok: true,
         result: SuccessResult {
@@ -228,7 +230,7 @@ pub fn library_export(
 
 pub fn error(operation: &'static str, error: &AppError) -> serde_json::Result<Vec<u8>> {
     serde_json::to_vec(&ErrorEnvelope {
-        api_version: 1,
+        api_version: API_VERSION,
         operation,
         ok: false,
         error: ErrorBody {
@@ -286,7 +288,7 @@ fn error_details(error: &AppError) -> ErrorDetails {
             source_path: None,
             path: path.as_ref().map(path_value),
         }),
-        AppError::InputLimit {
+        AppError::LibraryInputLimit {
             limit_kind,
             measured,
             allowed,
@@ -374,7 +376,11 @@ fn error_details(error: &AppError) -> ErrorDetails {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use skilload_core::{ConfigKey, DEFAULT_CACHE_LIMIT_BYTES};
+    use base64::{Engine as _, engine::general_purpose::STANDARD};
+    use skilload_core::{ConfigKey, DEFAULT_CACHE_LIMIT_BYTES, NativePath};
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+    use std::path::PathBuf;
 
     #[test]
     fn default_cache_get_matches_the_api_shape() {
@@ -388,12 +394,58 @@ mod tests {
         let value: serde_json::Value =
             serde_json::from_slice(&entry("config.get", "observed", config_entry).unwrap())
                 .unwrap();
-        assert_eq!(value["api_version"], 1);
+        assert_eq!(value["api_version"], 2);
         assert_eq!(value["operation"], "config.get");
         assert_eq!(
             value["result"]["data"]["entry"]["default_value"],
             "536870912"
         );
         assert!(value["result"]["data"]["entry"]["value"].is_null());
+    }
+
+    #[test]
+    fn api_v2_error_paths_preserve_native_bytes() {
+        let raw = b"/tmp/library-output-\xff.json";
+        let error = AppError::validation(
+            "library_export_io",
+            Some(NativePath::new(PathBuf::from(OsString::from_vec(
+                raw.to_vec(),
+            )))),
+        );
+        let value: serde_json::Value =
+            serde_json::from_slice(&super::error("library.export", &error).unwrap()).unwrap();
+
+        assert_eq!(value["api_version"], 2);
+        assert_eq!(value["error"]["code"], "validation_failed");
+        assert_eq!(
+            value["error"]["details"]["path"]["bytes_base64"],
+            STANDARD.encode(raw)
+        );
+        assert!(value["error"]["details"].get("expected").is_none());
+    }
+
+    #[test]
+    fn api_v2_library_limit_uses_its_dedicated_code() {
+        let error = AppError::library_input_limit(
+            "library_import_number_bytes",
+            129,
+            128,
+            NativePath::new(PathBuf::from("/tmp/library-import.json")),
+        );
+        let value: serde_json::Value =
+            serde_json::from_slice(&super::error("library.import", &error).unwrap()).unwrap();
+
+        assert_eq!(value["api_version"], 2);
+        assert_eq!(value["error"]["code"], "library_input_limit_exceeded");
+        assert_eq!(
+            value["error"]["details"]["limit_kind"],
+            "library_import_number_bytes"
+        );
+        assert_eq!(value["error"]["details"]["measured"], "129");
+        assert_eq!(value["error"]["details"]["allowed"], "128");
+        assert_eq!(
+            value["error"]["details"]["path"]["bytes_base64"],
+            STANDARD.encode(b"/tmp/library-import.json")
+        );
     }
 }

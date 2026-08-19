@@ -14,13 +14,15 @@ use crate::error::{AppError, Conflict};
 use crate::ports::configuration::{Environment, ResolvedRoots, StateRootResolver};
 use crate::ports::library::LibraryRepository;
 use rusqlite::{Connection, Error as SqlError, ErrorCode, OpenFlags, OptionalExtension, params};
+use rustix::fs::{AtFlags, RenameFlags, fstat, renameat_with, statat, unlinkat};
 use std::collections::HashMap;
+use std::ffi::OsString;
 use std::fs::{self, File, OpenOptions};
 use std::io;
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tempfile::Builder;
+use tempfile::{Builder, NamedTempFile};
 
 const SCHEMA_VERSION: u64 = 1;
 const API_V1_UINT_MAX: i64 = 9_007_199_254_740_991;
@@ -342,21 +344,23 @@ impl SqliteLibraryRepository {
                         ["an absent database before first import"],
                     ));
                 }
-                let data_root = roots.data.effective.clone();
-                let staging = Builder::new()
+                let data_directory = ValidatedDataDirectory::open(&roots.data.effective)?;
+                let staging_file = Builder::new()
                     .prefix(".skilload-library-db-")
                     .suffix(".tmp")
-                    .tempfile_in(&data_root)
+                    .tempfile_in(&data_directory.path)
                     .map_err(|error| {
                         database_sync_error(&database, "create staging database", error)
                     })?;
+                let mut staging = FirstImportStaging::new(staging_file, &data_directory)?;
                 staging
+                    .file
                     .as_file()
                     .set_permissions(fs::Permissions::from_mode(0o600))
                     .map_err(|error| {
                         database_sync_error(&database, "restrict staging database", error)
                     })?;
-                let staging_path = staging.path().to_path_buf();
+                let staging_path = staging.file.path().to_path_buf();
                 let mut connection = Connection::open(&staging_path)
                     .map_err(|error| database_error(&staging_path, error))?;
                 initialize_schema(&connection, &staging_path)?;
@@ -371,12 +375,13 @@ impl SqliteLibraryRepository {
                 cleanup.committed = true;
                 self.hooks.after_commit_before_sync()?;
                 drop(connection);
-                staging.as_file().sync_all().map_err(|error| {
+                staging.file.as_file().sync_all().map_err(|error| {
                     database_sync_error(&staging_path, "sync committed staging database", error)
                 })?;
                 self.hooks.before_publish()?;
                 let roots = self.root_resolver.revalidate(&roots)?;
                 let database = Self::database_path(&roots);
+                data_directory.revalidate()?;
                 if Self::database_exists(&database)? {
                     return Err(AppError::invalid_state(
                         "library_database",
@@ -386,26 +391,36 @@ impl SqliteLibraryRepository {
                 }
                 self.hooks
                     .after_first_publish_destination_check(&database)?;
-                staging.persist_noclobber(&database).map_err(|error| {
-                    if error.error.kind() == io::ErrorKind::AlreadyExists {
+                data_directory.revalidate()?;
+                let database_name = database
+                    .file_name()
+                    .ok_or_else(Self::database_identity_drift)?
+                    .to_os_string();
+                renameat_with(
+                    &data_directory.handle,
+                    &staging.name,
+                    &data_directory.handle,
+                    &database_name,
+                    RenameFlags::NOREPLACE,
+                )
+                .map_err(|error| {
+                    let error: io::Error = error.into();
+                    if error.kind() == io::ErrorKind::AlreadyExists {
                         AppError::invalid_state(
                             "library_database",
                             "database_identity_drift",
                             ["an absent database before first import publish"],
                         )
                     } else {
-                        database_sync_error(
-                            &database,
-                            "publish committed staging database",
-                            error.error,
-                        )
+                        database_sync_error(&database, "publish committed staging database", error)
                     }
                 })?;
-                File::open(&roots.data.effective)
-                    .and_then(|directory| directory.sync_all())
-                    .map_err(|error| {
-                        database_sync_error(&database, "sync published database directory", error)
-                    })?;
+                staging.mark_published();
+                data_directory.revalidate()?;
+                data_directory.handle.sync_all().map_err(|error| {
+                    database_sync_error(&database, "sync published database directory", error)
+                })?;
+                data_directory.revalidate()?;
                 sync_created_directory_entries(&cleanup.created_directories, "XDG_DATA_HOME")?;
                 Ok(LibraryImportOperation {
                     outcome: MutationOutcome::Changed,
@@ -551,6 +566,122 @@ impl Drop for FirstImportCleanup {
     }
 }
 
+struct ValidatedDataDirectory {
+    path: PathBuf,
+    identity: (u64, u64),
+    handle: File,
+}
+
+impl ValidatedDataDirectory {
+    fn open(path: &Path) -> Result<Self, AppError> {
+        let metadata = fs::symlink_metadata(path).map_err(|error| {
+            environment_io("XDG_DATA_HOME", path, "inspect data directory", error)
+        })?;
+        if metadata.file_type().is_symlink() || !metadata.file_type().is_dir() {
+            return Err(SqliteLibraryRepository::database_identity_drift());
+        }
+        let mut options = OpenOptions::new();
+        options
+            .read(true)
+            .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW);
+        let handle = options
+            .open(path)
+            .map_err(|error| environment_io("XDG_DATA_HOME", path, "open data directory", error))?;
+        let handle_metadata = handle.metadata().map_err(|error| {
+            environment_io(
+                "XDG_DATA_HOME",
+                path,
+                "inspect opened data directory",
+                error,
+            )
+        })?;
+        if !handle_metadata.file_type().is_dir()
+            || metadata_identity(&metadata) != metadata_identity(&handle_metadata)
+        {
+            return Err(SqliteLibraryRepository::database_identity_drift());
+        }
+        Ok(Self {
+            path: path.to_path_buf(),
+            identity: metadata_identity(&metadata),
+            handle,
+        })
+    }
+
+    fn revalidate(&self) -> Result<(), AppError> {
+        let path_metadata = fs::symlink_metadata(&self.path)
+            .map_err(|_| SqliteLibraryRepository::database_identity_drift())?;
+        let handle_metadata = self
+            .handle
+            .metadata()
+            .map_err(|_| SqliteLibraryRepository::database_identity_drift())?;
+        if path_metadata.file_type().is_symlink()
+            || !path_metadata.file_type().is_dir()
+            || !handle_metadata.file_type().is_dir()
+            || metadata_identity(&path_metadata) != self.identity
+            || metadata_identity(&handle_metadata) != self.identity
+        {
+            return Err(SqliteLibraryRepository::database_identity_drift());
+        }
+        Ok(())
+    }
+}
+
+struct FirstImportStaging<'directory> {
+    file: NamedTempFile,
+    directory: &'directory ValidatedDataDirectory,
+    name: OsString,
+    published: bool,
+}
+
+impl<'directory> FirstImportStaging<'directory> {
+    fn new(
+        file: NamedTempFile,
+        directory: &'directory ValidatedDataDirectory,
+    ) -> Result<Self, AppError> {
+        let name = file
+            .path()
+            .file_name()
+            .ok_or_else(SqliteLibraryRepository::database_identity_drift)?
+            .to_os_string();
+        Ok(Self {
+            file,
+            directory,
+            name,
+            published: false,
+        })
+    }
+
+    fn mark_published(&mut self) {
+        self.file.disable_cleanup(true);
+        self.published = true;
+    }
+}
+
+impl Drop for FirstImportStaging<'_> {
+    fn drop(&mut self) {
+        if self.published {
+            return;
+        }
+        let owned = fstat(self.file.as_file())
+            .ok()
+            .zip(
+                statat(
+                    &self.directory.handle,
+                    &self.name,
+                    AtFlags::SYMLINK_NOFOLLOW,
+                )
+                .ok(),
+            )
+            .is_some_and(|(held, entry)| {
+                held.st_dev == entry.st_dev && held.st_ino == entry.st_ino
+            });
+        if owned {
+            let _ = unlinkat(&self.directory.handle, &self.name, AtFlags::empty());
+        }
+        self.file.disable_cleanup(true);
+    }
+}
+
 fn initialize_schema(connection: &Connection, path: &Path) -> Result<(), AppError> {
     connection
         .execute_batch(
@@ -597,9 +728,7 @@ fn validate_database(connection: &Connection, path: &Path) -> Result<(), AppErro
     connection
         .execute_batch("PRAGMA foreign_keys = ON;")
         .map_err(|error| database_error(path, error))?;
-    let raw_version: i64 = connection
-        .query_row("SELECT version FROM schema_info", [], |row| row.get(0))
-        .map_err(|error| database_error(path, error))?;
+    let raw_version = singleton_i64(connection, "SELECT version FROM schema_info", path)?;
     if raw_version < 0 {
         return Err(AppError::database_corrupt(NativePath::new(
             path.to_path_buf(),
@@ -651,6 +780,32 @@ fn validate_database(connection: &Connection, path: &Path) -> Result<(), AppErro
         )));
     }
     Ok(())
+}
+
+fn singleton_i64(connection: &Connection, query: &str, path: &Path) -> Result<i64, AppError> {
+    let mut statement = connection
+        .prepare(query)
+        .map_err(|_| AppError::database_corrupt(NativePath::new(path.to_path_buf())))?;
+    let mut rows = statement
+        .query([])
+        .map_err(|_| AppError::database_corrupt(NativePath::new(path.to_path_buf())))?;
+    let row = rows
+        .next()
+        .map_err(|_| AppError::database_corrupt(NativePath::new(path.to_path_buf())))?
+        .ok_or_else(|| AppError::database_corrupt(NativePath::new(path.to_path_buf())))?;
+    let value = row
+        .get(0)
+        .map_err(|_| AppError::database_corrupt(NativePath::new(path.to_path_buf())))?;
+    if rows
+        .next()
+        .map_err(|_| AppError::database_corrupt(NativePath::new(path.to_path_buf())))?
+        .is_some()
+    {
+        return Err(AppError::database_corrupt(NativePath::new(
+            path.to_path_buf(),
+        )));
+    }
+    Ok(value)
 }
 
 fn load_entries(
@@ -733,15 +888,29 @@ fn load_tags(
 ) -> Result<Vec<String>, AppError> {
     let mut statement = connection
         .prepare(
-            "SELECT display FROM library_tags WHERE canonical_source = ?1 ORDER BY comparison_key",
+            "SELECT comparison_key, display FROM library_tags
+             WHERE canonical_source = ?1 ORDER BY comparison_key",
         )
         .map_err(|error| database_error(path, error))?;
     let values = statement
-        .query_map(params![canonical], |row| row.get(0))
+        .query_map(params![canonical], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
         .map_err(|error| database_error(path, error))?;
-    values
-        .collect::<Result<Vec<String>, _>>()
-        .map_err(|error| database_error(path, error))
+    let mut tags = Vec::new();
+    for value in values {
+        let (comparison_key, display) =
+            value.map_err(|_| AppError::database_corrupt(NativePath::new(path.to_path_buf())))?;
+        let normalized = normalize_tag(&display)
+            .map_err(|_| AppError::database_corrupt(NativePath::new(path.to_path_buf())))?;
+        if normalized.display != display || normalized.comparison_key != comparison_key {
+            return Err(AppError::database_corrupt(NativePath::new(
+                path.to_path_buf(),
+            )));
+        }
+        tags.push(display);
+    }
+    Ok(tags)
 }
 
 fn apply_additions(
@@ -1193,6 +1362,28 @@ mod tests {
         assert_eq!(repository.export().unwrap_err().code(), "database_corrupt");
     }
 
+    #[test]
+    fn malformed_tag_comparison_key_is_database_corrupt() {
+        let temporary = tempdir().unwrap();
+        let repository = SqliteLibraryRepository::with_environment(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(XdgRootResolver),
+        );
+        repository
+            .import(&document(vec![entry("skills/review", None)]), false)
+            .unwrap();
+        let database = temporary.path().join("data/skilload/skilload.db");
+        Connection::open(&database)
+            .unwrap()
+            .execute(
+                "UPDATE library_tags SET comparison_key = 'damaged-comparison-key'",
+                [],
+            )
+            .unwrap();
+
+        assert_eq!(repository.export().unwrap_err().code(), "database_corrupt");
+    }
+
     struct BeforeFirstLockFailure;
 
     impl PersistenceHooks for BeforeFirstLockFailure {
@@ -1247,6 +1438,45 @@ mod tests {
             fs::read(temporary.path().join("data/skilload/skilload.db")).unwrap(),
             b"raced authoritative database"
         );
+    }
+
+    struct DataDirectoryReplacement {
+        data_directory: PathBuf,
+        displaced_directory: PathBuf,
+    }
+
+    impl PersistenceHooks for DataDirectoryReplacement {
+        fn after_first_publish_destination_check(&self, _database: &Path) -> Result<(), AppError> {
+            fs::rename(&self.data_directory, &self.displaced_directory).unwrap();
+            fs::create_dir(&self.data_directory).unwrap();
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn first_import_rejects_a_replaced_data_directory_before_publish() {
+        let temporary = tempdir().unwrap();
+        let data_directory = temporary.path().join("data/skilload");
+        let displaced_directory = temporary.path().join("displaced-data-directory");
+        let repository = SqliteLibraryRepository::with_hooks(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(XdgRootResolver),
+            Arc::new(DataDirectoryReplacement {
+                data_directory: data_directory.clone(),
+                displaced_directory: displaced_directory.clone(),
+            }),
+        );
+
+        let error = repository
+            .import(&document(vec![entry("skills/review", None)]), false)
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            AppError::InvalidState { state, .. } if state == "database_identity_drift"
+        ));
+        assert!(!data_directory.join("skilload.db").exists());
+        assert!(!displaced_directory.join("skilload.db").exists());
     }
     struct ExistingDatabaseReplacement {
         database: PathBuf,
@@ -1314,6 +1544,44 @@ mod tests {
 
         let error = repository.export().unwrap_err();
         assert_eq!(error.code(), "database_corrupt", "{error:?}");
+    }
+
+    #[test]
+    fn missing_schema_version_row_is_database_corrupt() {
+        let temporary = tempdir().unwrap();
+        let repository = SqliteLibraryRepository::with_environment(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(XdgRootResolver),
+        );
+        repository
+            .import(&document(vec![entry("skills/review", None)]), false)
+            .unwrap();
+        let database = temporary.path().join("data/skilload/skilload.db");
+        Connection::open(&database)
+            .unwrap()
+            .execute("DELETE FROM schema_info", [])
+            .unwrap();
+
+        assert_eq!(repository.export().unwrap_err().code(), "database_corrupt");
+    }
+
+    #[test]
+    fn multiple_schema_version_rows_are_database_corrupt() {
+        let temporary = tempdir().unwrap();
+        let repository = SqliteLibraryRepository::with_environment(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(XdgRootResolver),
+        );
+        repository
+            .import(&document(vec![entry("skills/review", None)]), false)
+            .unwrap();
+        let database = temporary.path().join("data/skilload/skilload.db");
+        Connection::open(&database)
+            .unwrap()
+            .execute("INSERT INTO schema_info (version) VALUES (1)", [])
+            .unwrap();
+
+        assert_eq!(repository.export().unwrap_err().code(), "database_corrupt");
     }
 
     #[test]

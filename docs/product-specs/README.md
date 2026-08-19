@@ -4,7 +4,7 @@ These files are the authoritative source for skilload's user-visible behavior. `
 
 Every normative behavior has a stable ID and revision. Later ExecPlans must name the exact IDs and revisions they implement or verify. A wording-only clarification keeps the revision; a semantic change increments it or introduces a replacement ID.
 
-`PLAN-0002` 在开发版 `0.0.1` 配置切片中实现了 Revision 1 的 `SKL-CLI-002`、`SKL-CLI-003`、`SKL-CLI-011` 与 `SKL-OPS-006`。`PLAN-0003` 实现了可移植 Library 传输切片中 Revision 3 的 `SKL-LIB-009` 与 `SKL-LIB-010`。除非所属规格另有说明，其他基线行为仍为 0.1 CLI MVP 的 **planned** 状态。
+`PLAN-0002` 在开发版 `0.0.1` 配置切片中实现了 Revision 1 的 `SKL-CLI-002`、`SKL-CLI-003`、`SKL-CLI-011` 与 `SKL-OPS-006`。`PLAN-0003` 实现可移植 Library 传输切片中 Revision 3 的 `SKL-LIB-009` 与 Revision 4 的 `SKL-LIB-010`，并将当前 JSON producer 切换到 API-v2。除非所属规格另有说明，其他基线行为仍为 0.1 CLI MVP 的 **planned** 状态。
 
 ## Specification Index
 
@@ -16,7 +16,8 @@ Every normative behavior has a stable ID and revision. Later ExecPlans must name
 * [Cache and local operations](cache-and-operations.md): `SKL-CACHE-001` through `SKL-CACHE-010` and `SKL-OPS-001` through `SKL-OPS-010`.
 * [Database corruption recovery](database-recovery.md): normative operator procedure `database-corruption-v1` for `SKL-OPS-004`; it introduces no separate behavior ID.
 * [CLI contract](cli-contract.md): `SKL-CLI-001` through `SKL-CLI-012`.
-* [JSON API version 1 schema catalog](api-v1.md): normative field-level detail for `SKL-CLI-004`, `SKL-CLI-005`, `SKL-CLI-006`, and `SKL-CLI-012`; it introduces no separate behavior ID.
+* [JSON API version 2 schema catalog](api-v2.md): current normative field-level detail for Revision 2 of `SKL-CLI-004`, `SKL-CLI-005`, `SKL-CLI-006`, and `SKL-CLI-012`; it adds `library_input_limit_exceeded` without reusing the API-v1 Agent-input code.
+* [JSON API version 1 schema catalog](api-v1.md): archived historical contract for prior Version 1 producer fixtures; it introduces no separate behavior ID.
 
 ## Normative Language
 

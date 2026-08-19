@@ -1,6 +1,6 @@
 # Library
 
-Status: 部分实现。`PLAN-0003` 实现了 Revision 3 的 `SKL-LIB-009` 与 `SKL-LIB-010`；其他 Library 行为仍为 skilload CLI MVP 的 planned 范围。
+Status: 部分实现。`PLAN-0003` 实现了 Revision 3 的 `SKL-LIB-009` 与 Revision 4 的 `SKL-LIB-010`；其他 Library 行为仍为 skilload CLI MVP 的 planned 范围。
 
 The **Library** is the user's durable, searchable collection of source metadata. It is not a content store, Trust store, workspace manifest, or deployment list.
 
@@ -59,9 +59,11 @@ The **Library** is the user's durable, searchable collection of source metadata.
 **Acceptance.** 检查 export 找不到本机绝对路径或 authorization/deployment record。未改变 Library 状态的重复 export MUST 产生语义相同、排序稳定的数据，并以原子替换完成请求路径的输出；输出文件本身必须是 `LibraryExportData`，命令的人类或 API-v1 操作结果不得混入其中。针对活动 database、WAL、SHM 和 database lock 的 target fixture 必须在创建 staging 前失败且保持该路径不变。注入 rename 前失败时旧普通 target 或无 target 必须保留；注入 rename 后父目录 sync 失败时命令必须失败，fixture 可以观察到新 target，且不得把该情形断言为旧 target 保留。
 
 
-## SKL-LIB-010 - Atomic import and conflicts (Revision 3)
+## SKL-LIB-010 - Atomic import and conflicts (Revision 4)
 
 **Behavior.** `library import --input <PATH> [--dry-run]` MUST 从请求的原生路径读取同一可移植文档；这是当前版本唯一的传输方式，不得增加命令别名或第二种 API 信封。在任何 byte scanner 读取前，import MUST 以不跟随 symlink、nonblocking 的 descriptor 打开 input，并以 descriptor metadata 证明它是 regular file 且仍与已检查的 path identity 一致；symlink、directory、FIFO、socket、device 或 identity drift MUST 在建立 model 或 `ImportPlan` 前失败。Library import MUST 支持 dry-run 并在 mutation 前验证完整版本化 JSON batch。schema deserialization 或 `ImportPlan` construction 之前，streaming non-model pass MUST 停止并拒绝超过 67,108,864 bytes、10,000 entry objects、1,000,000 total JSON values（每个 object、array、string、number、Boolean 或 null 各计一次）、八层 object/array 嵌套、单个 string token 中 1,048,576 UTF-8 bytes 或单个 number token 中 128 bytes 的输入。该 pass 同时 MUST 拒绝 duplicate object keys 和 invalid JSON。完整 schema 和每个 metadata value 随后 MUST 满足 `SKL-LIB-008`；unknown fields 或 wrong types 都是错误。每个 batch 的 `skill.source.canonical` MUST 只出现一次；无论 alias 或其他 metadata 是否相同，后出现的相同 canonical entry 都使整个 batch 以 `conflict` 的 `ConflictDetails` 失败，使用 `kind: "internal_duplicate"`、`name: null`、该被拒绝 entry 的 `source` 以及 null `agent`/`path`。batch 是原子的。existing source 在输入中仅出现一次时默认 kept；alias conflict 同样使整个 batch 失败，并 MUST 返回 `conflict` 的 `ConflictDetails`：每个被拒绝的导入 entry 使用 `kind: "internal_duplicate"`、`name` 为冲突 alias、`source` 为该 entry 的 source，`agent` 与 `path` 均为 null。对原本不存在的 Library，SQLite `COMMIT` 前的失败 MUST 删除仅由该调用创建的 database、sidecar、lock 和空目录；若 `COMMIT` 已成功而必要 durability sync 返回错误，命令 MUST 返回错误且不得声称旧状态或 state absence。explicit replace mode MAY 只替换 Library metadata，MUST NOT import 或改变 Trust、global state、workspace state 或 local paths。
+
+超出任一非模型输入 ceiling 的 import MUST 使用 API-v2 `library_input_limit_exceeded` 和 `LimitDetails`，其中 `limit_kind` 标识第一个超出的维度、`measured` 与 `allowed` 为无损 decimal 字符串，host input 使用 `path: PathValue`。该 code 与 API-v1 `agent_input_limit_exceeded` 互不复用。
 
 **Acceptance.** 含一个 invalid、alias-conflicting 或重复 canonical source entry 的 batch 不作任何更改；每个 alias conflict error MUST 以规定的 `ConflictDetails` 字段标识被拒绝 source 和 alias，而 canonical source duplicate error 的 `name` 必须为 null 且 `source` 为后出现的 entry。FIFO、device 与其他非常规 input fixture 必须在读入、建立完整 model 或分配 `ImportPlan` 前失败而不阻塞。边界 fixtures 接受每个精确 ceiling，拒绝 byte 67,108,865、entry 10,001、value 1,000,001、level nine、string byte 1,048,577、number byte 129 和 duplicate key，并在返回完整 model 或分配 `ImportPlan` 前失败；structured errors 包含 exceeded dimension 与 measured/allowed values。对于先前不存在的 Library，注入 `COMMIT` 前 persistence failure 后 data/state 根必须恢复为 absent；注入 `COMMIT` 后 durability-sync failure 必须返回错误且测试不得断言 state 仍不存在。dry-run 对未变基线 MUST 报告与随后实际 import 相同的 planned additions/keeps/replacements，且不创建 state。
 
