@@ -87,7 +87,7 @@ Revision 2 的 `SKL-CLI-004`、`SKL-CLI-005` 与 `SKL-CLI-012` 以 API-v2 curren
 - [x] (2026-08-19 10:32Z) 已重新读取完整 PR 会话：4 条 top-level trigger、41 个 review body 和 32 个 inline thread 没有新增独立问题；全部 32 个 thread 为 resolved，九个新 source 均已回复、关闭并写入 Review Conversation Log。
 - [x] (2026-08-19 10:36Z) 最终 ledger commit 推送后重新读取 PR 会话，发现六个新的 inline review 问题；均是既有 P2 durable schema、staging identity、portable source 或 API-v2 文档边界内的 ordinary fix，已记录为 open，不执行 review-to-active 逆向事务。
 - [x] (2026-08-19 10:38Z) 已在 review 状态完成六项新增 remediation：empty tags schema/state revision singleton corruption、export API-v2 wording、first staging inode binding、100-byte repository bound 和 immutable commit equality；新增 focused regressions、完整 workspace gates 和 immutable-source CLI smoke 均通过。
-- [ ] 检查完整 diff、运行 `git diff --check`，提交并推送六项 fix、文档和 preliminary review ledger，再逐源 GitHub 回复和关闭。
+- [x] (2026-08-19 10:43Z) 已检查完整 staged diff、`git diff --check`，并将六项 fix、产品/设计/reference 文档和 preliminary review ledger 以 `19fe009ac578e8fb6bd1eefc2649eaa1802611bf` 推送；local/upstream/ready PR #3 head 已核对为同一 SHA。
 - [ ] 收到明确人类合并授权后，完成预检、评审会话记录、completed 事务、必要检查、合并、默认分支更新和本地交付分支清理。
 
 ## Surprises & Discoveries
@@ -753,7 +753,7 @@ Status: open
 
 Resolution: `crates/skilload-core/src/adapters/sqlite_library.rs` 新增 `validate_library_tags_schema`，在 entry iteration 前以 required-column probe 验证 `library_tags`；新增 `empty_library_with_missing_tags_schema_is_database_corrupt`。
 
-Evidence: `mise exec -- cargo test -p skilload-core --locked` 通过（66 tests），empty durable schema fixture 返回 `database_corrupt`；待本轮 preliminary commit SHA。
+Evidence: `19fe009ac578e8fb6bd1eefc2649eaa1802611bf` 已推送；core 66 tests 的 empty durable schema fixture 返回 `database_corrupt`，完整 workspace gates 通过。
 
 GitHub outcome: 未回复；thread resolved: false。
 
@@ -769,7 +769,7 @@ Status: open
 
 Resolution: `validate_database` 现在对 `state_revision` 调用 `singleton_i64`，缺失、额外或错误类型均归为 `database_corrupt`；新增 `multiple_state_revision_rows_are_database_corrupt`。
 
-Evidence: `mise exec -- cargo test -p skilload-core --locked` 通过（66 tests）；待本轮 preliminary commit SHA。
+Evidence: `19fe009ac578e8fb6bd1eefc2649eaa1802611bf` 已推送；core 66 tests 的 singleton fixture 返回 `database_corrupt`，完整 workspace gates 通过。
 
 GitHub outcome: 未回复；thread resolved: false。
 
@@ -785,7 +785,7 @@ Status: open
 
 Resolution: `docs/product-specs/library.md` 的 `SKL-LIB-009` acceptance 已改为 API-v2 command result；不改文件 output、错误或 revision semantics。
 
-Evidence: 当前 `SKL-CLI-004` Revision 2、product index 和 Library export acceptance 一致；`git diff --check` 与完整 workspace gates 通过，待本轮 preliminary commit SHA。
+Evidence: `19fe009ac578e8fb6bd1eefc2649eaa1802611bf` 已推送；`SKL-CLI-004` Revision 2、product index 和 Library export acceptance 一致，`git diff --check` 与完整 workspace gates 通过。
 
 GitHub outcome: 未回复；thread resolved: false。
 
@@ -801,7 +801,7 @@ Status: open
 
 Resolution: `FirstImportStaging::verify_entry` 在 `renameat_with` 前后以 `fstat`/descriptor-relative `statat(SYMLINK_NOFOLLOW)` 比较 held staging FD；drift 返回 `database_identity_drift`，不报告 success。新增 `first_import_reports_staging_identity_drift_after_publish_race`。
 
-Evidence: core 66 tests 的 deterministic replacement fixture 证明 foreign inode 被 publish 时 import 返回 error；待本轮 preliminary commit SHA。
+Evidence: `19fe009ac578e8fb6bd1eefc2649eaa1802611bf` 已推送；core 66 tests 的 deterministic replacement fixture 证明 foreign inode 被 publish 时 import 返回 error。
 
 GitHub outcome: 未回复；thread resolved: false。
 
@@ -817,7 +817,7 @@ Status: open
 
 Resolution: `crates/skilload-core/src/domain/source.rs` 将 normalized repository 限制为 1–100 ASCII bytes，并新增 `portable_source_rejects_github_overlength_repository`；`SKL-SRC-002` 同步记录已存在 GitHub identity constraint。
 
-Evidence: `docs/references/github-repository-identity-and-auth.md` 的 verified 100-character limit；core 66 tests 通过，待本轮 preliminary commit SHA。
+Evidence: `19fe009ac578e8fb6bd1eefc2649eaa1802611bf` 已推送；verified GitHub 100-character limit、core 66 tests 和完整 workspace gates 通过。
 
 GitHub outcome: 未回复；thread resolved: false。
 
@@ -833,7 +833,7 @@ Status: open
 
 Resolution: `ResolvedSkill::new` 对 commit-kind source 要求 `source.ref_value == commit`，并新增 `immutable_source_requires_matching_resolved_commit`；`SKL-SRC-002`/`SKL-SRC-005` 同步澄清 immutable evidence。
 
-Evidence: core 66 tests 和隔离 CLI smoke 均证明 mismatch 返回 `validation_failed` 且不创建 XDG state；待本轮 preliminary commit SHA。
+Evidence: `19fe009ac578e8fb6bd1eefc2649eaa1802611bf` 已推送；core 66 tests 和隔离 CLI smoke 均证明 mismatch 返回 `validation_failed` 且不创建 XDG state。
 
 GitHub outcome: 未回复；thread resolved: false。
 
@@ -1084,3 +1084,5 @@ Library 是本机可搜索的来源元数据集合；在本交付中它只保存
 计划修订说明（2026-08-19 10:32Z）：review-state 下重新读取完整 GitHub 会话后，九个 remediation thread 均已使用具体 code SHA、验证和中文说明回复，并在 reply 成功后逐个关闭。最终列表显示 32 个 thread 全部 resolved、32 个 Plan source 全部覆盖、无新 top-level/review-body 问题；本次最终 Review Conversation Log commit 推送后再进行一次全量核对。
 
 计划修订说明（2026-08-19 10:36Z）：最终 ledger commit 触发的最新 GitHub review 提出六项新的 ordinary P2 fixes。它们已逐源加入 Review Conversation Log（fixed/open），涵盖 empty-table corruption、singleton revision、API-v2 wording、first staging identity、repository length 和 immutable SHA consistency；当前 Plan/PR 均保持 `review`/ready，等待普通 remediation、验证、push 和 thread closure。
+
+计划修订说明（2026-08-19 10:43Z）：第二轮 ordinary remediation commit `19fe009ac578e8fb6bd1eefc2649eaa1802611bf` 已推送，local/upstream/ready PR head 一致。六项 open ledger entry 均记录该 SHA、具体实现和验证；下一步重新读取会话、逐源回复并关闭 thread。
