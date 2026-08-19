@@ -73,7 +73,7 @@ depends_on: [PLAN-0002]
 - [x] (2026-08-19 06:51Z) 已在最终全量会话复读中核对 16 个 review thread 全部为 resolved；本轮七个实际问题均有 GitHub 回复和 `thread resolved: true`。source-path/ref 的初次批量 reply 请求超时后继续写入，重试产生了两条字节相同的回复；两条 URL 均已如实记录，未删除审计记录。
 - [x] (2026-08-19 07:58Z) 已在 review 状态完成新增七项反馈的代码、测试与文档修订：安全 descriptor-relative export publish、既有 SQLite 文件 identity binding、缺失 schema 列与 API-v1 UInt corruption 分类、目录 identity cleanup、state revision 上界和 human import 来源列表。focused SQLite（14）、portable transfer（9）与 human（3 unit、1 integration）测试通过；workspace fmt check、Clippy `-D warnings`、all-features locked test（7、12、52）和 build 通过；实际 dry-run CLI 输出 added canonical source，`git diff --check` 通过。待创建并推送 preliminary review commit。
 
-- [x] (2026-08-19 08:03Z) 新增七项 review remediation 已由 `078d85f7582bad5f4c81b9f0d7944c069a5b558e` 推送；逐一回复后，PR #3 的 23 个 inline thread 均为 resolved。首次七线程批量写入在 30 秒客户端超时后仍继续，human/revision 两项各留下两条字节相同的回复；两个 URL 均已记录，未删除审计证据。待提交并推送本 Review Conversation Log 的最终 reconciliation。
+- [x] (2026-08-19 08:03Z) 新增七项 review remediation 已由 `078d85f7582bad5f4c81b9f0d7944c069a5b558e` 推送；逐一回复后，PR #3 的 23 个 inline thread 均为 resolved。首次七线程批量写入在 30 秒客户端超时后仍继续，human/revision 两项各留下两条字节相同的回复；两个 URL 均已记录，未删除审计证据。最终 Review Conversation Log reconciliation 已由 `a244195` 文档提交推送。
 
 - [ ] 收到明确人类合并授权后，完成预检、评审会话记录、completed 事务、必要检查、合并、默认分支更新和本地交付分支清理。
 
@@ -174,7 +174,7 @@ P2 implementation 与完整验证已完成，PR #3 已于 2026-08-19 05:57Z 转�
 
 2026-08-19 07:58Z 的新增 review remediation 已完成本地验收：export 使用持有父目录 descriptor 的安全 `rustix::fs::renameat`，既有数据库不再通过可创建或可跟随的路径打开，缺列/越界 schema 的错误保持 API-v1 可表示的 `database_corrupt`，first-import cleanup 保留 identity-mismatched directory，state revision 在写 entry 前受限递增，human import 输出枚举已计划 source。focused 与 workspace gates 均通过，实际 dry-run CLI smoke 已显示 quoted source；下一步仅为 preliminary commit、push、逐线程回复和关闭。
 
-2026-08-19 08:03Z 的全量会话 reconciliation 确认：3 条 top-level `@codex` 触发评论和 31 个 review bodies 未提出新的独立问题，23 个 inline thread 全部为 resolved；新增七个 source 均有 code commit、验证、GitHub reply URL 和 close state。本 Log 的最终文档提交待推送，随后必须再读一次会话和 PR head。
+2026-08-19 08:03Z 的全量会话 reconciliation 确认：3 条 top-level `@codex` 触发评论和 31 个 review bodies 未提出新的独立问题，23 个 inline thread 全部为 resolved；新增七个 source 均有 code commit、验证、GitHub reply URL 和 close state。最终文档 reconciliation commit `a244195` 已推送；随后仍须重新读取会话和 PR head 以确认没有后续漂移。
 
 ## Review Conversation Log
 
