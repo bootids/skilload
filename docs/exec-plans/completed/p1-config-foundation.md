@@ -152,6 +152,8 @@ Review remediation in `9135de47b7f7141621b7ef77a2291b9f76227eef` preserves JSON 
 
 2026-08-19 的最终合并预检确认：交付分支 `codex/p1-config-foundation` 的 HEAD `c69467de8610bd627160ef39faeff8ff69c1dc51` 与远端一致，`origin/main` 是其祖先，PR [#2](https://github.com/bootids/skilload/pull/2) 保持开放、非草稿、以 `main` 为基线且处于 `CLEAN`/`MERGEABLE` 状态。`ubuntu-24.04` 和 `macos-15` 当前 CI 均成功；`PLAN-0001` 已在 `origin/main` 完成；`git diff --check` 通过。最新 `pr_threads.cjs list --all` 显示 16 个内联线程全部已解决，并与 R1 至 R16 的来源、处置和状态逐一对应；三个顶层评论仅为 `@codex` 触发，四个非空审查正文均为自动审查样板，未产生额外问题。本次 completed 归档提交推送后仍须以其 SHA 重新核验必需检查和可变 PR 门禁；只有 PR 合入 `main` 后，归档才成为默认分支上的正式交付记录。
 
+完成归档提交 `d9164a6bed00fc99196898d237f796685f021ed8` 推送后，`gh pr checks https://github.com/bootids/skilload/pull/2 --required` 返回 `no required checks reported on the 'codex/p1-config-foundation' branch`（退出码 1）。该返回明确表示必需检查集合为空，按本仓库合并流程计作已通过的门禁，因此不启动必需检查观察器；合并前仍须重新核验 PR 的可变状态、头提交和完整会话。
+
 ## Review Conversation Log
 
 ### R1 — Ambiguous multiword native executable paths
@@ -713,3 +715,5 @@ Plan revision note (2026-08-18): follow-up review remediation in `c3977fe5653118
 Plan revision note (2026-08-19): 已记录并推送 R15、R16 的修复提交 `450ae3f4148a8d924f26977c4ebeab932c26d2ce`、精确回归和完整验证证据。两个来源均已在 GitHub 回复并关闭；最终 `pr_threads.cjs list --all` 核对确认 16 个内联线程全部解决、所有线程来源已记录，且没有新增需要处理的顶层评论或审查正文问题。
 
 Plan revision note (2026-08-19): 收到人类明确合并授权后，已完成 `docs/PLANS.md` 所要求的只读预检，并将本计划从 `review/` 移至 `completed/`、将前置状态改为 `completed`。记录了当前交付头、依赖、CI、分支范围与完整 GitHub 会话的逐项核验结果；合入前若任何重复门禁、必需检查、队列或合并动作失败，必须依照恢复规则还原到 `review`。
+
+Plan revision note (2026-08-19): 已记录归档提交后的空必需检查集：`gh pr checks --required` 明确报告没有必需检查；按流程将其作为已通过门禁，并保留合并前重新核验 PR 可变状态、头提交与评审会话的要求。
