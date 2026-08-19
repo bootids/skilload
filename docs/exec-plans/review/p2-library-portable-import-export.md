@@ -110,6 +110,7 @@ Revision 2 的 `SKL-CLI-004`、`SKL-CLI-005` 与 `SKL-CLI-012` 以 API-v2 curren
 - [x] (2026-08-20) 完整读取当前 PR 会话的 9 条 top-level trigger、85 个 review body 与 71 个 inline thread；前两类没有独立问题，66 个既有 ledger source 仍 resolved，5 个新 source 已按 source、路径、文本与 thread state 登记。
 - [x] (2026-08-20) 在 `review` 状态完成四项 ordinary remediation：reversible export/database publication exchange、GitHub owner grammar、SQLite commit-failure sidecar ownership；新增 focused regressions，并通过 core 94 tests、fmt、Clippy、locked workspace tests（11、12、94）、build、CLI import/export smoke 与 diff check。
 - [ ] (2026-08-20) `PRRC_kwDOT7YN2s7jWsuw` 仍等待人类决定：需要可证明的跨 macOS/Linux create-and-hold directory primitive，或明确调整首次 import 在目录创建 race 下的 absent-root/foreign-path 保证；该 inline thread 必须保持 open。
+- [x] (2026-08-20) code/preliminary remediation commit `752c0f77b24a5300dffe7edcca952809688fdc1f` 已推送；local、upstream 与 open/ready PR #3 head 均已核对为该 SHA。四个 fixed source 保持 open，待重新读取会话、逐一回复并关闭；directory source 仍 blocked/open。
 - [ ] 收到明确人类合并授权后，完成预检、评审会话记录、completed 事务、必要检查、合并、默认分支更新和本地交付分支清理。
 
 ## Surprises & Discoveries
@@ -318,7 +319,7 @@ P2 implementation 与完整验证已完成，PR #3 已于 2026-08-19 05:57Z 转�
 
 2026-08-19 13:45Z 的 final pre-documentation reconciliation 确认：7 条 top-level trigger 与 70 个 review body 都不含独立问题；57 个 inline problem source 与 57 个 Plan heading 一一对应，全部 resolved。六个本轮 reply URL、`8cec7fd1d1e4c79c801215e23af54095e1f83bf5` 代码证据和验证已写入 ledger；下一步提交/push 本 Plan final reconciliation 后，再执行最后一次完整会话与 PR head 检查。
 
-2026-08-20 的本轮 review remediation 已在当前 worktree 完成四项现有 P2 contract fix：export 与 first import 都以 reversible `RenameFlags::EXCHANGE` publish protocol 保留/恢复原 target，portable owner 拒绝 impossible GitHub login，SQLite commit-failure sidecar 只按 recorded FD identity 清理。core 94 tests、fmt、Clippy、locked workspace tests（11、12、94）、build、实际 CLI import/export smoke 与 diff check 均通过。`PRRC_kwDOT7YN2s7jWsuw` 仍是未决 architecture/product choice；它保持 `pending`/`blocked` 和 open thread，不把目录 create-and-hold race 误报为完成。
+2026-08-20 的本轮 review remediation 已由 `752c0f77b24a5300dffe7edcca952809688fdc1f` 推送，完成四项现有 P2 contract fix：export 与 first import 都以 reversible `RenameFlags::EXCHANGE` publish protocol 保留/恢复原 target，portable owner 拒绝 impossible GitHub login，SQLite commit-failure sidecar 只按 recorded FD identity 清理。core 94 tests、fmt、Clippy、locked workspace tests（11、12、94）、build、实际 CLI import/export smoke 与 diff check 均通过。`PRRC_kwDOT7YN2s7jWsuw` 仍是未决 architecture/product choice；它保持 `pending`/`blocked` 和 open thread，不把目录 create-and-hold race 误报为完成。
 
 ## Review Conversation Log
 
@@ -1391,7 +1392,7 @@ Status: open
 
 Resolution: `crates/skilload-core/src/adapters/portable_library.rs` 现在在 final validation 时 snapshot existing output identity 或 absence，再以 `OutputPublicationGuard` 记录 existing target 或 `O_EXCL|O_NOFOLLOW` absence guard。held publication link 与 guard 经 `RenameFlags::EXCHANGE` 发布；post-exchange 不是 held staging/guard 的组合会反向交换恢复旧 output 或 absence。`export_restores_the_old_output_when_publication_changes_after_final_check` 和 `export_does_not_replace_an_output_changed_after_final_validation` 覆盖两个窗口。
 
-Evidence: 当前 worktree 的 focused core 94 tests、`cargo fmt --all --check`、workspace Clippy `-D warnings`、locked all-features workspace tests（11、12、94）、workspace build、实际 CLI dry-run/import/export smoke 与 `git diff --check` 均通过；待 preliminary push 后写入 code SHA。
+Evidence: code/preliminary remediation commit `752c0f77b24a5300dffe7edcca952809688fdc1f` 已推送；focused core 94 tests、`cargo fmt --all --check`、workspace Clippy `-D warnings`、locked all-features workspace tests（11、12、94）、workspace build、实际 CLI dry-run/import/export smoke 与 `git diff --check` 均通过。
 
 GitHub outcome: 尚未回复；thread resolved: false。
 
@@ -1407,7 +1408,7 @@ Status: open
 
 Resolution: `crates/skilload-core/src/adapters/sqlite_library.rs` 在 first-import publish 前以 data-directory descriptor 建立 only-if-absent `FirstImportPublicationGuard`，以 `RenameFlags::EXCHANGE` 替代 final `NOREPLACE` rename，并在 post-exchange 复验 held staging/guard；mismatch 反向交换恢复 absence。`first_import_restores_absence_when_publication_changes_after_final_check` 注入最终检查后的 publication replacement。
 
-Evidence: 当前 worktree 的 focused core 94 tests（含 first-import exchange regression）、`cargo fmt --all --check`、workspace Clippy `-D warnings`、locked all-features workspace tests（11、12、94）、workspace build、实际 CLI smoke 与 `git diff --check` 均通过；待 preliminary push 后写入 code SHA。
+Evidence: code/preliminary remediation commit `752c0f77b24a5300dffe7edcca952809688fdc1f` 已推送；focused core 94 tests（含 first-import exchange regression）、`cargo fmt --all --check`、workspace Clippy `-D warnings`、locked all-features workspace tests（11、12、94）、workspace build、实际 CLI smoke 与 `git diff --check` 均通过。
 
 GitHub outcome: 尚未回复；thread resolved: false。
 
@@ -1423,7 +1424,7 @@ Status: open
 
 Resolution: `crates/skilload-core/src/domain/source.rs` 将 canonical owner 限制为 1–39 bytes、lowercase ASCII alphanumeric/single-hyphen grammar，并由 `portable_source_rejects_impossible_github_owner_logins` 覆盖 leading/trailing/consecutive hyphen、40-byte rejection 与 39-byte valid boundary。`docs/product-specs/source-and-trust.md` 澄清 `SKL-SRC-002`，`docs/references/github-repository-identity-and-auth.md` 记录验证来源；不改变 Revision 1 语义。
 
-Evidence: 当前 worktree 的 focused core 94 tests、`cargo fmt --all --check`、workspace Clippy `-D warnings`、locked all-features workspace tests（11、12、94）、workspace build 和 `git diff --check` 均通过；待 preliminary push 后写入 code SHA。
+Evidence: code/preliminary remediation commit `752c0f77b24a5300dffe7edcca952809688fdc1f` 已推送；focused core 94 tests、`cargo fmt --all --check`、workspace Clippy `-D warnings`、locked all-features workspace tests（11、12、94）、workspace build 和 `git diff --check` 均通过。
 
 GitHub outcome: 尚未回复；thread resolved: false。
 
@@ -1439,7 +1440,7 @@ Status: open
 
 Resolution: `FirstImportStaging` 现在只在 SQLite `COMMIT` 返回 failure 后，以 `O_NOFOLLOW` FD/identity 记录仍存在的 `-journal`、`-wal`、`-shm`，Drop 仅 unlink recorded matching sidecar。`first_import_staging_removes_recorded_sqlite_sidecars` 覆盖 tracked cleanup；既有 `first_import_precommit_failure_preserves_foreign_staging_sidecar` 继续证明 pre-commit foreign sidecar 不会被 basename 猜测删除。
 
-Evidence: 当前 worktree 的 focused core 94 tests、`cargo fmt --all --check`、workspace Clippy `-D warnings`、locked all-features workspace tests（11、12、94）、workspace build 与 `git diff --check` 均通过；待 preliminary push 后写入 code SHA。
+Evidence: code/preliminary remediation commit `752c0f77b24a5300dffe7edcca952809688fdc1f` 已推送；focused core 94 tests、`cargo fmt --all --check`、workspace Clippy `-D warnings`、locked all-features workspace tests（11、12、94）、workspace build 与 `git diff --check` 均通过。
 
 GitHub outcome: 尚未回复；thread resolved: false。
 
@@ -1737,3 +1738,5 @@ Library 是本机可搜索的来源元数据集合；在本交付中它只保存
 计划修订说明（2026-08-19 14:50Z）：code/preliminary remediation commit `5cc7d52012f81e75e4fb83aad67bff0c13e9678c` 已推送，local/upstream/open ready PR head 已核对为该 SHA。本次台账更新将九个 fixed/open source 的具体 changed path、测试和 pushed-code evidence 写入；待该 documentation commit 推送后，重新读取会话并逐 source 回复/关闭。
 
 计划修订说明（2026-08-19 14:56Z）：九个 fixed source 均已使用 `5cc7d52012f81e75e4fb83aad67bff0c13e9678c` 的 code/validation evidence 回复并关闭。最终 `list --all` reconciliation 显示 66 个 inline source 与 66 个 Plan heading 完全对应、全部 resolved；8 条 top-level trigger 与 84 个 review body 没有独立问题。客户端超时造成的四个 source 双回复均保留实际 URL；本 documentation commit 推送后必须再读取会话与 PR head。
+
+计划修订说明（2026-08-20）：本轮四项 fixed/open review remediation 的代码、回归、产品/设计/reference 同步和 preliminary ledger 已由 `752c0f77b24a5300dffe7edcca952809688fdc1f` 推送，local/upstream/open ready PR head 一致。`PRRC_kwDOT7YN2s7jWsuw` 已记录为 pending/blocked，未创建虚假修复；下一步重新获取完整会话，逐 source 回复/关闭四个 fixed thread，并让 blocked thread 保持 open。
