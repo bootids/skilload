@@ -2,7 +2,7 @@
 plan_id: PLAN-0003
 branch: codex/p2-library-portable-import-export
 pull_request: https://github.com/bootids/skilload/pull/3
-status: active
+status: review
 depends_on: [PLAN-0002]
 ---
 
@@ -68,7 +68,7 @@ depends_on: [PLAN-0002]
 - [x] (2026-08-19 05:52Z) 完成完整运行时验证：`cargo fmt --all --check`、workspace Clippy `-D warnings`、workspace all-features locked tests（6、12、41 个测试通过）与 workspace build 均通过；实际 CLI smoke 证明 dry-run 无状态、commit/export 成功、isolated round trip 字节相同。
 - [x] (2026-08-19 05:52Z) 已 staged 全部 34 个交付文件并完整检查 diff；`git diff --cached --check` 通过，包含 vendored Unicode 输入在内的每个变更均已检查。
 - [x] (2026-08-19 05:55Z) 实现提交 `4c6a6919921cabcbc29b11cfa255466993ad2adf` 已推送；local、origin branch 与 Draft PR #3 head 相同，PR 仍为 Draft。
-- [ ] 在代码、测试和同步文档均提交推送后，运行 `gh pr ready`，确认 `isDraft: false` 和 `headRefOid` 等于已推送实现 HEAD，再自动移动计划到 `review`。
+- [x] (2026-08-19 05:57Z) 已运行 `gh pr ready https://github.com/bootids/skilload/pull/3`，随后观察到 `isDraft: false` 与 `headRefOid: 47f22f8a1687d5e46b9d787503565e1badad141a`；该 SHA 等于已推送的 implementation/active-Plan HEAD，本 Plan 已进入 `review`。
 - [ ] 收到明确人类合并授权后，完成预检、评审会话记录、completed 事务、必要检查、合并、默认分支更新和本地交付分支清理。
 
 ## Surprises & Discoveries
@@ -139,7 +139,7 @@ depends_on: [PLAN-0002]
 ## Outcomes & Retrospective
 
 
-实现与完整运行时验证已完成，implementation commit `4c6a6919921cabcbc29b11cfa255466993ad2adf` 已推送并与 Draft PR #3 head 一致，review 发布事务尚未执行。P2 提供仅含 portable resolved Library evidence 的 `data/skilload.db`：dry-run/absent export 不创建 XDG roots，实际 import 在所有 scanner/schema/domain/conflict planning 后才 staging/publish，existing canonical source 保持 kept，alias/canonical duplicate 以规定 `internal_duplicate` rollback，export 以稳定顺序写出独立 JSON 文件。`mise exec -- cargo fmt --all --check`、`mise exec -- cargo clippy --workspace --all-targets --all-features -- -D warnings`、`mise exec -- cargo test --workspace --all-features --locked`（6、12、41 tests passed）和 `mise exec -- cargo build --workspace --all-features --locked` 均已通过；实际 `target/debug/skilload` smoke 在两个隔离 XDG root 中验证 dry-run observed/no-state、changed import、portable-only export 与 byte-identical second import/export。下一步执行 `gh pr ready`、验证 implementation head、移动/提交 review Plan 并推送 review-state commit，然后再次核对 PR/repository 一致性。
+P2 implementation 与完整验证已完成，PR #3 已于 2026-08-19 05:57Z 转为 ready for review；ready transaction 的实现头为 `47f22f8a1687d5e46b9d787503565e1badad141a`，GitHub 已返回 `isDraft: false` 与相同 `headRefOid`。P2 提供仅含 portable resolved Library evidence 的 `data/skilload.db`：dry-run/absent export 不创建 XDG roots，实际 import 在所有 scanner/schema/domain/conflict planning 后才 staging/publish，existing canonical source 保持 kept，alias/canonical duplicate 以规定 `internal_duplicate` rollback，export 以稳定顺序写出独立 JSON 文件。`mise exec -- cargo fmt --all --check`、`mise exec -- cargo clippy --workspace --all-targets --all-features -- -D warnings`、`mise exec -- cargo test --workspace --all-features --locked`（6、12、41 tests passed）和 `mise exec -- cargo build --workspace --all-features --locked` 均已通过；实际 `target/debug/skilload` smoke 在两个隔离 XDG root 中验证 dry-run observed/no-state、changed import、portable-only export 与 byte-identical second import/export。下一步是人类 review 与所需会话处理；只有明确人类 merge 授权才可进入 completed。
 
 ## Review Conversation Log
 
@@ -504,3 +504,5 @@ Library 是本机可搜索的来源元数据集合；在本交付中它只保存
 计划修订说明（2026-08-19）：收到明确执行授权后完成 `execute-exec-plan` 预检，确认 `PLAN-0002` 已在 `origin/main` 完成、PR #3 为 Draft 且工作树/分支/PR head 一致；本 Plan 移入 `active/`，尚未开始实现。
 
 计划修订说明（2026-08-19）：完成 P2 四个实现里程碑：vendored Unicode 15.1.0 输入/build generator、portable Library domain、受限 transfer/SQLite adapters、application/CLI/API-v1 projections、focused tests 与 governed documentation。Plan 仍为 `active`，等待完整验证、提交推送和 Draft-to-review 原子事务。
+
+计划修订说明（2026-08-19）：完成 Draft-to-review 原子事务：GitHub ready 后确认 implementation SHA，随后将 Plan 从 `active/` 移入 `review/` 并将 frontmatter 更新为 `status: review`。review-state commit 推送后必须再次核对 GitHub head 与 repository 状态。
