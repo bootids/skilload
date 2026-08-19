@@ -1,15 +1,12 @@
 use crate::adapters::xdg::{SystemEnvironment, XdgRootResolver};
-use crate::domain::configuration::{NativePath, normalize_absolute};
+use crate::domain::configuration::NativePath;
 use crate::domain::library::{
     MAX_PORTABLE_LIBRARY_DOCUMENT_BYTES, MAX_PORTABLE_LIBRARY_ENTRIES, PortableLibraryDocument,
 };
 use crate::error::AppError;
 use crate::ports::configuration::{Environment, ResolvedRoots, StateRootResolver};
 use crate::ports::library::LibraryTransferStore;
-use rustix::fs::{
-    AtFlags, FileType, Mode, OFlags, RenameFlags, fstat, linkat, openat, renameat_with, statat,
-    unlinkat,
-};
+use rustix::fs::{AtFlags, FileType, RenameFlags, fstat, linkat, renameat_with, statat, unlinkat};
 use std::collections::HashSet;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
@@ -396,84 +393,41 @@ struct OutputPublicationGuard<'parent> {
     parent: &'parent ValidatedOutputParent,
     name: std::ffi::OsString,
     identity: (u64, u64),
-    created: bool,
 }
 
 impl<'parent> OutputPublicationGuard<'parent> {
     fn capture(
         parent: &'parent ValidatedOutputParent,
         roots: &ResolvedRoots,
-        expected: OutputTargetIdentity,
+        expected_identity: (u64, u64),
         output_name: std::ffi::OsString,
         output: &NativePath,
     ) -> Result<Self, AppError> {
-        let (identity, created) = match expected {
-            OutputTargetIdentity::Existing(expected_identity) => {
-                let entry = statat(&parent.directory, &output_name, AtFlags::SYMLINK_NOFOLLOW)
-                    .map_err(|error| {
-                        let error: io::Error = error.into();
-                        if error.kind() == io::ErrorKind::NotFound {
-                            AppError::validation(
-                                "library_export_publication_identity_drift",
-                                Some(output.clone()),
-                            )
-                        } else {
-                            export_io(output, "inspect export output", error)
-                        }
-                    })?;
-                if FileType::from_raw_mode(entry.st_mode) != FileType::RegularFile
-                    || (entry.st_dev as u64, entry.st_ino) != expected_identity
-                {
-                    return Err(AppError::validation(
+        let entry = statat(&parent.directory, &output_name, AtFlags::SYMLINK_NOFOLLOW).map_err(
+            |error| {
+                let error: io::Error = error.into();
+                if error.kind() == io::ErrorKind::NotFound {
+                    AppError::validation(
                         "library_export_publication_identity_drift",
                         Some(output.clone()),
-                    ));
+                    )
+                } else {
+                    export_io(output, "inspect export output", error)
                 }
-                (expected_identity, false)
-            }
-            OutputTargetIdentity::Absent => {
-                match statat(&parent.directory, &output_name, AtFlags::SYMLINK_NOFOLLOW) {
-                    Ok(_) => {
-                        return Err(AppError::validation(
-                            "library_export_publication_identity_drift",
-                            Some(output.clone()),
-                        ));
-                    }
-                    Err(error) => {
-                        let error: io::Error = error.into();
-                        if error.kind() != io::ErrorKind::NotFound {
-                            return Err(export_io(output, "inspect export output", error));
-                        }
-                    }
-                }
-                let handle = openat(
-                    &parent.directory,
-                    &output_name,
-                    OFlags::CREATE | OFlags::EXCL | OFlags::WRONLY | OFlags::NOFOLLOW,
-                    Mode::from_bits_truncate(0o600),
-                )
-                .map_err(|error| {
-                    let error: io::Error = error.into();
-                    if error.kind() == io::ErrorKind::AlreadyExists {
-                        AppError::validation(
-                            "library_export_publication_identity_drift",
-                            Some(output.clone()),
-                        )
-                    } else {
-                        export_io(output, "create export publication guard", error)
-                    }
-                })?;
-                let held = fstat(&handle).map_err(|error| {
-                    export_io(output, "inspect export publication guard", error.into())
-                })?;
-                ((held.st_dev as u64, held.st_ino), true)
-            }
-        };
+            },
+        )?;
+        if FileType::from_raw_mode(entry.st_mode) != FileType::RegularFile
+            || (entry.st_dev as u64, entry.st_ino) != expected_identity
+        {
+            return Err(AppError::validation(
+                "library_export_publication_identity_drift",
+                Some(output.clone()),
+            ));
+        }
         let guard = Self {
             parent,
             name: output_name,
-            identity,
-            created,
+            identity: expected_identity,
         };
         if !guard.matches(&guard.name) {
             return Err(AppError::validation(
@@ -504,7 +458,7 @@ impl<'parent> OutputPublicationGuard<'parent> {
     }
 
     fn remove_published_entry(
-        &mut self,
+        &self,
         publication_name: &std::ffi::OsStr,
         output: &NativePath,
     ) -> Result<(), AppError> {
@@ -515,17 +469,7 @@ impl<'parent> OutputPublicationGuard<'parent> {
             ));
         }
         unlinkat(&self.parent.directory, publication_name, AtFlags::empty())
-            .map_err(|error| export_io(output, "remove replaced export output", error.into()))?;
-        self.created = false;
-        Ok(())
-    }
-}
-
-impl Drop for OutputPublicationGuard<'_> {
-    fn drop(&mut self) {
-        if self.created && self.matches(&self.name) {
-            let _ = unlinkat(&self.parent.directory, &self.name, AtFlags::empty());
-        }
+            .map_err(|error| export_io(output, "remove replaced export output", error.into()))
     }
 }
 
@@ -579,18 +523,23 @@ where
         cleanup_staging_if_owned(staging, parent, &staging_name);
         return Err(error);
     }
-    let mut output_guard = match OutputPublicationGuard::capture(
-        parent,
-        roots,
-        expected_output,
-        output_name.clone(),
-        output,
-    ) {
-        Ok(guard) => guard,
-        Err(error) => {
-            cleanup_staging_if_owned(staging, parent, &staging_name);
-            return Err(error);
+    let output_guard = match expected_output {
+        OutputTargetIdentity::Existing(expected_identity) => {
+            match OutputPublicationGuard::capture(
+                parent,
+                roots,
+                expected_identity,
+                output_name.clone(),
+                output,
+            ) {
+                Ok(guard) => Some(guard),
+                Err(error) => {
+                    cleanup_staging_if_owned(staging, parent, &staging_name);
+                    return Err(error);
+                }
+            }
         }
+        OutputTargetIdentity::Absent => None,
     };
     if let Err(error) = verify_staging_identity(staging, parent, &staging_name, output) {
         cleanup_staging_if_owned(staging, parent, &staging_name);
@@ -618,61 +567,88 @@ where
         cleanup_staging_if_owned(staging, parent, &staging_name);
         return Err(error);
     }
-    if !output_guard.matches(&output_name) {
-        cleanup_staging_if_owned(staging, parent, &publication_name);
-        cleanup_staging_if_owned(staging, parent, &staging_name);
-        return Err(AppError::validation(
-            "library_export_publication_identity_drift",
-            Some(output.clone()),
-        ));
-    }
-    if let Err(error) = after_publication_identity_check_before_exchange() {
-        cleanup_staging_if_owned(staging, parent, &publication_name);
-        cleanup_staging_if_owned(staging, parent, &staging_name);
-        return Err(error);
-    }
-    if let Err(error) = renameat_with(
-        &parent.directory,
-        &publication_name,
-        &parent.directory,
-        &output_name,
-        RenameFlags::EXCHANGE,
-    ) {
-        cleanup_staging_if_owned(staging, parent, &staging_name);
-        cleanup_staging_if_owned(staging, parent, &publication_name);
-        return Err(export_io(
-            output,
-            "exchange export publication with output guard",
-            error.into(),
-        ));
-    }
-    if verify_staging_identity(staging, parent, &output_name, output).is_err()
-        || !output_guard.matches(&publication_name)
-    {
-        let restore = renameat_with(
+    if let Some(output_guard) = output_guard {
+        if !output_guard.matches(&output_name) {
+            cleanup_staging_if_owned(staging, parent, &publication_name);
+            cleanup_staging_if_owned(staging, parent, &staging_name);
+            return Err(AppError::validation(
+                "library_export_publication_identity_drift",
+                Some(output.clone()),
+            ));
+        }
+        if let Err(error) = after_publication_identity_check_before_exchange() {
+            cleanup_staging_if_owned(staging, parent, &publication_name);
+            cleanup_staging_if_owned(staging, parent, &staging_name);
+            return Err(error);
+        }
+        if let Err(error) = renameat_with(
             &parent.directory,
             &publication_name,
             &parent.directory,
             &output_name,
             RenameFlags::EXCHANGE,
-        );
-        cleanup_staging_if_owned(staging, parent, &publication_name);
-        cleanup_staging_if_owned(staging, parent, &staging_name);
-        return match restore {
-            Ok(()) => Err(AppError::validation(
-                "library_export_publication_identity_drift",
-                Some(output.clone()),
-            )),
-            Err(error) => Err(export_io(
+        ) {
+            cleanup_staging_if_owned(staging, parent, &staging_name);
+            cleanup_staging_if_owned(staging, parent, &publication_name);
+            return Err(export_io(
                 output,
-                "restore export target after publication identity drift",
+                "exchange export publication with output guard",
                 error.into(),
-            )),
-        };
-    }
-    if let Err(error) = output_guard.remove_published_entry(&publication_name, output) {
-        cleanup_staging_if_owned(staging, parent, &staging_name);
-        return Err(error);
+            ));
+        }
+        if verify_staging_identity(staging, parent, &output_name, output).is_err()
+            || !output_guard.matches(&publication_name)
+        {
+            let restore = renameat_with(
+                &parent.directory,
+                &publication_name,
+                &parent.directory,
+                &output_name,
+                RenameFlags::EXCHANGE,
+            );
+            cleanup_staging_if_owned(staging, parent, &publication_name);
+            cleanup_staging_if_owned(staging, parent, &staging_name);
+            return match restore {
+                Ok(()) => Err(AppError::validation(
+                    "library_export_publication_identity_drift",
+                    Some(output.clone()),
+                )),
+                Err(error) => Err(export_io(
+                    output,
+                    "restore export target after publication identity drift",
+                    error.into(),
+                )),
+            };
+        }
+        if let Err(error) = output_guard.remove_published_entry(&publication_name, output) {
+            cleanup_staging_if_owned(staging, parent, &staging_name);
+            return Err(error);
+        }
+    } else {
+        if let Err(error) = after_publication_identity_check_before_exchange() {
+            cleanup_staging_if_owned(staging, parent, &publication_name);
+            cleanup_staging_if_owned(staging, parent, &staging_name);
+            return Err(error);
+        }
+        if let Err(error) = renameat_with(
+            &parent.directory,
+            &publication_name,
+            &parent.directory,
+            &output_name,
+            RenameFlags::NOREPLACE,
+        ) {
+            cleanup_staging_if_owned(staging, parent, &publication_name);
+            cleanup_staging_if_owned(staging, parent, &staging_name);
+            return Err(export_io(
+                output,
+                "publish export to absent output",
+                error.into(),
+            ));
+        }
+        if let Err(error) = verify_staging_identity(staging, parent, &output_name, output) {
+            cleanup_staging_if_owned(staging, parent, &staging_name);
+            return Err(error);
+        }
     }
     cleanup_staging_if_owned(staging, parent, &staging_name);
     Ok(())
@@ -882,9 +858,9 @@ fn ensure_regular_output(path: &Path, output: &NativePath) -> Result<(), AppErro
 
 fn absolute_path(path: &Path) -> io::Result<PathBuf> {
     if path.is_absolute() {
-        Ok(normalize_absolute(path))
+        Ok(path.to_path_buf())
     } else {
-        Ok(normalize_absolute(&std::env::current_dir()?.join(path)))
+        Ok(std::env::current_dir()?.join(path))
     }
 }
 
@@ -1620,11 +1596,49 @@ mod tests {
             &self,
             _output_parent: &Path,
         ) -> Result<(), AppError> {
-            fs::remove_file(&self.output).unwrap();
+            if self.output.exists() {
+                fs::remove_file(&self.output).unwrap();
+            }
             fs::create_dir(&self.output).unwrap();
             fs::write(self.output.join("preserve"), b"external directory").unwrap();
             Ok(())
         }
+    }
+
+    struct AbsentOutputBeforePublication {
+        output: PathBuf,
+    }
+
+    impl TransferWriteHooks for AbsentOutputBeforePublication {
+        fn after_publication_link_before_rename(
+            &self,
+            _output_parent: &Path,
+        ) -> Result<(), AppError> {
+            assert!(matches!(
+                fs::symlink_metadata(&self.output),
+                Err(error) if error.kind() == io::ErrorKind::NotFound
+            ));
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn export_keeps_an_absent_output_absent_until_no_clobber_publish() {
+        let temporary = tempdir().unwrap();
+        let output_parent = temporary.path().join("output");
+        let output = NativePath::new(output_parent.join("library.json"));
+        fs::create_dir(&output_parent).unwrap();
+        let store = PortableLibraryTransferStore::with_write_hooks(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(XdgRootResolver),
+            Arc::new(AbsentOutputBeforePublication {
+                output: output.as_path().to_path_buf(),
+            }),
+        );
+
+        store.write_export(&output, &document()).unwrap();
+
+        assert!(fs::metadata(output.as_path()).unwrap().is_file());
     }
 
     struct PublicationLinkReplacement {
@@ -1953,6 +1967,26 @@ mod tests {
         assert_eq!(error.code(), "validation_failed");
         assert_eq!(fs::read(output.as_path()).unwrap(), b"old output");
         assert_eq!(fs::read(replacement).unwrap(), b"replacement bytes");
+    }
+
+    #[test]
+    fn export_preserves_native_symlink_parent_dotdot_semantics() {
+        let temporary = tempdir().unwrap();
+        let physical_parent = temporary.path().join("physical");
+        let physical_child = physical_parent.join("nested");
+        let symlink_parent = temporary.path().join("symlink-parent");
+        fs::create_dir_all(&physical_child).unwrap();
+        symlink(&physical_child, &symlink_parent).unwrap();
+        let output = NativePath::new(symlink_parent.join("..").join("library.json"));
+        let store = PortableLibraryTransferStore::with_environment(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(XdgRootResolver),
+        );
+
+        store.write_export(&output, &document()).unwrap();
+
+        assert!(physical_parent.join("library.json").is_file());
+        assert!(!temporary.path().join("library.json").exists());
     }
 
     #[test]
