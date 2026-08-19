@@ -68,7 +68,7 @@ depends_on: [PLAN-0002]
 - [x] (2026-08-19 05:52Z) 完成完整运行时验证：`cargo fmt --all --check`、workspace Clippy `-D warnings`、workspace all-features locked tests（6、12、41 个测试通过）与 workspace build 均通过；实际 CLI smoke 证明 dry-run 无状态、commit/export 成功、isolated round trip 字节相同。
 - [x] (2026-08-19 05:52Z) 已 staged 全部 34 个交付文件并完整检查 diff；`git diff --cached --check` 通过，包含 vendored Unicode 输入在内的每个变更均已检查。
 - [x] (2026-08-19 05:55Z) 实现提交 `4c6a6919921cabcbc29b11cfa255466993ad2adf` 已推送；local、origin branch 与 Draft PR #3 head 相同，PR 仍为 Draft。
-- [x] (2026-08-19 05:57Z) 已运行 `gh pr ready https://github.com/bootids/skilload/pull/3`，随后观察到 `isDraft: false` 与 `headRefOid: 47f22f8a1687d5e46b9d787503565e1badad141a`；该 SHA 等于已推送的 implementation/active-Plan HEAD，本 Plan 已进入 `review`。
+- [x] (2026-08-19 05:57Z) 已运行 `gh pr ready https://github.com/bootids/skilload/pull/3`，随后观察到 `isDraft: false` 与 `headRefOid: 47f22f8a1687d5e46b9d787503565e1badad141a`；该 SHA 等于已推送的 implementation/active-Plan HEAD。首次 review-state commit `b30afe3aa7a772f1ccf1885eb041006528f10c24` 推送后曾再次确认 GitHub/repository head 一致，本 Plan 保持 `review`。
 - [ ] 收到明确人类合并授权后，完成预检、评审会话记录、completed 事务、必要检查、合并、默认分支更新和本地交付分支清理。
 
 ## Surprises & Discoveries
@@ -140,6 +140,8 @@ depends_on: [PLAN-0002]
 
 
 P2 implementation 与完整验证已完成，PR #3 已于 2026-08-19 05:57Z 转为 ready for review；ready transaction 的实现头为 `47f22f8a1687d5e46b9d787503565e1badad141a`，GitHub 已返回 `isDraft: false` 与相同 `headRefOid`。P2 提供仅含 portable resolved Library evidence 的 `data/skilload.db`：dry-run/absent export 不创建 XDG roots，实际 import 在所有 scanner/schema/domain/conflict planning 后才 staging/publish，existing canonical source 保持 kept，alias/canonical duplicate 以规定 `internal_duplicate` rollback，export 以稳定顺序写出独立 JSON 文件。`mise exec -- cargo fmt --all --check`、`mise exec -- cargo clippy --workspace --all-targets --all-features -- -D warnings`、`mise exec -- cargo test --workspace --all-features --locked`（6、12、41 tests passed）和 `mise exec -- cargo build --workspace --all-features --locked` 均已通过；实际 `target/debug/skilload` smoke 在两个隔离 XDG root 中验证 dry-run observed/no-state、changed import、portable-only export 与 byte-identical second import/export。下一步是人类 review 与所需会话处理；只有明确人类 merge 授权才可进入 completed。
+
+首次 review-state commit `b30afe3aa7a772f1ccf1885eb041006528f10c24` 推送后，PR #3 当时仍为 open、ready，`headRefOid`、local HEAD 与 origin branch 一致，且 `docs/exec-plans/review/p2-library-portable-import-export.md` 是唯一的 current Plan copy。
 
 ## Review Conversation Log
 
@@ -418,6 +420,8 @@ Library 是本机可搜索的来源元数据集合；在本交付中它只保存
 2026-08-19 05:52Z 的验证 evidence：vendored Unicode 输入 SHA-256 与 reference 一致；focused `portable_library` 8 tests、`sqlite_library` 6 tests、`library` filter 16 tests、CLI contract 12 tests 均通过。实际 smoke 使用 `target/debug/skilload library import --input <PATH> --dry-run --json`、实际 import、`library export --output <PATH> --json`，并由第二隔离 root 重导入/重导出得到 byte-identical document。
 
 2026-08-19 05:55Z 的发布前 evidence：implementation commit `4c6a6919921cabcbc29b11cfa255466993ad2adf` 已推送；`gh pr view` 返回 `isDraft: true` 与相同 `headRefOid`，local/remote head 相同且工作树干净。
+
+2026-08-19 05:57Z 的 review-state evidence：首次 review commit `b30afe3aa7a772f1ccf1885eb041006528f10c24` 推送后，PR #3 `isDraft: false`、`state: OPEN`、`headRefName: codex/p2-library-portable-import-export`，local/remote 工作树当时一致且干净。
 
 成功的 portable output 形状应类似下列缩进示例，字段值仅说明结构；真实 source/description 必须由 validator 保留：
 
