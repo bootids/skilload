@@ -2,7 +2,7 @@
 plan_id: PLAN-0003
 branch: codex/p2-library-portable-import-export
 pull_request: https://github.com/bootids/skilload/pull/3
-status: plan
+status: active
 depends_on: [PLAN-0002]
 ---
 
@@ -60,7 +60,7 @@ depends_on: [PLAN-0002]
 - [x] (2026-08-19 03:09Z) 发现 `database-recovery.md` 仍以已废止的隐式 `library export --json`/`result.data` 表述恢复导出；已同步为显式 `--output <recovery-directory>/library-export.json`，使 recovery procedure 与 Revision 2 文件契约一致。
 - [x] (2026-08-19 04:30Z) 处理 PR #3 的第二轮规划评审：将 export target collision、rename 后 sync failure、非常规 import input、首次 persistence failure 与同 batch canonical source duplicate 纳入 `SKL-LIB-009`/`SKL-LIB-010` Revision 3；恢复 database recovery 的第 2 节标题，更新 API catalog、持久化设计和 Review Conversation Log；未改动任何运行时代码。
 - [x] (2026-08-19 04:43Z) 已将第二轮 PR #3 评审的六个有效问题以提交 `e7467f70d55cc48548f4c17e4df067d529719e34` 推送，逐一回复并关闭全部内联线程；本 Review Conversation Log 已记录每个 reply URL 和验证证据，计划仍为 `plan`、PR 仍为 Draft。
-- [ ] 收到明确人类执行授权后，按 `execute-exec-plan` 预检 `PLAN-0002`、Draft PR、分支和工作树，移动本计划到 `active` 并完成下列实现里程碑。
+- [x] (2026-08-19 05:05Z) 已完成 `execute-exec-plan` 预检：工作树干净，当前/远端分支与 Draft PR #3 的 `6bb4230a103d47a5b165d831672df7c8f3fb6d12` 一致，`PLAN-0002` 已在 `origin/main` 的 `completed/` 中；本 Plan 已进入 `active`，开始里程碑 1。
 - [ ] 在代码、测试和同步文档均提交推送后，运行 `gh pr ready`，确认 `isDraft: false` 和 `headRefOid` 等于已推送实现 HEAD，再自动移动计划到 `review`。
 - [ ] 收到明确人类合并授权后，完成预检、评审会话记录、completed 事务、必要检查、合并、默认分支更新和本地交付分支清理。
 
@@ -124,7 +124,7 @@ depends_on: [PLAN-0002]
 ## Outcomes & Retrospective
 
 
-计划创建阶段尚未执行实现、测试或行为验收。预期结果是一个在有效 Library commit 后才发布 `data/skilload.db` 的可移植元数据传输垂直切片；commit 前失败清理本次创建的 staging/state 痕迹，commit 或 rename 后的 durability-sync failure 明确返回错误而不伪造旧状态。后续执行必须在这里记录实际实现范围、验证命令、测试计数、PR ready 证据和与本 Product Baseline 的逐项比对。
+执行授权后的 `execute-exec-plan` 预检已完成：`PLAN-0002` 在 `origin/main` 完成，当前分支、远端与 Draft PR #3 的 head 一致，且工作树干净。本 Plan 已进入 `active`，尚未开始运行时代码实现。预期结果仍是一个在有效 Library commit 后才发布 `data/skilload.db` 的可移植元数据传输垂直切片；commit 前失败清理本次创建的 staging/state 痕迹，commit 或 rename 后的 durability-sync failure 明确返回错误而不伪造旧状态。后续执行必须在这里记录实际实现范围、验证命令、测试计数、PR ready 证据和与本 Product Baseline 的逐项比对。
 
 ## Review Conversation Log
 
@@ -396,7 +396,7 @@ Library 是本机可搜索的来源元数据集合；在本交付中它只保存
 ## Artifacts and Notes
 
 
-规划基线的可复核事实如下：已完成的 `PLAN-0001` 和 `PLAN-0002` 是当前仅有的执行计划；没有 active、review 或 plan 文件，也没有开放 PR。`main` 已包含 PR #2 合并提交；本分支从该基线创建。
+执行起点的可复核事实如下：`PLAN-0001` 与 `PLAN-0002` 已在默认分支完成；`PLAN-0003` 已于 2026-08-19 05:05Z 经授权进入 `active/`，其唯一关联项是 Draft PR #3。当前分支从包含 PR #2 合并提交的基线创建，预检确认远端分支与 PR head 一致。
 
 依赖证据应保留在 `docs/references/rust-sqlite-unicode-library-foundation.md`：`rusqlite 0.40.2` bundled build 明确启用 FTS5；`unicode-normalization 0.1.23` 表为 15.1.0，而 0.1.25 为 17.0.0。该参考是实施时依赖选择与版本断言的依据，不是运行时网络依赖。
 
@@ -475,3 +475,5 @@ Library 是本机可搜索的来源元数据集合；在本交付中它只保存
 计划修订说明（2026-08-19）：PR #3 评审指出文件传输语义改变了可观察行为、alias 冲突没有 API 字段约束且数据库损坏未映射既有诊断。本修订将 `SKL-LIB-009`/`SKL-LIB-010` 提升为 Revision 2，明确 `internal_duplicate` 和 `database_corrupt` 的 P2 约束，并同步数据库恢复过程使用显式 `library export --output` 文件；仍未开始实现。
 
 计划修订说明（2026-08-19）：第二轮 PR #3 规划评审发现 output 可覆盖活动 database generation、非常规 input 可绕过资源上界、同 batch canonical source 未定义、首次 import 失败可遗留 state、以及 rename 后 sync failure 的错误承诺不成立。本修订将 `SKL-LIB-009`/`SKL-LIB-010` 提升为 Revision 3，定义拒绝/cleanup/错误语义和 `internal_duplicate` 字段，并恢复 recovery procedure 的第 2 节标题；仍未开始实现。
+
+计划修订说明（2026-08-19）：收到明确执行授权后完成 `execute-exec-plan` 预检，确认 `PLAN-0002` 已在 `origin/main` 完成、PR #3 为 Draft 且工作树/分支/PR head 一致；本 Plan 移入 `active/`，尚未开始实现。
