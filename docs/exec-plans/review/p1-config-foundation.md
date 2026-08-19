@@ -72,7 +72,7 @@ The deliberately narrow development command surface is important. Building all 5
 - [x] (2026-08-18) Replied to R1 through R6 from pushed remediation head `3417b8a2c914b0ed9c16259f969fbc2ba9546031`; the final `pr_threads.cjs list --all` reconciliation reports all six inline threads resolved.
 - [x] (2026-08-18) Implemented R7 through R10 in pushed remediation commit `c3977fe5653118487ec0801e3bb6f1cfec749e28`, retained the documented R11 no-fix disposition, replied to every source, and resolved every handled inline thread. The final `pr_threads.cjs list --all` reconciliation reports all eleven actual-problem threads R1 through R11 resolved.
 - [x] (2026-08-18) Pushed in-scope R12 through R14 parser/error-contract remediations in `9135de47b7f7141621b7ef77a2291b9f76227eef` with focused and full locked validation passing, replied to every source, and resolved every handled inline thread. The final `pr_threads.cjs list --all` reconciliation reports all fourteen actual-problem threads R1 through R14 resolved.
-- [x] (2026-08-19) 已分类 R15 与 R16 并完成在范围内的修复，修复提交 `450ae3f4148a8d924f26977c4ebeab932c26d2ce` 已推送：创建后的根绑定会被保留并在重命名前重验，竞争创建目录会先恢复 `0700` 再继续遍历。两个精确回归和完整锁定格式、Clippy、测试（37 个）与构建门禁均通过；回复和线程关闭将在本轮预备日志推送后进行。
+- [x] (2026-08-19) 已分类并完成 R15 与 R16 的在范围内修复，修复提交 `450ae3f4148a8d924f26977c4ebeab932c26d2ce` 已推送：创建后的根绑定会被保留并在重命名前重验，竞争创建目录会先恢复 `0700` 再继续遍历。两个精确回归和完整锁定格式、Clippy、测试（37 个）与构建门禁均通过；已回复两个来源、关闭两个线程，并完成全部 16 个线程的最终核对。
 - [ ] After a later explicit human merge prompt, use `merge-exec-plan` to pass preflight, complete and push the Plan, merge, update local `main`, and delete the local delivery branch.
 
 ## Surprises & Discoveries
@@ -148,7 +148,7 @@ Review remediation on 2026-08-18 closes five valid in-scope defects: newly used 
 Review remediation added four in-scope protections: recursive XDG root creation now repairs each newly created component before descent and parent-syncs newly created configuration-directory entries after the file replacement; invalid native bytes for a numeric setting no longer become `PathValue`; and unrepresentable TOML versions become an `invalid_state` envelope rather than an invalid API-v1 `SchemaDetails` payload. `mise exec -- cargo fmt --all --check`, `mise exec -- cargo clippy --workspace --all-targets --all-features -- -D warnings`, `mise exec -- cargo test --workspace --all-features --locked` (34 tests: 19 core, six CLI unit, nine CLI integration), `mise exec -- cargo build --workspace --all-features --locked`, and `git diff --check` passed in remediation commit `c3977fe5653118487ec0801e3bb6f1cfec749e28`. Final reconciliation records replies and resolved state for all eleven actual-problem threads R1 through R11.
 
 Review remediation in `9135de47b7f7141621b7ef77a2291b9f76227eef` preserves JSON parser error envelopes when unknown options surround an identifiable configuration leaf, rejects clustered JSON/meta flags, and redacts every unknown configuration-key value. `mise exec -- cargo fmt --all --check`, `mise exec -- cargo clippy --workspace --all-targets --all-features -- -D warnings`, `mise exec -- cargo test --workspace --all-features --locked` (35 tests: 19 core, six CLI unit, 10 CLI integration), `mise exec -- cargo build --workspace --all-features --locked`, and `git diff --check` passed. The corresponding GitHub replies and closure results are recorded in R12 through R14 below; final reconciliation remains a merge preflight requirement.
-2026-08-19 的审查修复已在 `450ae3f4148a8d924f26977c4ebeab932c26d2ce` 推送：配置写入路径保留创建后 XDG 根目录的身份绑定，并在重命名前重新验证；因此同名根目录被重命名并重建时会在持久化前中止。竞争创建者赢得某一目录组件时也会恢复 `0700`。新增的精确回归和完整锁定工作区门禁共通过 37 个测试；R15 与 R16 仅在其 GitHub 回复和核对前保持开放状态。
+2026-08-19 的审查修复已在 `450ae3f4148a8d924f26977c4ebeab932c26d2ce` 推送：配置写入路径保留创建后 XDG 根目录的身份绑定，并在重命名前重新验证；因此同名根目录被重命名并重建时会在持久化前中止。竞争创建者赢得某一目录组件时也会恢复 `0700`。新增的精确回归和完整锁定工作区门禁共通过 37 个测试；R15 与 R16 均已回复并关闭，最终完整会话核对确认 16 个线程全部解决、无未记录问题来源。
 
 ## Review Conversation Log
 
@@ -383,13 +383,13 @@ Source: inline thread `PRRT_kwDOT7YN2s6aUPZI`, comment `PRRC_kwDOT7YN2s7jDWG1`, 
 Problem: 初始加载时配置应用目录不存在，`write_document` 创建该目录后仍以创建前的最近既有祖先进行重验；若同名目录在暂存或落盘前被替换，现有绑定无法检测身份漂移。
 Disposition: fixed.
 
-Status: open.
+Status: resolved.
 
 Resolution: `StateRootResolver::revalidate` 现在返回刷新后的 `ResolvedRoots`；`write_document` 在创建配置根目录后保留该绑定，并在暂存文件重命名前以该绑定再次重验。新建根目录因而成为身份锚点；其后同名目录被替换会返回结构化环境错误，且不会持久化配置。
 
 Evidence: 新增 `writes_reject_recreated_configuration_root_after_initial_binding`：它在暂存文件创建后重命名并重建配置根，断言变更失败且新旧目录均没有 `config.toml`。该精确回归以及 `raced_directory_entries_restore_owner_search_permission` 均通过。完整门禁 `mise exec -- cargo fmt --all --check`、`mise exec -- cargo clippy --workspace --all-targets --all-features -- -D warnings`、`mise exec -- cargo test --workspace --all-features --locked`（37 个测试）和 `mise exec -- cargo build --workspace --all-features --locked` 均通过；`git diff --check` 通过。修复代码提交 `450ae3f4148a8d924f26977c4ebeab932c26d2ce` 已推送。
 
-GitHub outcome: 待回复；thread resolved: false.
+GitHub outcome: [Reply](https://github.com/bootids/skilload/pull/2#discussion_r3809367065); thread resolved: true.
 
 ### R16 — 竞争创建分支未恢复目录权限
 
@@ -398,13 +398,13 @@ Source: inline thread `PRRT_kwDOT7YN2s6aUPZK`, comment `PRRC_kwDOT7YN2s7jDWG5`, 
 Problem: 两个首次写入在严格 `umask` 下竞争创建缺失层级时，后到进程的 `AlreadyExists` 分支只验证目录类型而不恢复 `0700`，随后可能无法遍历该中间目录并失败。
 Disposition: fixed.
 
-Status: open.
+Status: resolved.
 
 Resolution: `ensure_restrictive_directory` 现在将成功创建和 `AlreadyExists` 的竞争创建统一经由 `create_restrictive_directory` 处理：完成真实目录验证后，两个分支都会立即调用 `restrict_directory_permissions`，再继续创建下一层；因此均遵守当前用户 `0700` 不变量。
 
 Evidence: 新增 `raced_directory_entries_restore_owner_search_permission`，它通过实际 `AlreadyExists` 分支将模式为 `0600` 的竞争目录恢复为 `0700`。该精确回归以及 `writes_reject_recreated_configuration_root_after_initial_binding` 均通过。完整门禁 `mise exec -- cargo fmt --all --check`、`mise exec -- cargo clippy --workspace --all-targets --all-features -- -D warnings`、`mise exec -- cargo test --workspace --all-features --locked`（37 个测试）和 `mise exec -- cargo build --workspace --all-features --locked` 均通过；`git diff --check` 通过。修复代码提交 `450ae3f4148a8d924f26977c4ebeab932c26d2ce` 已推送。
 
-GitHub outcome: 待回复；thread resolved: false.
+GitHub outcome: [Reply](https://github.com/bootids/skilload/pull/2#discussion_r3809368385); thread resolved: true.
 
 ## Context and Orientation
 
@@ -707,3 +707,5 @@ At the workspace root, declare compatible direct requirements using the exact st
 Plan revision note: created on 2026-08-18 to turn the completed product/architecture baseline into the smallest real implementation slice. It selects the Rust foundation and exact current direct inputs, fully scopes four Revision 1 behaviors, forbids placeholder domain commands, and defines the application, storage, CLI, validation, documentation, and lifecycle evidence needed for an independently reviewable delivery. The same day, initial commit `c21211b0d1aa55e2c422d6d5929bf65457fb5a91` was pushed, Draft PR https://github.com/bootids/skilload/pull/2 was opened, and its canonical URL plus publication evidence were recorded before the required metadata push. Execution completed on the same day: implementation head `5faf8ff8a5f06087e572e0c8c20e63ebc0f85b36` passed CI, the PR was made ready, and this Plan moved to `review` pending human review and a later explicit merge authorization.
 
 Plan revision note (2026-08-18): follow-up review remediation in `c3977fe5653118487ec0801e3bb6f1cfec749e28` fixes R7 through R10 and records the R11 no-fix decision. Every actual problem source from the full PR conversation is now represented by R1 through R11 with its disposition, evidence, GitHub reply, and resolved thread state; the informational `@codex` top-level comment and boilerplate review bodies raised no separate problem.
+
+Plan revision note (2026-08-19): 已记录并推送 R15、R16 的修复提交 `450ae3f4148a8d924f26977c4ebeab932c26d2ce`、精确回归和完整验证证据。两个来源均已在 GitHub 回复并关闭；最终 `pr_threads.cjs list --all` 核对确认 16 个内联线程全部解决、所有线程来源已记录，且没有新增需要处理的顶层评论或审查正文问题。
