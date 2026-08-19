@@ -2,7 +2,7 @@
 plan_id: PLAN-0003
 branch: codex/p2-library-portable-import-export
 pull_request: https://github.com/bootids/skilload/pull/3
-status: active
+status: review
 depends_on: [PLAN-0002]
 ---
 
@@ -83,7 +83,7 @@ Revision 2 的 `SKL-CLI-004`、`SKL-CLI-005` 与 `SKL-CLI-012` 以 API-v2 curren
 - [x] (2026-08-19 10:17Z) 已实现九项 active remediation：API-v2 full producer cutover 与独立 Library limit code；repository display identity；partial directory cleanup；lock/data-directory/staging descriptor identity binding；schema cardinality、tag comparison-key corruption 诊断；以及 export native path 的 `PathValue` validation projection。
 - [x] (2026-08-19 10:17Z) 已通过 focused core（61 tests）和 CLI（9 unit、12 integration）测试，以及 `cargo fmt --all --check`、workspace Clippy `-D warnings`、workspace all-features locked tests、build；隔离 CLI smoke 验证 API-v2 dry-run/import/export 和 `library_input_limit_exceeded` details。
 - [x] (2026-08-19 10:21Z) 已检查完整 staged diff、`git diff --check`，并将代码、测试、产品/API/设计/reference 文档和 preliminary review ledger 以 `03b4aa0de8b05963b0c5a2a3ce7b798684d3a92c` 推送；local/upstream/Draft PR #3 head 已核对为同一 SHA。
-- [ ] 在所有 rework 已提交推送后重新执行 ready/review 原子事务，再重新运行完整 PR 会话处理。
+- [x] (2026-08-19 10:23Z) 已执行 `gh pr ready https://github.com/bootids/skilload/pull/3`，确认 `isDraft: false`、`headRefOid: 73f5634a5b9871bb635f5bf8c4fd36ea81bee816` 与已推送 active Plan HEAD 相同；本文件随 review-state commit 移入 `review/`，随后必须重新读取完整 PR 会话并逐源回复/关闭九个线程。
 - [ ] 收到明确人类合并授权后，完成预检、评审会话记录、completed 事务、必要检查、合并、默认分支更新和本地交付分支清理。
 
 ## Surprises & Discoveries
@@ -214,6 +214,8 @@ P2 implementation 与完整验证已完成，PR #3 已于 2026-08-19 05:57Z 转�
 
 2026-08-19 10:17Z 的 active rework 已完成本地实现和验收。API-v2 catalog 成为唯一 current producer contract，保留 API-v1 历史定义；六个 Library scanner ceiling 现在投影为 `library_input_limit_exceeded`/`LimitDetails`。九个 review defect 均有回归覆盖：data/lock/staging descriptor races、partial directory rollback、schema/tag durable corruption、source display binding 和 lossless error path。下一步是审阅完整 diff、推送 preliminary commit，再按原 PR review workflow 回复并关闭线程。
 
+
+2026-08-19 10:23Z 已完成 active-to-ready 的 GitHub 事务：PR #3 为 open、ready，`headRefOid` 等于完整 remediation/active-Plan evidence commit `73f5634a5b9871bb635f5bf8c4fd36ea81bee816`。本 review-state commit 只移动本 Plan 并记录 ready evidence；九个新 review source 仍保持 open，下一步由 `address-pr-threads` 在 review 状态重新获取会话、回复并关闭。
 ## Review Conversation Log
 
 
@@ -970,3 +972,5 @@ Library 是本机可搜索的来源元数据集合；在本交付中它只保存
 计划修订说明（2026-08-19 10:17Z）：已在 active rework 本地完成九项 review remediation、API-v2 catalog/cutover、产品/设计/reference 同步、focused tests、workspace gates 和隔离 CLI smoke。Review Conversation Log 的九项 fixed entry 现在记录具体 changed paths、回归测试和待写入的 preliminary commit SHA；所有线程仍保持 open，直到该 commit 推送、逐源 GitHub 回复并关闭后才设为 resolved。
 
 计划修订说明（2026-08-19 10:21Z）：preliminary remediation commit `03b4aa0de8b05963b0c5a2a3ce7b798684d3a92c` 已推送，local/upstream/Draft PR head 均为该 SHA。九项 open ledger entry 都已记录该 SHA 和对应验证；下一步执行 ready/review 原子事务，再重新读取完整 GitHub 会话并逐源回复/关闭。
+
+计划修订说明（2026-08-19 10:23Z）：在所有 remediation、测试、产品/API/设计/reference 和 active Plan evidence 均已推送后，`gh pr ready` 返回 `isDraft: false` 且 `headRefOid` 与 `73f5634a5b9871bb635f5bf8c4fd36ea81bee816` 一致。本 commit 将唯一 Plan copy 移至 `review/`、设置 `status: review` 并记录 ready evidence；下一步重新执行完整 PR 会话 reconciliation。
