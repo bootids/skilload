@@ -52,19 +52,18 @@ The **Library** is the user's durable, searchable collection of source metadata.
 
 **Acceptance.** Adding ` Review ` and then `review` stores one tag displayed as `Review`; composed `caf\u00e9` and decomposed `cafe\u0301` likewise share one key and retain the first display spelling. Internal whitespace is not collapsed, Turkish case folding is locale-independent, and empty/control/oversized tags, a 65th distinct tag, a 257-scalar or 1,025-byte alias/category, and a 4,097-scalar or 16,385-byte note fail without mutation. Removing through any equivalent spelling removes the one stored value. Clearing an already empty note returns unchanged, and attempting a duplicate alias changes neither entry.
 
-## SKL-LIB-009 - Export boundary (Revision 1)
+## SKL-LIB-009 - Export boundary (Revision 2)
 
-**Behavior.** Library export MUST be deterministic, versioned JSON containing portable Library source and metadata only. It MUST exclude Trust, global desired state, manager records, known workspace paths, local profile IDs, credentials, cache content, and operational timestamps that are not portable metadata.
+**Behavior.** Library export MUST 生成确定性、版本化的 JSON，其中只含可移植的 Library 来源与元数据；它 MUST 排除 Trust、全局 desired state、manager records、已知 workspace paths、本机 profile IDs、凭据、cache content 和不可移植的操作时间。`library export --output <PATH>` MUST 向请求的原生路径原子写入且仅写入一个可移植的 `LibraryExportData` 文档；正常的人类输出或 `--json` 操作结果 MUST 保持在该文件之外。
 
-**Acceptance.** Inspecting an export finds no local absolute path or authorization/deployment record. Repeating export over unchanged Library state yields semantically identical data and stable ordering.
+**Acceptance.** 检查 export 找不到本机绝对路径或 authorization/deployment record。未改变 Library 状态的重复 export MUST 产生语义相同、排序稳定的数据，并以原子替换完成请求路径的输出；输出文件本身必须是 `LibraryExportData`，命令的人类或 API-v1 操作结果不得混入其中。
 
-**接口澄清（Revision 1）。** `library export --output <PATH>` 必须以原子方式向请求的原生路径写入且仅写入一个可移植的 `LibraryExportData` 文档；正常的人类输出或 `--json` 命令结果仍是既定操作结果，不属于该文件。`library import --input <PATH> [--dry-run]` 必须从请求的原生路径读取同一可移植文档。这些文件选项是版本 1 唯一的传输方式；它们不增加命令别名或第二种 API 信封。
 
-## SKL-LIB-010 - Atomic import and conflicts (Revision 1)
+## SKL-LIB-010 - Atomic import and conflicts (Revision 2)
 
-**Behavior.** Library import MUST support dry-run and MUST validate the whole versioned JSON batch before mutation. Before schema deserialization or `ImportPlan` construction, a streaming non-model pass MUST stop and reject an input beyond 67,108,864 bytes, 10,000 entry objects, 1,000,000 total JSON values (each object, array, string, number, Boolean, or null counts once), eight nested object/array levels, 1,048,576 UTF-8 bytes in one string token, or 128 bytes in one number token. It MUST also reject duplicate object keys and invalid JSON during that pass. The complete schema and every metadata value MUST then satisfy `SKL-LIB-008`; unknown fields or wrong types are errors. The batch is atomic. Existing sources are kept by default; an alias conflict fails the batch. An explicit replace mode MAY replace Library metadata only and MUST NOT import or alter Trust, global state, workspace state, or local paths.
+**Behavior.** `library import --input <PATH> [--dry-run]` MUST 从请求的原生路径读取同一可移植文档；这是当前版本唯一的传输方式，不得增加命令别名或第二种 API 信封。Library import MUST 支持 dry-run 并在 mutation 前验证完整版本化 JSON batch。schema deserialization 或 `ImportPlan` construction 之前，streaming non-model pass MUST 停止并拒绝超过 67,108,864 bytes、10,000 entry objects、1,000,000 total JSON values（每个 object、array、string、number、Boolean 或 null 各计一次）、八层 object/array 嵌套、单个 string token 中 1,048,576 UTF-8 bytes 或单个 number token 中 128 bytes 的输入。该 pass 同时 MUST 拒绝 duplicate object keys 和 invalid JSON。完整 schema 和每个 metadata value 随后 MUST 满足 `SKL-LIB-008`；unknown fields 或 wrong types 都是错误。batch 是原子的。existing source 默认 kept；alias conflict 使整个 batch 失败，并 MUST 返回 `conflict` 的 `ConflictDetails`：每个被拒绝的导入 entry 使用 `kind: "internal_duplicate"`、`name` 为冲突 alias、`source` 为该 entry 的 source，`agent` 与 `path` 均为 null。explicit replace mode MAY 只替换 Library metadata，MUST NOT import 或改变 Trust、global state、workspace state 或 local paths。
 
-**Acceptance.** A batch with one invalid or alias-conflicting entry makes no changes. Boundary fixtures accept each exact ceiling, reject byte 67,108,865, entry 10,001, value 1,000,001, level nine, string byte 1,048,577, number byte 129, and a duplicate key before returning a complete model or allocating an `ImportPlan`; structured errors include the exceeded dimension and measured/allowed values. Dry-run reports the same planned additions/keeps/replacements as the subsequent import against unchanged state.
+**Acceptance.** 含一个 invalid 或 alias-conflicting entry 的 batch 不作任何更改。每个 alias conflict error MUST 以规定的 `ConflictDetails` 字段标识被拒绝 source 和 alias。边界 fixtures 接受每个精确 ceiling，拒绝 byte 67,108,865、entry 10,001、value 1,000,001、level nine、string byte 1,048,577、number byte 129 和 duplicate key，并在返回完整 model 或分配 `ImportPlan` 前失败；structured errors 包含 exceeded dimension 与 measured/allowed values。dry-run 对未变基线 MUST 报告与随后实际 import 相同的 planned additions/keeps/replacements。
 
 ## SKL-LIB-011 - Library scale (Revision 1)
 

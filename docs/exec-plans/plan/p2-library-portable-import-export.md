@@ -23,16 +23,16 @@ depends_on: [PLAN-0002]
 ## Product Baseline
 
 
-本交付完整实现并验证以下两个原子行为，均为 Revision 1。
+本交付完整实现并验证以下两个原子行为，均为 Revision 2。
 
-* `docs/product-specs/library.md` 中的 `SKL-LIB-009` 要求 `library export` 生成确定性、版本化的可移植 JSON，只含 Library 来源与元数据，排除 Trust、全局/工作区状态、profile、绝对本机路径、凭据、缓存内容和操作时间。该规格现已澄清：`library export --output <PATH>` 原子写入仅含 `LibraryExportData` 的文件，命令自身仍产生既定人类或 API-v1 结果。
-* 同一文件中的 `SKL-LIB-010` 要求 `library import --input <PATH> [--dry-run]` 在构建任何模式或 `ImportPlan` 前执行流式、非模型预验证。它必须分别限制输入到 67,108,864 字节、10,000 个条目对象、1,000,000 个 JSON 值、八层对象/数组嵌套、每个字符串 1,048,576 UTF-8 字节和每个数字 128 字节；拒绝重复对象键、无效 JSON、未知字段、错误类型和无效元数据。整个批次要么提交、要么不改变持久状态；默认保留已有 canonical source，别名冲突使整个批次失败；dry-run 必须报告与同一未变基线上的实际导入相同的 added/updated/kept/conflicts 集合且不创建 state。
+* `docs/product-specs/library.md` 中 Revision 2 的 `SKL-LIB-009` 要求 `library export --output <PATH>` 将确定性、版本化且仅含 Library 来源/元数据的 `LibraryExportData` 原子写入请求路径；文件排除 Trust、全局/工作区状态、profile、绝对本机路径、凭据、缓存内容和操作时间，命令自身仍产生既定人类或 API-v1 结果。
+* 同一文件中 Revision 2 的 `SKL-LIB-010` 要求 `library import --input <PATH> [--dry-run]` 在构建任何模型或 `ImportPlan` 前执行流式、非模型预验证。它必须分别限制输入到 67,108,864 字节、10,000 个条目对象、1,000,000 个 JSON 值、八层对象/数组嵌套、每个字符串 1,048,576 UTF-8 字节和每个数字 128 字节；拒绝重复对象键、无效 JSON、未知字段、错误类型和无效元数据。整个批次要么提交、要么不改变持久状态；默认保留已有 canonical source，别名冲突使整个批次以 `ConflictDetails` 中的 `internal_duplicate` 失败，且每项携带冲突 alias 与被拒绝 source；dry-run 必须报告与同一未变基线上的实际导入相同的 added/updated/kept/conflicts 集合且不创建 state。
 
 导入文件中的 `ResolvedSkill`、`SourceIdentity`、完整 SHA、完整性摘要、已验证名称、描述和计数必须满足 API-v1 的可移植表示。为防止损坏的本地记录，本交付会复用 `SKL-SRC-002`、`SKL-SRC-007` 与 `SKL-SRC-012` 的 canonical source、名称与摘要约束，并对 alias/category/tag/note 执行 `SKL-LIB-008` 的大小、Unicode 15.1.0、NFC、`White_Space` 裁剪和 C/F 完整默认大小写折叠规则。这些约束的局部复用不表示来源获取、直接元数据命令或完整 Source/Library 行为已经完成；`SKL-SRC-*`、`SKL-LIB-001`、`SKL-LIB-004`、`SKL-LIB-005`、`SKL-LIB-008` 和 `SKL-LIB-011` 仍保持 planned，直到各自完整 acceptance 被独立交付。
 
-`SKL-CLI-004`、`SKL-CLI-005`、`SKL-CLI-007`、`SKL-CLI-009`、`SKL-CLI-012`、`SKL-OPS-002`、`SKL-OPS-003`、`SKL-OPS-004`、`SKL-OPS-005` 和 `SKL-OPS-008` 同样不在本次完成基线中。本交付会遵守它们适用于新增叶子的部分：JSON stdout 只写一个 API-v1 信封、常见成功结果正确区分 observed/changed/unchanged、路径用 `PathValue`、读和 dry-run 不联网且不创建 skilload 根、导入写入仅在完整验证之后发生、未知/损坏数据库绝不被静默替换；但不会宣称这些跨全产品行为的全部 acceptance 已满足。
+`SKL-CLI-004`、`SKL-CLI-005`、`SKL-CLI-007`、`SKL-CLI-009`、`SKL-CLI-012`、`SKL-OPS-002`、`SKL-OPS-003`、`SKL-OPS-004`、`SKL-OPS-005` 和 `SKL-OPS-008` 同样不在本次完成基线中。本交付会遵守它们适用于新增叶子的部分：JSON stdout 只写一个 API-v1 信封、常见成功结果正确区分 observed/changed/unchanged、路径用 `PathValue`、读和 dry-run 不联网且不创建 skilload 根、导入写入仅在完整验证之后发生；未知较高 schema 拒绝写入，已识别的数据库损坏绝不被静默替换且必须返回 `database_corrupt` 的 `DatabaseCorruptDetails`。P2 不创建备份或导出位置索引，因此该诊断如实返回空 `backups` 和 `recoverable_exports` 集合、数据库 `PathValue` 与 `database-corruption-v1`；但不会宣称这些跨全产品行为的全部 acceptance 已满足。
 
-完成时的可观测证明是：用户先对合法导入文件运行带 `--dry-run --json` 的命令，得到 `library.import` 的 `observed` 结果且 XDG data/state 根仍不存在；再运行实际导入，得到 `changed` 或 `unchanged`，只建立所需的 data SQLite 文件与写锁；运行 export 后得到确定性 `LibraryExportData` 文件。重复导入不重写数据库；混入无效条目、重复 JSON 键、超限输入或 alias 冲突的批次不产生部分条目或持久写入。
+完成时的可观测证明是：用户先对合法导入文件运行带 `--dry-run --json` 的命令，得到 `library.import` 的 `observed` 结果且 XDG data/state 根仍不存在；再运行实际导入，得到 `changed` 或 `unchanged`，只建立所需的 data SQLite 文件与写锁；运行 export 后得到确定性 `LibraryExportData` 文件。重复导入不重写数据库；混入无效条目、重复 JSON 键、超限输入或 alias 冲突的批次不产生部分条目或持久写入。对损坏数据库的 import/export 返回带路径、空 P2 已知恢复集合和 `database-corruption-v1` 的 `database_corrupt`，并保持原文件及持久状态不变。
 
 ## Design and Architecture Inputs
 
@@ -56,7 +56,8 @@ depends_on: [PLAN-0002]
 - [x] (2026-08-19 02:15Z) 在干净、已同步的 `main` 上完成 mise、GitHub 鉴权、远端抓取、Plan 状态、产品行为和当前 P1 实现核对；`main` 的 HEAD 是已合并 PR #2 的 `39c2fb88d1cd8eea6ee340efecfd64f5be0febd9`。
 - [x] (2026-08-19 02:15Z) 选择 `PLAN-0003`、直接依赖 `PLAN-0002`、文件 slug `p2-library-portable-import-export` 和分支 `codex/p2-library-portable-import-export`；没有开放 PR 或同名远端分支可复用。
 - [x] (2026-08-19 02:15Z) 记录 SQLite/Unicode 依赖证据，并在产品/CLI 设计中补充 Revision-1 文件传输接口澄清；尚未改动任何运行时代码。
-- [x] (2026-08-19 02:23Z) 已提交并推送规划基线 `b0eb0a4`，创建 Draft PR https://github.com/bootids/skilload/pull/3，并将其 canonical HTTPS URL 写回 frontmatter；下一步提交并推送该 metadata 记录。
+- [x] (2026-08-19 03:05Z) 处理 PR #3 的规划评审：将新增的文件传输和 alias-error 语义从 Revision 1 提升为 `SKL-LIB-009`/`SKL-LIB-010` Revision 2，规定 `internal_duplicate` 的 Library alias 字段语义，并补足 P2 数据库损坏诊断；尚未改动任何运行时代码。
+- [x] (2026-08-19 03:09Z) 发现 `database-recovery.md` 仍以已废止的隐式 `library export --json`/`result.data` 表述恢复导出；已同步为显式 `--output <recovery-directory>/library-export.json`，使 recovery procedure 与 Revision 2 文件契约一致。
 - [ ] 收到明确人类执行授权后，按 `execute-exec-plan` 预检 `PLAN-0002`、Draft PR、分支和工作树，移动本计划到 `active` 并完成下列实现里程碑。
 - [ ] 在代码、测试和同步文档均提交推送后，运行 `gh pr ready`，确认 `isDraft: false` 和 `headRefOid` 等于已推送实现 HEAD，再自动移动计划到 `review`。
 - [ ] 收到明确人类合并授权后，完成预检、评审会话记录、completed 事务、必要检查、合并、默认分支更新和本地交付分支清理。
@@ -70,6 +71,8 @@ depends_on: [PLAN-0002]
   Evidence: docs.rs 的 `unicode-normalization 0.1.25` 生成表声明 `UNICODE_VERSION = (17, 0, 0)`，而 `0.1.23` 声明 `(15, 1, 0)`。
 - Observation: `rusqlite 0.40.2` 的 bundled SQLite 构建明确打开 FTS5。
   Evidence: `libsqlite3-sys` 的 v0.40.2 对应构建脚本传入 `-DSQLITE_ENABLE_FTS5`；本交付仍不会注册 search 叶子或把该能力误报为 `SKL-LIB-004` 完成。
+- Observation: `docs/product-specs/database-recovery.md` 仍引用隐式 `library export --json`，并将 API envelope 的 `result.data` 视为可导入文档。
+  Evidence: 该文件第 28、34 行与 Revision 2 的 `SKL-LIB-009` 文件输出边界冲突；本次规划修订将其改为保存显式 output 文件。
 
 ## Decision Log
 
@@ -90,6 +93,19 @@ depends_on: [PLAN-0002]
   Rationale: 产品要求在完整模型或 `ImportPlan` 之前检查每一种限制和重复键。扫描器只保留受限的语法/对象键状态与最多 67,108,864 字节的已验证输入；通过后才允许严格 schema 反序列化。
   Date/Author: 2026-08-19 / Codex
 
+- Decision: 将 `SKL-LIB-009` 与 `SKL-LIB-010` 的文件传输和 alias-error 语义定为 Revision 2，而非 Revision 1。
+  Rationale: `origin/main` 的 Revision 1 没有强制 `--input`/`--output`、文件与命令结果分离、原子输出或 alias error 的可观察契约；这些语义必须以可追踪的行为修订交付。
+  Date/Author: 2026-08-19 / Codex
+- Decision: Library alias 冲突使用现有 `Conflict.kind: "internal_duplicate"` 的专用字段约束，不新增 API-v1 枚举值。
+  Rationale: 该值表达 durable Library 唯一 alias 的重复，同时固定冲突 alias 与被拒绝 source；复用既有 API-v1 union 避免以新枚举值破坏既定版本约束。
+  Date/Author: 2026-08-19 / Codex
+- Decision: P2 在识别到 `data/skilload.db` 损坏时返回 `database_corrupt`，但不在本交付中实现备份、导出索引、迁移或 reset。
+  Rationale: `SKL-OPS-004` 与 API catalog 已要求可恢复诊断；P2 尚未创建或记录这些恢复资产，因此必须如实返回空集合并给出规范 recovery procedure，而不是伪造路径或降级为一般状态错误。
+  Date/Author: 2026-08-19 / Codex
+- Decision: 数据库恢复过程的可移植 Library evidence 使用 `library export --output <recovery-directory>/library-export.json --json`，而不是从命令 API envelope 提取数据。
+  Rationale: Revision 2 明确 file document 与命令结果分离；recovery directory 已在规范过程的第一步建立，因而能保留可直接再导入的原子输出与独立操作证据。
+  Date/Author: 2026-08-19 / Codex
+
 ## Outcomes & Retrospective
 
 
@@ -98,7 +114,53 @@ depends_on: [PLAN-0002]
 ## Review Conversation Log
 
 
-尚未处理任何 PR 评审会话。
+### PRRC_kwDOT7YN2s7jExK8 — 数据库损坏诊断
+
+Source: 内联评论 `PRRC_kwDOT7YN2s7jExK8`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3809678012)；线程 `PRRT_kwDOT7YN2s6aVL0n`，当前未解决。
+
+Problem: P2 的 SQLite 打开路径只计划返回 `SchemaDetails` 或 `InvalidStateDetails`，没有为已识别的数据库损坏返回 `database_corrupt` 和既有 `DatabaseCorruptDetails` 恢复证据。
+
+Disposition: fixed
+
+Status: open
+
+Resolution: 计划在本次规划修订提交 `docs(plan): resolve PR #3 planning feedback` 中更新 `docs/exec-plans/plan/p2-library-portable-import-export.md`，使 P2 在不实现迁移、备份或 reset 的前提下，以数据库 `PathValue`、空的 P2 已知 backup/export 集合和 `database-corruption-v1` 返回 `database_corrupt`。
+
+Evidence: 待该提交完成后检查计划与 `SKL-OPS-004`、`DatabaseCorruptDetails` 的一致性，并运行 `git diff --check`。
+
+GitHub outcome: 待推送、回复并解决线程。
+
+### PRRC_kwDOT7YN2s7jExK9 — alias 冲突 API 表示
+
+Source: 内联评论 `PRRC_kwDOT7YN2s7jExK9`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3809678013)；线程 `PRRT_kwDOT7YN2s6aVL0o`，当前未解决。
+
+Problem: `SKL-LIB-010` 要求 alias 冲突失败，但 API-v1 未规定 `ConflictDetails` 如何无歧义地表示该 Library 域冲突。
+
+Disposition: fixed
+
+Status: open
+
+Resolution: 计划在同一规划修订提交中更新 `docs/product-specs/api-v1.md` 和本 Plan，规定已存在的 `internal_duplicate` 作为 Library 唯一 alias 冲突的 `Conflict.kind`，并固定 `name`、`source`、`agent` 与 `path` 字段语义，避免新增 API-v1 枚举值。
+
+Evidence: 待该提交完成后核对 API catalog 与 `SKL-LIB-010` 的字段约束，并运行 `git diff --check`。
+
+GitHub outcome: 待推送、回复并解决线程。
+
+### PRRC_kwDOT7YN2s7jExK_ — 文件传输行为修订
+
+Source: 内联评论 `PRRC_kwDOT7YN2s7jExK_`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3809678015)；线程 `PRRT_kwDOT7YN2s6aVL0q`，当前未解决。
+
+Problem: 当前 PR 为 `SKL-LIB-009` 和 `SKL-LIB-010` 新增了强制文件参数、文件/命令结果分离和原子替换等可观察语义，却仍标为 Revision 1。
+
+Disposition: fixed
+
+Status: open
+
+Resolution: 计划在同一规划修订提交中将 `docs/product-specs/library.md` 的两个行为提升为 Revision 2，并把完整接口与 alias 冲突 error 语义纳入正文和 acceptance；本 Plan 的 Product Baseline、进度、决策和后续 status 文字同步引用 Revision 2。
+
+Evidence: 待该提交完成后对照 `origin/main` 的 Revision 1 基线审阅行为差异，并运行 `git diff --check`。
+
+GitHub outcome: 待推送、回复并解决线程。
 
 ## Context and Orientation
 
@@ -132,7 +194,7 @@ Library 是本机可搜索的来源元数据集合；在本交付中它只保存
 
 新增 `crates/skilload-core/src/adapters/sqlite_library.rs`。它必须从已有 `StateRootResolver` 取得 data/state roots：没有 `data/skilload.db` 时 export 和 dry-run 返回空库且不建目录；实际 import 在全部文件/schema/domain 验证与冲突规划完成后才创建 data root、`data/skilload.db` 和 `state/locks/database.lock`。锁的等待和 typed busy 行为沿用配置的两秒有界策略。数据库路径、锁和已有文件都必须拒绝 symlink/非预期文件类型，创建目录和数据库使用 restrictive current-user permissions，并在提交前重验根绑定。
 
-初始 schema 是一份明确的 v1 事务：`schema_info` 固定版本、`state_revision` 保存单调语义 revision、`library_entries` 以 canonical source 为主键并存储全部 portable resolved/metadata 标量、`library_tags` 以 `(canonical_source, comparison_key)` 唯一并通过外键关联 entry。开启 foreign keys，使用一个 SQLite transaction 计算并写入导入 plan；不创建 FTS 表、Trust 表或未来 ownership 表。现有 source 默认进入 kept；新 source 与现有/同批别名冲突必须在事务开始提交前返回一个 `conflict`，不修改任何行；实际新增时递增 revision。数据库已有更高 schema 或损坏/非普通文件时返回结构化 schema/invalid-state 失败，绝不删除、重建或降级。
+初始 schema 是一份明确的 v1 事务：`schema_info` 固定版本、`state_revision` 保存单调语义 revision、`library_entries` 以 canonical source 为主键并存储全部 portable resolved/metadata 标量、`library_tags` 以 `(canonical_source, comparison_key)` 唯一并通过外键关联 entry。开启 foreign keys，使用一个 SQLite transaction 计算并写入导入 plan；不创建 FTS 表、Trust 表或未来 ownership 表。现有 source 默认进入 kept；新 source 与现有/同批 alias 冲突必须在事务开始提交前返回 `conflict` 的 `ConflictDetails`，每个被拒绝 entry 使用 `internal_duplicate`、其 alias 为 `name`、其 source 为 `source`，且 `agent`/`path` 均为 null，不修改任何行；实际新增时递增 revision。数据库已有更高 schema 返回 `schema_newer` 的 `SchemaDetails`；已识别的损坏返回 `database_corrupt` 的 `DatabaseCorruptDetails`，其中 database 是 `PathValue`、`backups`/`recoverable_exports` 因 P2 无恢复资产而为空且 `recovery_procedure` 为 `database-corruption-v1`；非普通文件返回 `invalid_state`，三者均绝不删除、重建或降级。
 
 同一 adapter 同时负责 export：在一个只读一致性事务中按 canonical source 和 comparison key 获取记录，构建不含 Trust/local-state 的 `LibraryExportData`；`LibraryTransferStore` 在 output 的既有父目录中建临时文件、写入完整 JSON、sync 文件并原子 rename，再 sync 父目录。它拒绝 directory 和 symlink output，保留现有普通 output 的原子替换语义；输出失败不能改变数据库。P2 不注册 `--replace`，因此 `updated` 始终空。
 
@@ -143,12 +205,12 @@ Library 是本机可搜索的来源元数据集合；在本交付中它只保存
 
 扩展 `crates/skilload-cli/src/args.rs`：注册 `library import --input <PATH> [--dry-run]` 和 `library export --output <PATH>`，不注册任何其他 library 叶子、别名或隐藏 shortcut。将仅识别 configuration 的 JSON-operation 预扫描泛化为所有已实现叶子，使 Library 参数错误在 `--json` 下仍使用正确的 `library.import` 或 `library.export` operation。更新 parser/help 测试，证明这两个叶子存在、未实现的 Library 名称仍失败，且 `--input`/`--output` 不会被错误放到其他叶子。
 
-扩展 `main.rs` 的 `Projection` 和 dispatch，使 CLI 只转换参数并调用 application。扩展 `json.rs` 以投影 `SourceIdentity`、`ResolvedSkill`、`PortableLibraryEntry`、`LibraryExportData` 与 `LibraryImportData`；成功 envelope 仍是单一 JSON 值。为本交付新增的限制、冲突、路径校验和数据库状态错误补足与 API-v1 catalog 对应的 `LimitDetails`、`ConflictDetails`、`ValidationDetails`、`SchemaDetails` 或 `InvalidStateDetails`，不能把数字限制塞进散文错误字符串。扩展 `human.rs`，保持英文主要输出和既有注入安全字段编码；人类 import 输出 dry-run/changed/unchanged 加集合计数，人类 export 输出写入的安全引用路径和条目计数。绝不把输入文件、输出文件或异常数据未经编码写到 terminal。
+扩展 `main.rs` 的 `Projection` 和 dispatch，使 CLI 只转换参数并调用 application。扩展 `json.rs` 以投影 `SourceIdentity`、`ResolvedSkill`、`PortableLibraryEntry`、`LibraryExportData` 与 `LibraryImportData`；成功 envelope 仍是单一 JSON 值。为本交付新增的限制、alias 冲突、路径校验和数据库状态错误补足与 API-v1 catalog 对应的 `LimitDetails`、带 `internal_duplicate` 字段约束的 `ConflictDetails`、`ValidationDetails`、`SchemaDetails`、`DatabaseCorruptDetails` 或 `InvalidStateDetails`，不能把数字限制或恢复证据塞进散文错误字符串。扩展 `human.rs`，保持英文主要输出和既有注入安全字段编码；人类 import 输出 dry-run/changed/unchanged 加集合计数，人类 export 输出写入的安全引用路径和条目计数。绝不把输入文件、输出文件或异常数据未经编码写到 terminal。
 
 ### 里程碑 4：同步文档并完成可观察验收
 
 
-实施后更新 `docs/product-specs/README.md` 与 `docs/product-specs/library.md` 的 status prose，使其准确列出 `PLAN-0003` 仅完成 `SKL-LIB-009`/`SKL-LIB-010` Revision 1；不要修改行为正文或 revision。同步 `ARCHITECTURE.md` 的当前实现模块/SQLite ownership 描述，以及 `docs/design-docs/application-and-persistence.md`、`docs/design-docs/cli-json-and-release.md` 的当前实现状态、P2 module names 和真实测试路径。若实现发现本计划中的文件传输语义或字段与 authoritative specification 冲突，先修正实现或在得到明确产品决定后更新产品规格和 Plan baseline；不得静默降低 acceptance。
+实施后更新 `docs/product-specs/README.md` 与 `docs/product-specs/library.md` 的 status prose，使其准确列出 `PLAN-0003` 仅完成 `SKL-LIB-009`/`SKL-LIB-010` Revision 2；同步 `docs/product-specs/database-recovery.md` 的显式 export output 调用；除新的明确产品决定外，不得再修改这两个行为正文或 revision。同步 `ARCHITECTURE.md` 的当前实现模块/SQLite ownership 描述，以及 `docs/design-docs/application-and-persistence.md`、`docs/design-docs/cli-json-and-release.md` 的当前实现状态、P2 module names 和真实测试路径。若实现发现本计划中的文件传输语义或字段与 authoritative specification 冲突，先修正实现或在得到明确产品决定后更新产品规格和 Plan baseline；不得静默降低 acceptance。
 
 在 active Plan 中记录每个完成里程碑、所有发现和实际验证。完成实现后，先提交并推送代码、测试、锁文件、文档和 active Plan，再按 `docs/PLANS.md` 的 ready/review 原子事务转换 Draft PR。不要在计划状态中实施任何代码。
 
@@ -172,7 +234,7 @@ Library 是本机可搜索的来源元数据集合；在本交付中它只保存
     mise exec -- cargo test -p skilload-core --locked portable_library
     mise exec -- cargo test -p skilload-core --locked sqlite_library
 
-   预期每组都覆盖 source/metadata validator、Unicode 等价、所有六种 input 限制与重复键、dry-run 无状态、SQLite 全量原子写入、output 原子写入、既有 source kept、alias conflict rollback 和 FTS5 编译能力检查。
+   预期每组都覆盖 source/metadata validator、Unicode 等价、所有六种 input 限制与重复键、dry-run 无状态、SQLite 全量原子写入、output 原子写入、既有 source kept、带规定 `ConflictDetails` 的 alias conflict rollback、带 `DatabaseCorruptDetails` 的损坏数据库只读失败和 FTS5 编译能力检查。
 
 4. 接入 CLI 后在 `crates/skilload-cli/tests/cli_contract.rs` 扩展隔离 XDG 场景并运行：
 
@@ -201,7 +263,7 @@ Library 是本机可搜索的来源元数据集合；在本交付中它只保存
 
 第二组 parser tests 对每个上界生成精确输入和超一输入。它们检查不建立 `PortableLibraryDocument` 或 `ImportPlan` 的错误路径、重复键不被“最后键覆盖”、JSON string escape 的解码后 UTF-8 计数正确、每一对象层级的重复 key 都被发现，且 JSON error 的 `LimitDetails` 同时有 `limit_kind`、decimal measured/allowed 与 input `PathValue`。
 
-第三组 repository tests 从无数据库开始：空 export/dry-run 返回空集合且不创建根；合法 commit import 创建 schema 和 entries/tags；第二次相同 import 返回 unchanged 且数据库内容和文件 identity 不变化；一批中一个 invalid record 或 alias conflict rollback 全部；output 目录中的临时写失败不会改数据库或留下最终半文件；外部创建的 symlink/非普通 database、lock 或 output 不能被接受。测试还要以 bundled connection 创建临时 FTS5 virtual table 或等价 compile-option probe，证明架构要求的嵌入式能力，而不是把宿主 SQLite 当作依据。
+第三组 repository tests 从无数据库开始：空 export/dry-run 返回空集合且不创建根；合法 commit import 创建 schema 和 entries/tags；第二次相同 import 返回 unchanged 且数据库内容和文件 identity 不变化；一批中一个 invalid record 或 alias conflict rollback 全部，并以 `internal_duplicate`、alias 与被拒绝 source 的 `ConflictDetails` 失败；output 目录中的临时写失败不会改数据库或留下最终半文件；外部创建的 symlink/非普通 database、lock 或 output 不能被接受。损坏 SQLite fixture 必须保留原文件且返回 `database_corrupt`：database `PathValue`、空 `backups`/`recoverable_exports` 和 `database-corruption-v1` 都与 API catalog 一致。测试还要以 bundled connection 创建临时 FTS5 virtual table 或等价 compile-option probe，证明架构要求的嵌入式能力，而不是把宿主 SQLite 当作依据。
 
 最后执行实际 CLI smoke，所有 XDG 根使用临时绝对路径、网络被禁止：
 
@@ -209,14 +271,14 @@ Library 是本机可搜索的来源元数据集合；在本交付中它只保存
     skilload library import --input ./portable-library.json --json
     skilload library export --output ./round-trip.json --json
 
-第一条必须是 `library.import`、`ok: true`、`outcome: "observed"`、`dry_run: true`，且不创建 skilload 状态；第二条只能是 `changed` 或在完全相同既有状态下 `unchanged`；第三条必须是 `library.export` 的 observed envelope，并在 `round-trip.json` 中写出仅含 `format_version` 与 `entries` 的可移植 document。用第二个隔离 XDG home 导入该文件并重新导出，规范化 JSON 必须相等，Trust/缓存/绝对路径字符串不得出现。人为插入无效 entry、alias collision、重复 JSON key 和超限文件时，CLI 必须非零退出、JSON stdout 仍只有一个合法 error envelope，并且导入前后 SQLite 可导出数据相同。
+第一条必须是 `library.import`、`ok: true`、`outcome: "observed"`、`dry_run: true`，且不创建 skilload 状态；第二条只能是 `changed` 或在完全相同既有状态下 `unchanged`；第三条必须是 `library.export` 的 observed envelope，并在 `round-trip.json` 中写出仅含 `format_version` 与 `entries` 的可移植 document。用第二个隔离 XDG home 导入该文件并重新导出，规范化 JSON 必须相等，Trust/缓存/绝对路径字符串不得出现。人为插入无效 entry、alias collision、重复 JSON key 和超限文件时，CLI 必须非零退出、JSON stdout 仍只有一个合法 error envelope，并且导入前后 SQLite 可导出数据相同；alias collision 的 envelope 必须含规定的 `internal_duplicate`、alias 与被拒绝 source。损坏数据库 fixture 必须返回 `database_corrupt` 的 `DatabaseCorruptDetails` 且不改写数据库。
 
 ## Idempotence and Recovery
 
 
 `mise install`、Cargo 格式/测试/构建、同一合法 export、dry-run 和对未变数据库的同一 import 都可以安全重复。实际 import 的 SQLite transaction 要么全部提交 entries/tags/state revision，要么 rollback；所有输入验证、alias 冲突和 output 写入失败必须发生在或恢复到无持久 partial state。export 只能在目标父目录中临时写入、sync、rename 和 sync 父目录；失败时保留旧普通目标内容或无目标，不留下把半数据当最终 export 的文件。
 
-实现期间不得删除现有用户根、数据库或 output。测试仅使用临时目录；任何有歧义的 SQLite 文件、锁、symlink 或 output 类型都要失败而非“修复”。此 P2 不实现数据库迁移、备份或 reset；发现 version 大于 v1、数据库损坏或不可验证时应保留原文件、报告失败，并把完整 recovery 行为留给后续产品交付。
+实现期间不得删除现有用户根、数据库或 output。测试仅使用临时目录；任何有歧义的 SQLite 文件、锁、symlink 或 output 类型都要失败而非“修复”。此 P2 不实现数据库迁移、备份、导出索引或 reset；发现 version 大于 v1 时拒绝写入，发现数据库损坏时保留原文件、返回带空 P2 已知恢复集合和 `database-corruption-v1` 的 `database_corrupt`，并把完整 recovery 行为留给后续产品交付。
 
 计划生命周期恢复同样必须安全：若 `gh pr ready` 或 review-state push 失败，执行 `gh pr ready <PR-URL> --undo`、确认 PR 回到 Draft，并将/保持计划在 `active` 后重试；若 review 发现 material scope 缺失，先把 PR 退回 Draft，再把 Plan 从 review 移回 active 并记录原因。若 completion 后但 GitHub 报告 `MERGED` 前的检查、队列或 merge 失败，按 `docs/PLANS.md` 把 Plan 恢复为 review 并推送，不能把未合并工作归档为 completed。
 
@@ -298,3 +360,5 @@ Library 是本机可搜索的来源元数据集合；在本交付中它只保存
 计划修订说明（2026-08-19）：创建了 PLAN-0003 的初始计划、SQLite/Unicode 依赖参考和 Revision-1 文件传输接口澄清；没有开始实现。后续首次推送与 Draft PR 创建必须把 URL 和真实发布证据写回本计划。
 
 计划修订说明（2026-08-19）：初始规划基线推送后已创建 Draft PR #3，并记录其 canonical URL；此 metadata 提交必须单独推送，以保持分支、PR 和 frontmatter 一致。
+
+计划修订说明（2026-08-19）：PR #3 评审指出文件传输语义改变了可观察行为、alias 冲突没有 API 字段约束且数据库损坏未映射既有诊断。本修订将 `SKL-LIB-009`/`SKL-LIB-010` 提升为 Revision 2，明确 `internal_duplicate` 和 `database_corrupt` 的 P2 约束，并同步数据库恢复过程使用显式 `library export --output` 文件；仍未开始实现。

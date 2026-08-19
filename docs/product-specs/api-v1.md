@@ -144,6 +144,9 @@ Offline results require `used: false` and `attempts: []`; `used` is true exactly
       source: SourceIdentity | null
     }
 
+`internal_duplicate` 表示一个 durable domain 内已声明唯一值的冲突。对 Library import 的 alias 冲突，`name` MUST 为冲突 alias，`source` MUST 为被拒绝导入 entry 的 source，`agent` 与 `path` MUST 为 null；它同时覆盖与已有记录及同一 batch 中较早 entry 的冲突。
+
+
     Profile {
       profile_id: OpaqueId,
       agent: "claude" | "codex",
