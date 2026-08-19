@@ -124,9 +124,9 @@ Disposition: fixed
 
 Status: open
 
-Resolution: 计划在本次规划修订提交 `docs(plan): resolve PR #3 planning feedback` 中更新 `docs/exec-plans/plan/p2-library-portable-import-export.md`，使 P2 在不实现迁移、备份或 reset 的前提下，以数据库 `PathValue`、空的 P2 已知 backup/export 集合和 `database-corruption-v1` 返回 `database_corrupt`。
+Resolution: 已由 `91e52913477d46682e32ba1fefefc3515ba80b77` 更新本 Plan：P2 对已识别的 SQLite 损坏返回 `database_corrupt` 的 `DatabaseCorruptDetails`，携带数据库 `PathValue`、空 P2 已知 backup/export 集合和 `database-corruption-v1`，并保留原数据库；同步修正恢复过程的显式 export 文件调用。
 
-Evidence: 待该提交完成后检查计划与 `SKL-OPS-004`、`DatabaseCorruptDetails` 的一致性，并运行 `git diff --check`。
+Evidence: 修订提交 `91e52913477d46682e32ba1fefefc3515ba80b77` 已推送，PR #3 头提交已核对为同一 SHA；文档一致性断言和 `git diff --check` 均通过。
 
 GitHub outcome: 待推送、回复并解决线程。
 
@@ -140,9 +140,9 @@ Disposition: fixed
 
 Status: open
 
-Resolution: 计划在同一规划修订提交中更新 `docs/product-specs/api-v1.md` 和本 Plan，规定已存在的 `internal_duplicate` 作为 Library 唯一 alias 冲突的 `Conflict.kind`，并固定 `name`、`source`、`agent` 与 `path` 字段语义，避免新增 API-v1 枚举值。
+Resolution: 已由 `91e52913477d46682e32ba1fefefc3515ba80b77` 更新 `docs/product-specs/api-v1.md` 与本 Plan：Library 唯一 alias 冲突使用既有 `internal_duplicate`，`name` 为 alias、`source` 为被拒绝 entry，`agent`/`path` 为 null；无需新增 API-v1 枚举值。
 
-Evidence: 待该提交完成后核对 API catalog 与 `SKL-LIB-010` 的字段约束，并运行 `git diff --check`。
+Evidence: 修订提交 `91e52913477d46682e32ba1fefefc3515ba80b77` 已推送，PR #3 头提交已核对为同一 SHA；API catalog/`SKL-LIB-010` 字段一致性断言和 `git diff --check` 均通过。
 
 GitHub outcome: 待推送、回复并解决线程。
 
@@ -156,9 +156,9 @@ Disposition: fixed
 
 Status: open
 
-Resolution: 计划在同一规划修订提交中将 `docs/product-specs/library.md` 的两个行为提升为 Revision 2，并把完整接口与 alias 冲突 error 语义纳入正文和 acceptance；本 Plan 的 Product Baseline、进度、决策和后续 status 文字同步引用 Revision 2。
+Resolution: 已由 `91e52913477d46682e32ba1fefefc3515ba80b77` 将 `docs/product-specs/library.md` 的 `SKL-LIB-009` 与 `SKL-LIB-010` 提升为 Revision 2，并把强制 file options、文件/命令结果分离、原子输出和 alias error 语义纳入正文与 acceptance；本 Plan 的 Product Baseline、进度、决策和后续 status 文字已同步。
 
-Evidence: 待该提交完成后对照 `origin/main` 的 Revision 1 基线审阅行为差异，并运行 `git diff --check`。
+Evidence: 修订提交 `91e52913477d46682e32ba1fefefc3515ba80b77` 已推送，PR #3 头提交已核对为同一 SHA；对 `origin/main` Revision 1 的对比、文档一致性断言和 `git diff --check` 均通过。
 
 GitHub outcome: 待推送、回复并解决线程。
 
