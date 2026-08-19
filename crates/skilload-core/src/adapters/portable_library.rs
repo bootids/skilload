@@ -1,6 +1,6 @@
 use crate::adapters::xdg::{SystemEnvironment, XdgRootResolver};
 use crate::domain::configuration::{NativePath, normalize_absolute};
-use crate::domain::library::PortableLibraryDocument;
+use crate::domain::library::{MAX_PORTABLE_LIBRARY_DOCUMENT_BYTES, PortableLibraryDocument};
 use crate::error::AppError;
 use crate::ports::configuration::{Environment, ResolvedRoots, StateRootResolver};
 use crate::ports::library::LibraryTransferStore;
@@ -13,7 +13,6 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tempfile::{Builder, NamedTempFile};
 
-const MAX_IMPORT_BYTES: u64 = 67_108_864;
 const MAX_IMPORT_ENTRIES: u64 = 10_000;
 const MAX_IMPORT_VALUES: u64 = 1_000_000;
 const MAX_IMPORT_DEPTH: u64 = 8;
@@ -68,7 +67,8 @@ impl PortableLibraryTransferStore {
         let mut bytes = Vec::with_capacity(64 * 1024);
         let mut buffer = [0_u8; 64 * 1024];
         loop {
-            let remaining = (MAX_IMPORT_BYTES + 1).saturating_sub(bytes.len() as u64);
+            let remaining =
+                (MAX_PORTABLE_LIBRARY_DOCUMENT_BYTES + 1).saturating_sub(bytes.len() as u64);
             let chunk = remaining.min(buffer.len() as u64) as usize;
             let read = file.read(&mut buffer[..chunk]).map_err(|error| {
                 AppError::validation(
@@ -80,11 +80,11 @@ impl PortableLibraryTransferStore {
                 break;
             }
             let next = bytes.len() as u64 + read as u64;
-            if next > MAX_IMPORT_BYTES {
+            if next > MAX_PORTABLE_LIBRARY_DOCUMENT_BYTES {
                 return Err(AppError::library_input_limit(
                     "library_import_bytes",
                     next,
-                    MAX_IMPORT_BYTES,
+                    MAX_PORTABLE_LIBRARY_DOCUMENT_BYTES,
                     input.clone(),
                 ));
             }
@@ -104,15 +104,7 @@ impl PortableLibraryTransferStore {
         reject_protected_output(output_path, &parent.path, &roots, output)?;
         ensure_regular_output(output_path, output)?;
 
-        let mut document = document.clone();
-        document.sort_deterministically()?;
-        let bytes = serde_json::to_vec(&document).map_err(|error| {
-            AppError::invalid_state(
-                "library_export",
-                format!("cannot serialize portable document: {error}"),
-                ["a serializable LibraryExportData document"],
-            )
-        })?;
+        let bytes = document.serialize_for_transfer()?;
 
         let mut staging = Builder::new()
             .prefix(".skilload-library-")
@@ -140,10 +132,20 @@ impl PortableLibraryTransferStore {
         parent.revalidate(output)?;
         self.write_hooks
             .after_final_output_validation_before_publish(&parent.path)?;
-        publish_staging(&mut staging, &parent, output_path, output, || {
-            self.write_hooks
-                .after_staging_identity_check_before_publish(&parent.path)
-        })?;
+        publish_staging(
+            &mut staging,
+            &parent,
+            output_path,
+            output,
+            || {
+                self.write_hooks
+                    .after_staging_identity_check_before_publish(&parent.path)
+            },
+            || {
+                self.write_hooks
+                    .after_publication_link_before_rename(&parent.path)
+            },
+        )?;
         self.write_hooks.after_rename_before_parent_sync()?;
         parent.revalidate(output)?;
         parent
@@ -194,6 +196,10 @@ trait TransferWriteHooks: Send + Sync {
         &self,
         _output_parent: &Path,
     ) -> Result<(), AppError> {
+        Ok(())
+    }
+
+    fn after_publication_link_before_rename(&self, _output_parent: &Path) -> Result<(), AppError> {
         Ok(())
     }
 
@@ -338,6 +344,7 @@ fn publish_staging(
     output_path: &Path,
     output: &NativePath,
     after_identity_check: impl FnOnce() -> Result<(), AppError>,
+    after_publication_link_before_rename: impl FnOnce() -> Result<(), AppError>,
 ) -> Result<(), AppError> {
     let staging_name = staging
         .path()
@@ -375,6 +382,11 @@ fn publish_staging(
             return Err(error);
         }
     };
+    if let Err(error) = after_publication_link_before_rename() {
+        cleanup_staging_if_owned(staging, parent, &publication_name);
+        cleanup_staging_if_owned(staging, parent, &staging_name);
+        return Err(error);
+    }
     if let Err(error) = renameat(
         &parent.directory,
         &publication_name,
@@ -382,6 +394,7 @@ fn publish_staging(
         &output_name,
     ) {
         cleanup_staging_if_owned(staging, parent, &staging_name);
+        cleanup_staging_if_owned(staging, parent, &publication_name);
         return Err(export_io(
             output,
             "atomically replace export output",
@@ -1298,11 +1311,15 @@ mod tests {
     fn reader_reports_the_first_byte_overage_exactly() {
         let temporary = tempdir().unwrap();
         let input = NativePath::new(temporary.path().join("oversized.json"));
-        fs::write(input.as_path(), vec![b' '; MAX_IMPORT_BYTES as usize]).unwrap();
+        fs::write(
+            input.as_path(),
+            vec![b' '; MAX_PORTABLE_LIBRARY_DOCUMENT_BYTES as usize],
+        )
+        .unwrap();
         let store = PortableLibraryTransferStore::new();
         assert_eq!(
             store.read_input(&input).unwrap().len(),
-            MAX_IMPORT_BYTES as usize
+            MAX_PORTABLE_LIBRARY_DOCUMENT_BYTES as usize
         );
         OpenOptions::new()
             .append(true)
@@ -1318,11 +1335,59 @@ mod tests {
                 ..
             } => {
                 assert_eq!(limit_kind, "library_import_bytes");
-                assert_eq!(measured, MAX_IMPORT_BYTES + 1);
-                assert_eq!(allowed, MAX_IMPORT_BYTES);
+                assert_eq!(measured, MAX_PORTABLE_LIBRARY_DOCUMENT_BYTES + 1);
+                assert_eq!(allowed, MAX_PORTABLE_LIBRARY_DOCUMENT_BYTES);
             }
             error => panic!("expected input byte limit, got {error:?}"),
         }
+    }
+
+    struct PublicationRenameFailure {
+        output: PathBuf,
+    }
+
+    impl TransferWriteHooks for PublicationRenameFailure {
+        fn after_publication_link_before_rename(
+            &self,
+            _output_parent: &Path,
+        ) -> Result<(), AppError> {
+            fs::create_dir(&self.output).unwrap();
+            fs::write(self.output.join("preserve"), b"external directory").unwrap();
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn export_removes_publication_link_when_rename_fails() {
+        let temporary = tempdir().unwrap();
+        let output_parent = temporary.path().join("output");
+        let output = NativePath::new(output_parent.join("library.json"));
+        fs::create_dir(&output_parent).unwrap();
+        let store = PortableLibraryTransferStore::with_write_hooks(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(XdgRootResolver),
+            Arc::new(PublicationRenameFailure {
+                output: output.as_path().to_path_buf(),
+            }),
+        );
+
+        let error = store.write_export(&output, &document()).unwrap_err();
+
+        assert_eq!(error.code(), "validation_failed");
+        assert!(output.as_path().is_dir());
+        assert_eq!(
+            fs::read(output.as_path().join("preserve")).unwrap(),
+            b"external directory"
+        );
+        let staging_artifacts = fs::read_dir(&output_parent)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .filter(|name| {
+                let name = name.to_string_lossy();
+                name.starts_with(".skilload-library-") || name.starts_with(".skilload-publish-")
+            })
+            .collect::<Vec<_>>();
+        assert!(staging_artifacts.is_empty(), "{staging_artifacts:?}");
     }
 
     struct AfterRenameFailure;

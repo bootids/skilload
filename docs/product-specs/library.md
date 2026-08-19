@@ -56,6 +56,8 @@ The **Library** is the user's durable, searchable collection of source metadata.
 
 **Behavior.** Library export MUST 生成确定性、版本化的 JSON，其中只含可移植的 Library 来源与元数据；它 MUST 排除 Trust、全局 desired state、manager records、已知 workspace paths、本机 profile IDs、凭据、cache content 和不可移植的操作时间。`library export --output <PATH>` MUST 向请求的原生路径原子写入且仅写入一个可移植的 `LibraryExportData` 文档；正常的人类输出或 `--json` 操作结果 MUST 保持在该文件之外。创建 staging 文件前，export MUST 通过不跟随 symlink 的检查和有效 XDG root identity 比较，拒绝指向活动 `data/skilload.db`、`skilload.db-wal`、`skilload.db-shm` 或 `state/locks/database.lock` 的 target；它不得替换这些 skilload-owned path 或在其处创建临时文件。对其余既有普通文件，export MUST 在其父目录创建临时文件、完整写入并 sync 文件、原子 rename，再 sync 父目录；rename 前的失败 MUST 保留旧 target 或无 target 并清理 staging。若 rename 后的父目录 sync 失败，命令 MUST 返回错误且不得声称旧 target 仍在；新文档 MAY 已可见，但不得报告成功。
 
+同一 `LibraryExportData` 是当前唯一的可移植传输文档；因此任何 P2 持久 Library 的确定性导出都 MUST 不超过 `SKL-LIB-010` 的 67,108,864-byte 输入上限。导出在创建暂存文件前发现该上限已超出时，MUST 以 `validation_failed` 和 `library_portable_document_bytes` 约束值失败且不写 output。实际导入与预演 MUST 在返回计划或写入持久状态前，对完整的导入后 Library 计数同一确定性文档；若它将超过该上限，MUST 以相同错误拒绝，因此本二进制成功导出的文档始终可由本二进制导入。
+
 在最终 publish 前，export MUST 再次证明 held staging descriptor 仍与已验证 parent descriptor 中的 staging entry 相同；若发现 identity drift，MUST 在 rename 前失败并保留旧 target 或无 target，且不得删除未知 replacement。
 
 **Acceptance.** 检查 export 找不到本机绝对路径或 authorization/deployment record。未改变 Library 状态的重复 export MUST 产生语义相同、排序稳定的数据，并以原子替换完成请求路径的输出；输出文件本身必须是 `LibraryExportData`，命令的人类或 API-v2 操作结果不得混入其中。针对活动 database、WAL、SHM 和 database lock 的 target fixture 必须在创建 staging 前失败且保持该路径不变。注入 rename 前失败时旧普通 target 或无 target 必须保留；注入 rename 后父目录 sync 失败时命令必须失败，fixture 可以观察到新 target，且不得把该情形断言为旧 target 保留。
@@ -68,6 +70,8 @@ The **Library** is the user's durable, searchable collection of source metadata.
 number token 的计数 MUST 随每个 integer、fraction 与 exponent byte 推进；第 129 byte MUST 立即产生 `library_import_number_bytes` limit error，不能继续扫描该 token 的剩余字节。
 
 超出任一非模型输入 ceiling 的 import MUST 使用 API-v2 `library_input_limit_exceeded` 和 `LimitDetails`，其中 `limit_kind` 标识第一个超出的维度、`measured` 与 `allowed` 为无损 decimal 字符串，host input 使用 `path: PathValue`。该 code 与 API-v1 `agent_input_limit_exceeded` 互不复用。
+
+该字节上限同时约束导入后持久 Library 的可移植表示，而不只是单个输入文件：在模式、领域和冲突规划成功后、任何持久 mutation 或预演结果前，导入 MUST 拒绝使完整确定性 `LibraryExportData` 超过 67,108,864 bytes 的 batch，并使用 `validation_failed` 的 `library_portable_document_bytes` 约束值。这个约束保留单条 alias/category/note/tag 的既有 `SKL-LIB-008` 上限；它只防止多次逐次均有效的导入累积出当前唯一传输格式无法重新读取的状态。
 
 **Acceptance.** 含一个 invalid、alias-conflicting 或重复 canonical source entry 的 batch 不作任何更改；每个 alias conflict error MUST 以规定的 `ConflictDetails` 字段标识被拒绝 source 和 alias，而 canonical source duplicate error 的 `name` 必须为 null 且 `source` 为后出现的 entry。FIFO、device 与其他非常规 input fixture 必须在读入、建立完整 model 或分配 `ImportPlan` 前失败而不阻塞。边界 fixtures 接受每个精确 ceiling，拒绝 byte 67,108,865、entry 10,001、value 1,000,001、level nine、string byte 1,048,577、number byte 129 和 duplicate key，并在返回完整 model 或分配 `ImportPlan` 前失败；structured errors 包含 exceeded dimension 与 measured/allowed values。对于先前不存在的 Library，注入 `COMMIT` 前 persistence failure 后 data/state 根必须恢复为 absent；注入 `COMMIT` 后 durability-sync failure 必须返回错误且测试不得断言 state 仍不存在。dry-run 对未变基线 MUST 报告与随后实际 import 相同的 planned additions/keeps/replacements，且不创建 state。
 

@@ -169,6 +169,8 @@ Use a global durable-database mutation lock plus a canonical-path workspace lock
 
 Network and Git acquisition may occur before the final lock to reduce contention. The stage records database revision, workspace config/lock digest, Trust revision, global source revision, and target ownership observations. After reacquiring locks, the command revalidates every baseline. Drift restarts safe resolution or returns a typed stale result; it never commits on stale assumptions.
 
+P2 的首次导入若在取得锁前按数据库不存在进行规划、但在取得全局持久数据库锁后发现另一位持锁者已经发布 `skilload.db`，MUST 在同一已持有锁内以原始已验证文档重读持久条目并重新生成既有数据库计划；它不得把这一正常串行化结果误报为 identity drift，也不得重入同一锁。
+
 SQLite busy timeout is a second line of defense, not the primary product lock. No application service holds a filesystem lock while waiting indefinitely on network input or human confirmation.
 
 P2 将每个 SQLite connection 的 busy timeout 固定为与 global durable-database lock 相同的两秒；SQLite 返回 `DatabaseBusy` 或 `DatabaseLocked` 时必须投影为 `BusyDetails { lock_domain: "database", waited_ms: 2000 }`，不能误报为损坏或无效状态。
@@ -179,15 +181,21 @@ Library export is built from domain records, sorted by canonical source, and ser
 
 `LibraryImportReader` 只能在 no-follow、nonblocking 打开的 descriptor 经 `fstat` 证明为 regular file，且与预检 path identity 一致后才读取 input；symlink、directory、FIFO、socket、device 或 identity drift 在 scanner 前返回 typed validation error。随后它执行一次没有 schema model 或 `ImportPlan` 的 streaming JSON event/token pass：计数至多 67,108,864 input bytes、10,000 entry objects、1,000,000 total values、八层 container、每个 string 1,048,576 UTF-8 bytes 和每个 number 128 bytes，同时拒绝 malformed JSON 与 duplicate object keys。它在第一个 exceeded dimension 停止并返回 measured/allowed values。只有成功 pass 才可反序列化 versioned schema，并将 `SKL-LIB-008` 的 alias/category/note/tag limits 验证为 `ImportPlan`；同一 batch 的 canonical source 重复作为 `internal_duplicate` conflict，而不是让 SQLite 主键或输入顺序选择 metadata。
 
+由于 `LibraryExportData` 是当前唯一传输文档，P2 在导入计划阶段把既有条目与拟新增条目组合为完整确定性文档，并以与导出完全相同的 JSON 编码器计数。超过 67,108,864 bytes 时，在预演结果或 SQLite mutation 前返回 `validation_failed` / `library_portable_document_bytes`；导出也在创建暂存文件前使用同一上限，因此有效持久状态不会产生本二进制拒绝读取的输出。
+
 number scanner 在每次推进 integer、fraction 或 exponent byte 时检查 128-byte ceiling，因此第 129 byte 即停止；它不为长 token 先遍历到末尾再计算长度。
 
 对于原本不存在的 `data/skilload.db`，持久 import 在完成 input/schema/domain/conflict planning 后，在同一 data directory 建立 restrictive staging database；只有 schema 和 SQLite `COMMIT` 成功、sidecar 已处理且根重新验证后才以 held data-directory descriptor 发布为 live database。staging name 在 descriptor-relative no-clobber rename 前后都必须与 held staging file 的 device/inode 匹配；identity drift 返回错误且绝不报告 success。`COMMIT` 前失败必须关闭并移除仅由该调用创建的 staging database、sidecar、database lock 与空 data/state directory；每个调用创建的 lock 和目录都保留 no-follow descriptor 及创建时的 device/inode，cleanup 仅在当前路径仍是相同的非 symlink entry 且其 identity 同时匹配记录和持有 descriptor 时删除空目录或 lock，因此不得将 remove/recreate 后的 inode reuse 误判为本次创建，也不得删除任何预先存在或 identity 不匹配的路径。若 `COMMIT` 已完成但文件或父目录 durability sync 失败，返回错误而不声称 absence 或旧 generation；该情况必须由独立 fault-injection fixture 覆盖。
+
+暂存 SQLite connection 也必须在任意 SQL 前验证随机 basename 仍指向持有暂存文件的 device/inode，使用 read-write、no-follow 且无 create 的 SQLite 打开标志打开，再复验该 entry 后才配置 connection 或建立 schema。若同账户进程将 basename 替换为 symlink 或其他 inode，adapter 返回 identity drift，保留未知 replacement，绝不向其 target 写入。
 
 所有 publish hook 或最终验证完成后，first import 必须再次比较 held staging FD、data-directory descriptor 与 staging entry，才允许 no-clobber rename；任何 drift 在 live `skilload.db` 出现前返回 typed error。未发布 staging 的 Drop 清理相同随机 staging basename 的 regular `-journal`、`-wal` 与 `-shm` sidecar，再让创建目录的 RAII guard 删除仍为空且仍由本调用拥有的根。
 
 为避免 source staging pathname 在 final check 后被替换，P2 先在 held parent 中为随机 publication name 创建并安全移除 placeholder，再以 descriptor-relative `linkat` 从已验证 staging entry 建立 held inode 的第二个 link，重验该 link 后才 rename 它；正常成功会按 held identity 删除原 staging link。由此 source entry 在 rename 前已经绑定到 held FD，而非在最终 publish 时重新信任初始 staging pathname。
 
 Library export 在创建 staging 文件前比较 no-follow output target 与有效 Library database generation（database、WAL、SHM）及 database lock，拒绝任何碰撞。其他 target 使用同目录 staging、file sync、rename、parent-directory sync；父目录以 no-follow descriptor 打开并绑定 device/inode，`rustix::fs::renameat` 只使用该持有 descriptor 的相对 staging/output 名称发布，最终验证后不再通过请求路径重新解析 publish 位置。若 publish 后检测到父目录 identity drift，命令返回错误而不报告成功；rename 前失败保留旧 target 或无 target 并清理 staging，rename 后 parent sync 失败同样返回错误但新 target 可能已经发布。成功仅在该最终 sync 完成后返回。
+
+重命名前的任意导出发布失败（包括 publication link 已建立而最终 rename 失败）必须按持有暂存 inode 分别清理原暂存名称和随机 publication 名称；两个名称的 identity 不匹配时均保留未知 replacement。
 
 既有 database import 在 transaction commit 后，以 held data-directory descriptor 对相对 `skilload.db` 执行 no-follow open、FD sync、entry identity revalidation、parent descriptor sync 和最终 revalidation；任一 sync 后的 generation 或目录替换必须返回 drift error，绝不报告 `changed`。
 
