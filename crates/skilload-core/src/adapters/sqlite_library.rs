@@ -1,6 +1,6 @@
 use crate::adapters::configuration::{
-    acquire_restrictive_lock, ensure_restrictive_directory, environment_io,
-    sync_created_directory_entries,
+    acquire_restrictive_lock, acquire_restrictive_lock_with_identity, ensure_restrictive_directory,
+    environment_io, sync_created_directory_entries,
 };
 use crate::adapters::xdg::{SystemEnvironment, XdgRootResolver};
 use crate::domain::configuration::{MutationOutcome, NativePath};
@@ -240,119 +240,132 @@ impl SqliteLibraryRepository {
         roots: &ResolvedRoots,
         plan: ImportPlan,
     ) -> Result<LibraryImportOperation, AppError> {
-        let mut created_directories =
-            ensure_restrictive_directory(&roots.state.effective, "XDG_STATE_HOME")?;
-        created_directories.extend(ensure_restrictive_directory(
-            &roots.state.effective.join("locks"),
-            "XDG_STATE_HOME",
-        )?);
         let lock_path = roots.state.effective.join("locks/database.lock");
-        let prior_lock = fs::symlink_metadata(&lock_path)
-            .ok()
-            .map(|metadata| metadata_identity(&metadata));
-        let lock = acquire_restrictive_lock(roots, "database.lock", "database")?;
-        let created_lock = prior_lock
-            .is_none()
-            .then(|| {
-                fs::symlink_metadata(&lock_path)
-                    .ok()
-                    .map(|metadata| metadata_identity(&metadata))
-            })
-            .flatten();
+        let mut cleanup = FirstImportCleanup::new(lock_path.clone());
+        (|| {
+            cleanup
+                .created_directories
+                .extend(ensure_restrictive_directory(
+                    &roots.state.effective,
+                    "XDG_STATE_HOME",
+                )?);
+            cleanup
+                .created_directories
+                .extend(ensure_restrictive_directory(
+                    &roots.state.effective.join("locks"),
+                    "XDG_STATE_HOME",
+                )?);
+            self.hooks.before_first_lock()?;
+            let (lock, created_lock) =
+                acquire_restrictive_lock_with_identity(roots, "database.lock", "database")?;
+            cleanup.created_lock = created_lock;
 
-        let mut committed = false;
-        let result = (|| {
-            let roots = self.root_resolver.revalidate(roots)?;
-            let database = Self::database_path(&roots);
-            if Self::database_exists(&database)? {
-                return Err(AppError::invalid_state(
-                    "library_database",
-                    "database_identity_drift",
-                    ["an absent database before first import"],
+            let result = (|| {
+                let roots = self.root_resolver.revalidate(roots)?;
+                let database = Self::database_path(&roots);
+                if Self::database_exists(&database)? {
+                    return Err(AppError::invalid_state(
+                        "library_database",
+                        "database_identity_drift",
+                        ["an absent database before first import"],
+                    ));
+                }
+                cleanup
+                    .created_directories
+                    .extend(ensure_restrictive_directory(
+                        &roots.data.effective,
+                        "XDG_DATA_HOME",
+                    )?);
+                let roots = self.root_resolver.revalidate(&roots)?;
+                let database = Self::database_path(&roots);
+                if Self::database_exists(&database)? {
+                    return Err(AppError::invalid_state(
+                        "library_database",
+                        "database_identity_drift",
+                        ["an absent database before first import"],
+                    ));
+                }
+                let data_root = roots.data.effective.clone();
+                let staging = Builder::new()
+                    .prefix(".skilload-library-db-")
+                    .suffix(".tmp")
+                    .tempfile_in(&data_root)
+                    .map_err(|error| {
+                        database_sync_error(&database, "create staging database", error)
+                    })?;
+                staging
+                    .as_file()
+                    .set_permissions(fs::Permissions::from_mode(0o600))
+                    .map_err(|error| {
+                        database_sync_error(&database, "restrict staging database", error)
+                    })?;
+                let staging_path = staging.path().to_path_buf();
+                let mut connection = Connection::open(&staging_path)
+                    .map_err(|error| database_error(&staging_path, error))?;
+                initialize_schema(&connection, &staging_path)?;
+                let transaction = connection
+                    .transaction()
+                    .map_err(|error| database_error(&staging_path, error))?;
+                apply_additions(&transaction, &plan.additions, &staging_path)?;
+                self.hooks.before_commit()?;
+                transaction
+                    .commit()
+                    .map_err(|error| database_error(&staging_path, error))?;
+                cleanup.committed = true;
+                self.hooks.after_commit_before_sync()?;
+                drop(connection);
+                staging.as_file().sync_all().map_err(|error| {
+                    database_sync_error(&staging_path, "sync committed staging database", error)
+                })?;
+                self.hooks.before_publish()?;
+                let roots = self.root_resolver.revalidate(&roots)?;
+                let database = Self::database_path(&roots);
+                if Self::database_exists(&database)? {
+                    return Err(AppError::invalid_state(
+                        "library_database",
+                        "database_identity_drift",
+                        ["an absent database before first import publish"],
+                    ));
+                }
+                self.hooks
+                    .after_first_publish_destination_check(&database)?;
+                staging.persist_noclobber(&database).map_err(|error| {
+                    if error.error.kind() == io::ErrorKind::AlreadyExists {
+                        AppError::invalid_state(
+                            "library_database",
+                            "database_identity_drift",
+                            ["an absent database before first import publish"],
+                        )
+                    } else {
+                        database_sync_error(
+                            &database,
+                            "publish committed staging database",
+                            error.error,
+                        )
+                    }
+                })?;
+                File::open(&roots.data.effective)
+                    .and_then(|directory| directory.sync_all())
+                    .map_err(|error| {
+                        database_sync_error(&database, "sync published database directory", error)
+                    })?;
+                sync_created_directory_entries(&cleanup.created_directories, "XDG_DATA_HOME")?;
+                Ok(LibraryImportOperation {
+                    outcome: MutationOutcome::Changed,
+                    data: plan.result,
+                })
+            })();
+            let unlock = lock.unlock();
+            if let Err(error) = unlock {
+                return Err(environment_io(
+                    "XDG_STATE_HOME",
+                    &lock_path,
+                    "unlock database.lock",
+                    error,
                 ));
             }
-            created_directories.extend(ensure_restrictive_directory(
-                &roots.data.effective,
-                "XDG_DATA_HOME",
-            )?);
-            let roots = self.root_resolver.revalidate(&roots)?;
-            let database = Self::database_path(&roots);
-            if Self::database_exists(&database)? {
-                return Err(AppError::invalid_state(
-                    "library_database",
-                    "database_identity_drift",
-                    ["an absent database before first import"],
-                ));
-            }
-            let data_root = roots.data.effective.clone();
-            let staging = Builder::new()
-                .prefix(".skilload-library-db-")
-                .suffix(".tmp")
-                .tempfile_in(&data_root)
-                .map_err(|error| {
-                    database_sync_error(&database, "create staging database", error)
-                })?;
-            staging
-                .as_file()
-                .set_permissions(fs::Permissions::from_mode(0o600))
-                .map_err(|error| {
-                    database_sync_error(&database, "restrict staging database", error)
-                })?;
-            let staging_path = staging.path().to_path_buf();
-            let mut connection = Connection::open(&staging_path)
-                .map_err(|error| database_error(&staging_path, error))?;
-            initialize_schema(&connection, &staging_path)?;
-            let transaction = connection
-                .transaction()
-                .map_err(|error| database_error(&staging_path, error))?;
-            apply_additions(&transaction, &plan.additions, &staging_path)?;
-            self.hooks.before_commit()?;
-            transaction
-                .commit()
-                .map_err(|error| database_error(&staging_path, error))?;
-            committed = true;
-            self.hooks.after_commit_before_sync()?;
-            drop(connection);
-            staging.as_file().sync_all().map_err(|error| {
-                database_sync_error(&staging_path, "sync committed staging database", error)
-            })?;
-            self.hooks.before_publish()?;
-            let roots = self.root_resolver.revalidate(&roots)?;
-            let database = Self::database_path(&roots);
-            if Self::database_exists(&database)? {
-                return Err(AppError::invalid_state(
-                    "library_database",
-                    "database_identity_drift",
-                    ["an absent database before first import publish"],
-                ));
-            }
-            staging.persist(&database).map_err(|error| {
-                database_sync_error(&database, "publish committed staging database", error.error)
-            })?;
-            File::open(&roots.data.effective)
-                .and_then(|directory| directory.sync_all())
-                .map_err(|error| {
-                    database_sync_error(&database, "sync published database directory", error)
-                })?;
-            sync_created_directory_entries(&created_directories, "XDG_DATA_HOME")?;
-            Ok(LibraryImportOperation {
-                outcome: MutationOutcome::Changed,
-                data: plan.result,
-            })
-        })();
-        let unlock = lock.unlock();
-        if let Err(error) = unlock {
-            return Err(environment_io(
-                "XDG_STATE_HOME",
-                &lock_path,
-                "unlock database.lock",
-                error,
-            ));
-        }
-        if result.is_err() && !committed {
-            cleanup_first_import(&lock_path, created_lock, &created_directories);
-        }
-        result
+            result
+        })()
     }
 }
 
@@ -412,6 +425,10 @@ impl LibraryRepository for SqliteLibraryRepository {
 }
 
 trait PersistenceHooks: Send + Sync {
+    fn before_first_lock(&self) -> Result<(), AppError> {
+        Ok(())
+    }
+
     fn before_commit(&self) -> Result<(), AppError> {
         Ok(())
     }
@@ -423,6 +440,10 @@ trait PersistenceHooks: Send + Sync {
     fn before_publish(&self) -> Result<(), AppError> {
         Ok(())
     }
+
+    fn after_first_publish_destination_check(&self, _database: &Path) -> Result<(), AppError> {
+        Ok(())
+    }
 }
 
 struct NoopPersistenceHooks;
@@ -432,6 +453,36 @@ impl PersistenceHooks for NoopPersistenceHooks {}
 struct ImportPlan {
     additions: Vec<PortableLibraryEntry>,
     result: LibraryImportResult,
+}
+
+struct FirstImportCleanup {
+    lock_path: PathBuf,
+    created_lock: Option<(u64, u64)>,
+    created_directories: Vec<PathBuf>,
+    committed: bool,
+}
+
+impl FirstImportCleanup {
+    fn new(lock_path: PathBuf) -> Self {
+        Self {
+            lock_path,
+            created_lock: None,
+            created_directories: Vec::new(),
+            committed: false,
+        }
+    }
+}
+
+impl Drop for FirstImportCleanup {
+    fn drop(&mut self) {
+        if !self.committed {
+            cleanup_first_import(
+                &self.lock_path,
+                self.created_lock,
+                &self.created_directories,
+            );
+        }
+    }
 }
 
 fn initialize_schema(connection: &Connection, path: &Path) -> Result<(), AppError> {
@@ -704,6 +755,12 @@ fn database_error(path: &Path, error: SqlError) -> AppError {
         SqlError::SqliteFailure(_, Some(message)) if message.contains("no such table") => {
             AppError::database_corrupt(NativePath::new(path.to_path_buf()))
         }
+        SqlError::FromSqlConversionFailure(..)
+        | SqlError::IntegralValueOutOfRange(..)
+        | SqlError::InvalidColumnType(..)
+        | SqlError::Utf8Error(..) => {
+            AppError::database_corrupt(NativePath::new(path.to_path_buf()))
+        }
         _ => AppError::invalid_state(
             "library_database",
             format!("sqlite_error: {error}"),
@@ -831,7 +888,7 @@ mod tests {
                 "0123456789012345678901234567890123456789".to_owned(),
                 "sha256:0123456789012345678901234567890123456789012345678901234567890123"
                     .to_owned(),
-                "review".to_owned(),
+                path.rsplit('/').next().unwrap().to_owned(),
                 "Description".to_owned(),
                 1,
                 10,
@@ -984,5 +1041,80 @@ mod tests {
         assert_eq!(error.code(), "internal_invariant");
         assert!(temporary.path().join("data/skilload").is_dir());
         assert!(temporary.path().join("state/skilload").is_dir());
+    }
+    #[test]
+    fn malformed_sqlite_column_type_is_database_corrupt() {
+        let temporary = tempdir().unwrap();
+        let repository = SqliteLibraryRepository::with_environment(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(XdgRootResolver),
+        );
+        repository
+            .import(&document(vec![entry("skills/review", None)]), false)
+            .unwrap();
+        let database = temporary.path().join("data/skilload/skilload.db");
+        {
+            let connection = Connection::open(&database).unwrap();
+            connection
+                .execute("UPDATE library_entries SET repository_id = x'00'", [])
+                .unwrap();
+        }
+        assert_eq!(repository.export().unwrap_err().code(), "database_corrupt");
+    }
+
+    struct BeforeFirstLockFailure;
+
+    impl PersistenceHooks for BeforeFirstLockFailure {
+        fn before_first_lock(&self) -> Result<(), AppError> {
+            Err(AppError::Internal {
+                incident_id: "before-first-library-lock".to_owned(),
+            })
+        }
+    }
+
+    #[test]
+    fn first_import_lock_failure_removes_created_state() {
+        let temporary = tempdir().unwrap();
+        let repository = SqliteLibraryRepository::with_hooks(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(XdgRootResolver),
+            Arc::new(BeforeFirstLockFailure),
+        );
+        let error = repository
+            .import(&document(vec![entry("skills/review", None)]), false)
+            .unwrap_err();
+        assert_eq!(error.code(), "internal_invariant");
+        assert!(!temporary.path().join("data/skilload").exists());
+        assert!(!temporary.path().join("state/skilload").exists());
+    }
+
+    struct PublishRace;
+
+    impl PersistenceHooks for PublishRace {
+        fn after_first_publish_destination_check(&self, database: &Path) -> Result<(), AppError> {
+            fs::write(database, b"raced authoritative database").unwrap();
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn first_import_does_not_replace_a_database_created_during_publish() {
+        let temporary = tempdir().unwrap();
+        let repository = SqliteLibraryRepository::with_hooks(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(XdgRootResolver),
+            Arc::new(PublishRace),
+        );
+        let error = repository
+            .import(&document(vec![entry("skills/review", None)]), false)
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            AppError::InvalidState { state, .. } if state == "database_identity_drift"
+        ));
+        assert_eq!(
+            fs::read(temporary.path().join("data/skilload/skilload.db")).unwrap(),
+            b"raced authoritative database"
+        );
     }
 }

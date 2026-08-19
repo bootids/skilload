@@ -58,6 +58,7 @@ fn config_file(root: &Path) -> std::path::PathBuf {
 }
 
 fn portable_document(path: &str, alias: Option<&str>) -> String {
+    let name = path.rsplit('/').next().unwrap();
     let alias = alias
         .map(|value| format!("\"{value}\""))
         .unwrap_or_else(|| "null".to_owned());
@@ -79,7 +80,7 @@ fn portable_document(path: &str, alias: Option<&str>) -> String {
         "repository_id": "42",
         "commit": "0123456789012345678901234567890123456789",
         "integrity": "sha256:0123456789012345678901234567890123456789012345678901234567890123",
-        "name": "review",
+        "name": "{name}",
         "description": "Portable Library entry",
         "entry_count": "1",
         "byte_count": "10"

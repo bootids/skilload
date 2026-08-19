@@ -7,7 +7,7 @@ use crate::ports::configuration::{
 };
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
-use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
@@ -254,59 +254,164 @@ pub(crate) fn acquire_restrictive_lock(
     lock_name: &str,
     lock_domain: &str,
 ) -> Result<File, AppError> {
+    acquire_restrictive_lock_with_identity(roots, lock_name, lock_domain).map(|(file, _)| file)
+}
+
+pub(crate) fn acquire_restrictive_lock_with_identity(
+    roots: &ResolvedRoots,
+    lock_name: &str,
+    lock_domain: &str,
+) -> Result<(File, Option<(u64, u64)>), AppError> {
     let state_root = &roots.state.effective;
     ensure_restrictive_directory(state_root, "XDG_STATE_HOME")?;
     let locks = state_root.join("locks");
     ensure_restrictive_directory(&locks, "XDG_STATE_HOME")?;
     let lock_path = locks.join(lock_name);
-    if let Ok(metadata) = fs::symlink_metadata(&lock_path)
-        && (metadata.file_type().is_symlink() || !metadata.file_type().is_file())
-    {
-        return Err(AppError::invalid_state(
-            lock_domain,
-            "lock_path_is_not_a_regular_file",
-            ["a regular durable lock file"],
-        ));
+    let (file, created_lock) = match fs::symlink_metadata(&lock_path) {
+        Ok(metadata) => {
+            ensure_regular_lock_file(&lock_path, &metadata, lock_domain)?;
+            (open_restrictive_lock(&lock_path)?, None)
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            match create_restrictive_lock(&lock_path) {
+                Ok(file) => {
+                    let metadata = file.metadata().map_err(|error| {
+                        environment_io(
+                            "XDG_STATE_HOME",
+                            &lock_path,
+                            "inspect created durable lock",
+                            error,
+                        )
+                    })?;
+                    (file, Some(metadata_identity(&metadata)))
+                }
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                    let metadata = fs::symlink_metadata(&lock_path).map_err(|error| {
+                        environment_io(
+                            "XDG_STATE_HOME",
+                            &lock_path,
+                            "inspect raced durable lock",
+                            error,
+                        )
+                    })?;
+                    ensure_regular_lock_file(&lock_path, &metadata, lock_domain)?;
+                    (open_restrictive_lock(&lock_path)?, None)
+                }
+                Err(error) => {
+                    return Err(environment_io(
+                        "XDG_STATE_HOME",
+                        &lock_path,
+                        "open durable lock",
+                        error,
+                    ));
+                }
+            }
+        }
+        Err(error) => {
+            return Err(environment_io(
+                "XDG_STATE_HOME",
+                &lock_path,
+                "inspect durable lock",
+                error,
+            ));
+        }
+    };
+
+    let lock_result: Result<(), AppError> = (|| {
+        file.set_permissions(fs::Permissions::from_mode(0o600))
+            .map_err(|error| {
+                environment_io("XDG_STATE_HOME", &lock_path, "restrict durable lock", error)
+            })?;
+
+        let start = Instant::now();
+        loop {
+            match file.try_lock() {
+                Ok(()) => return Ok(()),
+                Err(std::fs::TryLockError::WouldBlock) => {
+                    if start.elapsed() >= LOCK_WAIT {
+                        return Err(AppError::Busy {
+                            lock_domain: lock_domain.to_owned(),
+                            waited_ms: LOCK_WAIT.as_millis() as u64,
+                        });
+                    }
+                    thread::sleep(LOCK_RETRY);
+                }
+                Err(std::fs::TryLockError::Error(error)) => {
+                    return Err(environment_io(
+                        "XDG_STATE_HOME",
+                        &lock_path,
+                        "lock durable lock",
+                        error,
+                    ));
+                }
+            }
+        }
+    })();
+    if let Err(error) = lock_result {
+        drop(file);
+        if !matches!(&error, AppError::Busy { .. })
+            && let Some(identity) = created_lock
+        {
+            remove_created_lock(&lock_path, identity);
+        }
+        return Err(error);
     }
-    let file = OpenOptions::new()
-        .create(true)
+
+    Ok((file, created_lock))
+}
+
+fn open_restrictive_lock(path: &Path) -> Result<File, AppError> {
+    let mut options = OpenOptions::new();
+    options
         .read(true)
         .write(true)
         .truncate(false)
         .mode(0o600)
-        .custom_flags(libc::O_NOFOLLOW)
-        .open(&lock_path)
-        .map_err(|error| {
-            environment_io("XDG_STATE_HOME", &lock_path, "open durable lock", error)
-        })?;
-    file.set_permissions(fs::Permissions::from_mode(0o600))
-        .map_err(|error| {
-            environment_io("XDG_STATE_HOME", &lock_path, "restrict durable lock", error)
-        })?;
+        .custom_flags(libc::O_NOFOLLOW);
+    options
+        .open(path)
+        .map_err(|error| environment_io("XDG_STATE_HOME", path, "open durable lock", error))
+}
 
-    let start = Instant::now();
-    loop {
-        match file.try_lock() {
-            Ok(()) => return Ok(file),
-            Err(std::fs::TryLockError::WouldBlock) => {
-                if start.elapsed() >= LOCK_WAIT {
-                    return Err(AppError::Busy {
-                        lock_domain: lock_domain.to_owned(),
-                        waited_ms: LOCK_WAIT.as_millis() as u64,
-                    });
-                }
-                thread::sleep(LOCK_RETRY);
-            }
-            Err(std::fs::TryLockError::Error(error)) => {
-                return Err(environment_io(
-                    "XDG_STATE_HOME",
-                    &lock_path,
-                    "lock durable lock",
-                    error,
-                ));
-            }
-        }
+fn create_restrictive_lock(path: &Path) -> io::Result<File> {
+    let mut options = OpenOptions::new();
+    options
+        .create_new(true)
+        .read(true)
+        .write(true)
+        .truncate(false)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW);
+    options.open(path)
+}
+
+fn ensure_regular_lock_file(
+    _path: &Path,
+    metadata: &fs::Metadata,
+    lock_domain: &str,
+) -> Result<(), AppError> {
+    if metadata.file_type().is_symlink() || !metadata.file_type().is_file() {
+        Err(AppError::invalid_state(
+            lock_domain,
+            "lock_path_is_not_a_regular_file",
+            ["a regular durable lock file"],
+        ))
+    } else {
+        Ok(())
     }
+}
+
+fn remove_created_lock(path: &Path, created_identity: (u64, u64)) {
+    if fs::symlink_metadata(path)
+        .ok()
+        .is_some_and(|metadata| metadata_identity(&metadata) == created_identity)
+    {
+        let _ = fs::remove_file(path);
+    }
+}
+
+fn metadata_identity(metadata: &fs::Metadata) -> (u64, u64) {
+    (metadata.dev(), metadata.ino())
 }
 
 pub(crate) fn ensure_restrictive_directory(

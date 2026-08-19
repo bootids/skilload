@@ -69,8 +69,8 @@ impl SourceIdentity {
         ref_kind: RefKind,
         ref_value: String,
     ) -> Result<Self, AppError> {
-        validate_identity_component(&owner, "source_owner")?;
-        validate_identity_component(&repository, "source_repository")?;
+        validate_owner(&owner)?;
+        validate_repository(&repository)?;
         if repository_display.is_empty() {
             return Err(AppError::validation(
                 "source_repository_display_empty",
@@ -181,6 +181,7 @@ impl ResolvedSkill {
             return Err(AppError::validation("resolved_skill_integrity", None));
         }
         validate_skill_name(&name)?;
+        validate_source_skill_name(&source, &name)?;
         if description.is_empty() || description.chars().count() > 1_024 {
             return Err(AppError::validation("resolved_skill_description", None));
         }
@@ -219,13 +220,24 @@ where
     serializer.serialize_str(&value.to_string())
 }
 
-fn validate_identity_component(value: &str, constraint: &str) -> Result<(), AppError> {
+fn validate_owner(value: &str) -> Result<(), AppError> {
     if value.is_empty()
         || !value
             .bytes()
             .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
     {
-        return Err(AppError::validation(constraint, None));
+        return Err(AppError::validation("source_owner", None));
+    }
+    Ok(())
+}
+
+fn validate_repository(value: &str) -> Result<(), AppError> {
+    if value.is_empty()
+        || !value.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'-' | b'.' | b'_')
+        })
+    {
+        return Err(AppError::validation("source_repository", None));
     }
     Ok(())
 }
@@ -234,11 +246,18 @@ fn validate_path(path: &str) -> Result<(), AppError> {
     if path.is_empty() {
         return Ok(());
     }
-    if path.starts_with('/') || path.ends_with('/') {
+    if path.starts_with('/')
+        || path.ends_with('/')
+        || path.contains('\\')
+        || path.chars().any(char::is_control)
+    {
         return Err(AppError::validation("source_path", None));
     }
     for segment in path.split('/') {
-        if segment.is_empty() || matches!(segment, "." | "..") {
+        if segment.is_empty()
+            || matches!(segment, "." | "..")
+            || segment.eq_ignore_ascii_case(".git")
+        {
             return Err(AppError::validation("source_path", None));
         }
     }
@@ -266,9 +285,56 @@ fn valid_ref_suffix(value: &str) -> bool {
     !value.is_empty()
         && !value.starts_with('/')
         && !value.ends_with('/')
-        && value
-            .split('/')
-            .all(|segment| !matches!(segment, "" | "." | ".."))
+        && !value.ends_with('.')
+        && !value.contains("..")
+        && !value.contains("@{")
+        && !value.chars().any(char::is_control)
+        && !value
+            .bytes()
+            .any(|byte| matches!(byte, b' ' | b'~' | b'^' | b':' | b'?' | b'*' | b'[' | b'\\'))
+        && value.split('/').all(|segment| {
+            !segment.is_empty() && !segment.starts_with('.') && !segment.ends_with(".lock")
+        })
+}
+
+fn validate_source_skill_name(source: &SourceIdentity, name: &str) -> Result<(), AppError> {
+    let matches = if source.path.is_empty() {
+        root_skill_name_matches(&source.repository_display, name)?
+    } else {
+        source.path.rsplit('/').next() == Some(name)
+    };
+    if matches {
+        Ok(())
+    } else {
+        Err(AppError::validation("resolved_skill_name", None))
+    }
+}
+
+fn root_skill_name_matches(display: &str, name: &str) -> Result<bool, AppError> {
+    let mut output_length = 0;
+    let mut pending_separator = false;
+    let mut matches = true;
+
+    for byte in display.bytes() {
+        let byte = byte.to_ascii_lowercase();
+        if matches!(byte, b'.' | b'_' | b'-') {
+            pending_separator |= output_length > 0;
+            continue;
+        }
+        if pending_separator {
+            matches &= name.as_bytes().get(output_length) == Some(&b'-');
+            output_length += 1;
+            pending_separator = false;
+        }
+        matches &= name.as_bytes().get(output_length) == Some(&byte);
+        output_length += 1;
+    }
+
+    if output_length == 0 || output_length > 64 {
+        Err(AppError::validation("invalid_root_skill_name", None))
+    } else {
+        Ok(matches && output_length == name.len())
+    }
 }
 
 fn validate_skill_name(name: &str) -> Result<(), AppError> {
@@ -329,27 +395,47 @@ mod tests {
     use super::*;
 
     fn source(path: &str, ref_kind: RefKind, ref_value: &str) -> SourceIdentity {
-        let canonical = match ref_kind {
-            RefKind::Branch | RefKind::Tag => format!(
-                "github:owner/repository#{}@{}",
-                encode_component(path, true),
-                encode_component(ref_value, true)
-            ),
-            RefKind::Commit => format!(
-                "github:owner/repository#{}@{ref_value}",
-                encode_component(path, true)
-            ),
-        };
+        source_with(
+            "owner",
+            "repository",
+            "Repository",
+            path,
+            ref_kind,
+            ref_value,
+        )
+        .unwrap()
+    }
+
+    fn source_with(
+        owner: &str,
+        repository: &str,
+        repository_display: &str,
+        path: &str,
+        ref_kind: RefKind,
+        ref_value: &str,
+    ) -> Result<SourceIdentity, AppError> {
         SourceIdentity::new(
-            canonical,
-            "owner".to_owned(),
-            "repository".to_owned(),
-            "Repository".to_owned(),
+            render_canonical(owner, repository, path, ref_kind, ref_value),
+            owner.to_owned(),
+            repository.to_owned(),
+            repository_display.to_owned(),
             path.to_owned(),
             ref_kind,
             ref_value.to_owned(),
         )
-        .unwrap()
+    }
+
+    fn resolved_skill(source: SourceIdentity, name: &str) -> Result<ResolvedSkill, AppError> {
+        ResolvedSkill::new(
+            source,
+            42,
+            "0123456789012345678901234567890123456789".to_owned(),
+            "sha256:0123456789012345678901234567890123456789012345678901234567890123".to_owned(),
+            name.to_owned(),
+            "A valid description".to_owned(),
+            1,
+            10,
+        )
     }
 
     #[test]
@@ -377,16 +463,100 @@ mod tests {
 
     #[test]
     fn resolved_skill_requires_portable_evidence() {
-        let valid = ResolvedSkill::new(
-            source("skills/review", RefKind::Branch, "refs/heads/main"),
-            42,
-            "0123456789012345678901234567890123456789".to_owned(),
-            "sha256:0123456789012345678901234567890123456789012345678901234567890123".to_owned(),
-            "review".to_owned(),
-            "A valid description".to_owned(),
-            1,
-            10,
+        assert!(
+            resolved_skill(
+                source("skills/review", RefKind::Branch, "refs/heads/main"),
+                "review",
+            )
+            .is_ok()
         );
-        assert!(valid.is_ok());
+    }
+
+    #[test]
+    fn portable_root_sources_accept_repository_punctuation_and_match_names() {
+        for (repository, display) in [
+            ("review_skill", "Review_Skill"),
+            ("review.skill", "review.skill"),
+        ] {
+            let root = source_with(
+                "owner",
+                repository,
+                display,
+                "",
+                RefKind::Branch,
+                "refs/heads/main",
+            )
+            .unwrap();
+            assert!(resolved_skill(root.clone(), "review-skill").is_ok());
+            assert!(resolved_skill(root, "unrelated").is_err());
+        }
+        assert!(
+            resolved_skill(
+                source("skills/review", RefKind::Branch, "refs/heads/main"),
+                "unrelated",
+            )
+            .is_err()
+        );
+        let invalid_root = source_with(
+            "owner",
+            "repository",
+            "___",
+            "",
+            RefKind::Branch,
+            "refs/heads/main",
+        )
+        .unwrap();
+        assert!(matches!(
+            resolved_skill(invalid_root, "review"),
+            Err(AppError::Validation { constraint, .. }) if constraint == "invalid_root_skill_name"
+        ));
+    }
+
+    #[test]
+    fn portable_source_rejects_unsafe_paths_and_invalid_git_refs() {
+        for path in ["skills/.git/review", "skills/\0review", "skills\\review"] {
+            assert!(
+                source_with(
+                    "owner",
+                    "repository",
+                    "Repository",
+                    path,
+                    RefKind::Branch,
+                    "refs/heads/main",
+                )
+                .is_err()
+            );
+        }
+        for reference in [
+            "refs/heads/a..b",
+            "refs/heads/topic.lock",
+            "refs/heads/topic.",
+            "refs/heads/bad@{name",
+            "refs/heads/bad\nname",
+            "refs/heads/bad:name",
+        ] {
+            assert!(
+                source_with(
+                    "owner",
+                    "repository",
+                    "Repository",
+                    "skills/review",
+                    RefKind::Branch,
+                    reference,
+                )
+                .is_err()
+            );
+        }
+        assert!(
+            source_with(
+                "owner",
+                "repository",
+                "Repository",
+                "skills/review",
+                RefKind::Branch,
+                "refs/heads/release/v1",
+            )
+            .is_ok()
+        );
     }
 }
