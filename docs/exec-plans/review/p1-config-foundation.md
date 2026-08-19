@@ -71,7 +71,7 @@ The deliberately narrow development command surface is important. Building all 5
 - [x] (2026-08-18) Classified all six inline review concerns in the Review Conversation Log. R1 preserves the documented literal-native-path interpretation; R2 through R6 are ordinary in-scope remediations. Focused core and CLI regressions, locked workspace tests, format, Clippy, build, and diff checks passed; remediation commit `3417b8a2c914b0ed9c16259f969fbc2ba9546031` is pushed before reviewer replies.
 - [x] (2026-08-18) Replied to R1 through R6 from pushed remediation head `3417b8a2c914b0ed9c16259f969fbc2ba9546031`; the final `pr_threads.cjs list --all` reconciliation reports all six inline threads resolved.
 - [x] (2026-08-18) Implemented R7 through R10 in pushed remediation commit `c3977fe5653118487ec0801e3bb6f1cfec749e28`, retained the documented R11 no-fix disposition, replied to every source, and resolved every handled inline thread. The final `pr_threads.cjs list --all` reconciliation reports all eleven actual-problem threads R1 through R11 resolved.
-- [ ] (2026-08-18) Implemented in-scope R12 through R14 parser/error-contract remediations with focused and full locked validation passing; pending the `fix(cli): preserve safe JSON failure contracts` commit, push, GitHub replies, and inline-thread resolutions.
+- [ ] (2026-08-18) Pushed in-scope R12 through R14 parser/error-contract remediations in `9135de47b7f7141621b7ef77a2291b9f76227eef` with focused and full locked validation passing; pending GitHub replies and inline-thread resolutions.
 - [ ] After a later explicit human merge prompt, use `merge-exec-plan` to pass preflight, complete and push the Plan, merge, update local `main`, and delete the local delivery branch.
 
 ## Surprises & Discoveries
@@ -329,7 +329,7 @@ Disposition: fixed.
 
 Status: open.
 
-Resolution: `crates/skilload-cli/src/args.rs` now removes option-shaped tokens while recognizing the otherwise identifiable supported `config get|set|unset|list` pair, so `main.rs` returns the leaf's API-v1 parser `usage_error`. The planned `fix(cli): preserve safe JSON failure contracts` remediation commit includes unit coverage for both unknown-option positions and end-to-end parser coverage for `config.list`.
+Resolution: `crates/skilload-cli/src/args.rs` now removes option-shaped tokens while recognizing the otherwise identifiable supported `config get|set|unset|list` pair, so `main.rs` returns the leaf's API-v1 parser `usage_error`. Pushed remediation commit `9135de47b7f7141621b7ef77a2291b9f76227eef` includes unit coverage for both unknown-option positions and end-to-end parser coverage for `config.list`.
 
 Evidence: `mise exec -- cargo test -p skilload-cli --all-features --locked` passed 16 tests (six CLI unit and 10 integration), including `json_parser_failures_preserve_identifiable_configuration_operations` and `parser_failures_are_terminal_safe_and_preserve_json_configuration_operations`. Full validation passed: `mise exec -- cargo fmt --all --check`, `mise exec -- cargo clippy --workspace --all-targets --all-features -- -D warnings`, `mise exec -- cargo test --workspace --all-features --locked` (35 tests), `mise exec -- cargo build --workspace --all-features --locked`, and `git diff --check`.
 
@@ -345,7 +345,7 @@ Disposition: fixed.
 
 Status: open.
 
-Resolution: `crates/skilload-cli/src/args.rs` now treats a nonempty short cluster containing only clap's `h` and `V` meta flags as a text meta invocation before parsing. The planned `fix(cli): preserve safe JSON failure contracts` remediation commit covers `-hV` and `-Vh` in the args unit test and the real-binary contract test, which require exit 2 and empty stdout.
+Resolution: `crates/skilload-cli/src/args.rs` now treats a nonempty short cluster containing only clap's `h` and `V` meta flags as a text meta invocation before parsing. Pushed remediation commit `9135de47b7f7141621b7ef77a2291b9f76227eef` covers `-hV` and `-Vh` in the args unit test and the real-binary contract test, which require exit 2 and empty stdout.
 
 Evidence: `mise exec -- cargo test -p skilload-cli --all-features --locked` passed 16 tests, including `json_is_rejected_only_for_text_meta_invocations` and `json_meta_and_invalid_native_path_errors_are_safe`. Full validation passed: `mise exec -- cargo fmt --all --check`, `mise exec -- cargo clippy --workspace --all-targets --all-features -- -D warnings`, `mise exec -- cargo test --workspace --all-features --locked` (35 tests), `mise exec -- cargo build --workspace --all-features --locked`, and `git diff --check`.
 
@@ -361,7 +361,7 @@ Disposition: fixed.
 
 Status: open.
 
-Resolution: `crates/skilload-core/src/domain/configuration.rs` now constructs unknown-key `AppError::Usage` errors without a `value`, and `crates/skilload-core/src/error.rs` makes that omission the standard usage constructor behavior. The planned `fix(cli): preserve safe JSON failure contracts` remediation commit adds `unknown_configuration_keys_redact_credential_shaped_values`, proving JSON and human output omit the credential-shaped fixture while preserving the argument name and fixed supported-key list.
+Resolution: `crates/skilload-core/src/domain/configuration.rs` now constructs unknown-key `AppError::Usage` errors without a `value`, and `crates/skilload-core/src/error.rs` makes that omission the standard usage constructor behavior. Pushed remediation commit `9135de47b7f7141621b7ef77a2291b9f76227eef` adds `unknown_configuration_keys_redact_credential_shaped_values`, proving JSON and human output omit the credential-shaped fixture while preserving the argument name and fixed supported-key list.
 
 Evidence: `mise exec -- cargo test -p skilload-cli --all-features --locked` passed 16 tests, and `mise exec -- cargo test -p skilload-core --lib --locked` passed 19 tests. Full validation passed: `mise exec -- cargo fmt --all --check`, `mise exec -- cargo clippy --workspace --all-targets --all-features -- -D warnings`, `mise exec -- cargo test --workspace --all-features --locked` (35 tests), `mise exec -- cargo build --workspace --all-features --locked`, and `git diff --check`.
 
