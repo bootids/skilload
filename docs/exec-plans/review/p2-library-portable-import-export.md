@@ -103,6 +103,7 @@ Revision 2 的 `SKL-CLI-004`、`SKL-CLI-005` 与 `SKL-CLI-012` 以 API-v2 curren
 - [x] (2026-08-19 12:46Z) 已逐一回复并关闭四个新增 thread；完整 `list --all` 显示 6 条 top-level 触发评论、63 个 review body、51 个 inline thread，所有 thread 均为 resolved，初始 thread source 没有漏记，top-level/review body 均无独立问题。四条 reply URL 和 `thread resolved: true` 已写入下列 ledger；待提交并推送最终 reconciliation。
 - [x] (2026-08-19 13:29Z) 已完整读取 PR #3 的 7 条 top-level trigger、9 个非空自动 review body 与 57 个 inline thread；前两类没有独立问题，51 个既有 source 仍 resolved，新增 6 个 source 已按当前正文、路径、thread state 和 Product Baseline 分类：一个 existing-database ABA concern 为 no-fix/open，五项 first-staging identity、portable evidence、complete entry ceiling、tags foreign key 与 export final-sync concern 为 fixed/open，均属 `review` 内 ordinary remediation。
 - [x] (2026-08-19 13:39Z) 已在 `review` 状态完成五项 ordinary remediation 及产品/架构/设计/reference 同步：first-staging SQLite connection 的 post-open inode 验证、positive resolved evidence、combined 10,000-entry transfer ceiling、tags foreign-key schema corruption 与 export final-sync output revalidation。focused core 83 tests、`cargo fmt --all --check`、workspace Clippy `-D warnings`、locked all-features workspace tests（11、12、83）和 workspace build 均通过；待审阅 diff、推送 preliminary commit、逐 thread reply/resolve。
+- [x] (2026-08-19 13:40Z) code 与 preliminary Review Conversation Log commit `8cec7fd1d1e4c79c801215e23af54095e1f83bf5` 已推送；local、upstream 与 open/ready PR #3 的 `headRefOid` 均为该 SHA。六个 source 保持 open，下一步重新读取会话、逐一回复并关闭 inline thread。
 - [ ] 收到明确人类合并授权后，完成预检、评审会话记录、completed 事务、必要检查、合并、默认分支更新和本地交付分支清理。
 
 ## Surprises & Discoveries
@@ -288,6 +289,8 @@ P2 implementation 与完整验证已完成，PR #3 已于 2026-08-19 05:57Z 转�
 2026-08-19 12:46Z 的最终 GitHub reconciliation 确认四条新增 source 均已回复并关闭：`PRRT_kwDOT7YN2s6adTiE`、`PRRT_kwDOT7YN2s6adTiN`、`PRRT_kwDOT7YN2s6adTiT` 与 `PRRT_kwDOT7YN2s6adTiW` 均为 `isResolved: true`。完整会话没有未记录 initial source 或未解决 thread，6 条 top-level `@codex` 触发评论和 8 条非空自动 review body 均没有独立问题。下一步为本次 final Review Conversation Log documentation commit、push 和最后一次完整重读。
 
 2026-08-19 13:39Z 的第五轮 ordinary remediation 已完成本地实现和验收。zero resolved count 现在在 domain constructor 被拒绝；complete durable document 同时受 10,000-entry/byte transfer limits；missing `library_tags` foreign key 是 `database_corrupt`；export 在 final parent sync 后重新证明 output 仍是 held staging inode。first import 的 zero-size ABA window 使用 bundled SQLite main-file `HAS_MOVED` FFI 在所有 SQL 前验证实际 connection，局部 audited exception 之外仍拒绝 unsafe code。core 83 tests、format、Clippy、locked workspace tests（11、12、83）和 build 通过；待 preliminary commit/push、GitHub reply 和 closure。
+
+2026-08-19 13:40Z 的 code/preliminary ledger commit `8cec7fd1d1e4c79c801215e23af54095e1f83bf5` 已推送；local、upstream 与 open/ready PR #3 head 已核对一致。五个 fixed source 的具体路径、回归和完整 validation 已在本 Plan 记录，no-fix source 保留 SQLite source/probe 依据；六个 target thread 仍 open，下一步只进行 GitHub reply/resolve 和最终 reconciliation。
 ## Review Conversation Log
 
 
@@ -1119,7 +1122,7 @@ Status: open
 
 Resolution: 不改动运行时代码。`crates/skilload-core/src/adapters/sqlite_library.rs` 的既有 database 是非空 durable database；locked bundled SQLite 在开始写 journal 前以连接实际持有的 main-file handle 调用 `SQLITE_FCNTL_HAS_MOVED`。该 ABA 在 write 前返回 `SQLITE_READONLY_DBMOVED`，不会 commit B 或报告 changed；仍有本次 first-staging 的 zero-size 特例以独立 source 修复。
 
-Evidence: `libsqlite3-sys 0.38.2/sqlite3.c` 的 `databaseIsUnmoved`（63747–63763）和 journal-open call（65474）显示该保护；2026-08-19 本机 A/B ABA probe 返回 `ReadOnly` extended code 1032，两个 database count 均保持 1。待 GitHub rationale reply。
+Evidence: `libsqlite3-sys 0.38.2/sqlite3.c` 的 `databaseIsUnmoved`（63747–63763）和 journal-open call（65474）显示该保护；2026-08-19 本机 A/B ABA probe 返回 `ReadOnly` extended code 1032，两个 database count 均保持 1。无运行时代码修复；preliminary evidence commit `8cec7fd1d1e4c79c801215e23af54095e1f83bf5` 已推送并与 PR head 一致。待 GitHub rationale reply。
 
 GitHub outcome: pending reply；thread unresolved。
 
@@ -1135,7 +1138,7 @@ Status: open
 
 Resolution: `crates/skilload-core/src/lib.rs` 将 crate policy 收束为 `deny(unsafe_code)`；`crates/skilload-core/src/adapters/sqlite_library.rs` 只在 `verify_sqlite_connection_identity` 局部允许 bundled `sqlite3_file_control(..., SQLITE_FCNTL_HAS_MOVED, ...)`，并在 `FirstImportStaging::open_connection` 的任何 configure/SQL 前调用。新增 deterministic pre-open/post-open ABA hook regression，恢复 held staging path 后仍拒绝 connection，foreign inode 保持 0 bytes 且不发布 live database。
 
-Evidence: `first_import_rejects_an_aba_staging_open_before_sql`、focused `cargo test -p skilload-core --all-features --locked`（83 passed）、`cargo fmt --all --check`、workspace Clippy `-D warnings`、locked workspace tests（11、12、83）与 build 均通过；preliminary fix commit pending。
+Evidence: `first_import_rejects_an_aba_staging_open_before_sql`、focused `cargo test -p skilload-core --all-features --locked`（83 passed）、`cargo fmt --all --check`、workspace Clippy `-D warnings`、locked workspace tests（11、12、83）与 build 均通过；code/preliminary ledger commit `8cec7fd1d1e4c79c801215e23af54095e1f83bf5` 已推送并与 PR head 一致。
 
 GitHub outcome: pending reply；thread unresolved。
 
@@ -1151,7 +1154,7 @@ Status: open
 
 Resolution: `crates/skilload-core/src/domain/source.rs` 的 `ResolvedSkill::new` 分别拒绝 zero `entry_count` 与 `byte_count`；`docs/product-specs/library.md` 与 `api-v2.md` 将 positive count 写明为既有 valid resolved evidence，未改变行为 revision。
 
-Evidence: `resolved_skill_rejects_zero_evidence_counts`、focused core 83 tests、workspace Clippy、locked workspace tests（11、12、83）与 build 均通过；preliminary fix commit pending。
+Evidence: `resolved_skill_rejects_zero_evidence_counts`、focused core 83 tests、workspace Clippy、locked workspace tests（11、12、83）与 build 均通过；code/preliminary ledger commit `8cec7fd1d1e4c79c801215e23af54095e1f83bf5` 已推送并与 PR head 一致。
 
 GitHub outcome: pending reply；thread unresolved。
 
@@ -1167,7 +1170,7 @@ Status: open
 
 Resolution: `crates/skilload-core/src/domain/library.rs` 新增共享 `MAX_PORTABLE_LIBRARY_ENTRIES` 和 `library_portable_document_entries` validation，combined post-import plan 与 export serialization 都经相同检查；`sqlite_library.rs` regression 在 10,000 existing entries 加一条时于 mutation/result 前失败。product/design/Plan 同步为既有唯一 transfer-format 闭环。
 
-Evidence: `validation_rejects_more_entries_than_portable_transfer_can_import`、`complete_import_plan_rejects_more_entries_than_portable_transfer_allows`、focused core 83 tests、workspace Clippy、locked workspace tests（11、12、83）与 build 均通过；preliminary fix commit pending。
+Evidence: `validation_rejects_more_entries_than_portable_transfer_can_import`、`complete_import_plan_rejects_more_entries_than_portable_transfer_allows`、focused core 83 tests、workspace Clippy、locked workspace tests（11、12、83）与 build 均通过；code/preliminary ledger commit `8cec7fd1d1e4c79c801215e23af54095e1f83bf5` 已推送并与 PR head 一致。
 
 GitHub outcome: pending reply；thread unresolved。
 
@@ -1183,7 +1186,7 @@ Status: open
 
 Resolution: `crates/skilload-core/src/adapters/sqlite_library.rs` 的 `validate_library_tags_schema` 除列 probe 外，要求 `PRAGMA foreign_key_list(library_tags)` 恰有一个 `canonical_source → library_entries.canonical_source ON DELETE CASCADE` relation；缺失或变形 relation 返回 `database_corrupt`。
 
-Evidence: `tags_schema_without_entry_foreign_key_is_database_corrupt`、focused core 83 tests、workspace Clippy、locked workspace tests（11、12、83）与 build 均通过；preliminary fix commit pending。
+Evidence: `tags_schema_without_entry_foreign_key_is_database_corrupt`、focused core 83 tests、workspace Clippy、locked workspace tests（11、12、83）与 build 均通过；code/preliminary ledger commit `8cec7fd1d1e4c79c801215e23af54095e1f83bf5` 已推送并与 PR head 一致。
 
 GitHub outcome: pending reply；thread unresolved。
 
@@ -1199,7 +1202,7 @@ Status: open
 
 Resolution: `crates/skilload-core/src/adapters/portable_library.rs` 在 final parent-directory sync 和 parent revalidation 后再次调用 `verify_staging_identity` 比较 held staging FD 与 output entry；未知 replacement 不被 cleanup，结果为 typed identity-drift error 而非 success。
 
-Evidence: `export_rejects_an_output_replaced_before_final_parent_sync`、focused core 83 tests、workspace Clippy、locked workspace tests（11、12、83）与 build 均通过；preliminary fix commit pending。
+Evidence: `export_rejects_an_output_replaced_before_final_parent_sync`、focused core 83 tests、workspace Clippy、locked workspace tests（11、12、83）与 build 均通过；code/preliminary ledger commit `8cec7fd1d1e4c79c801215e23af54095e1f83bf5` 已推送并与 PR head 一致。
 
 GitHub outcome: pending reply；thread unresolved。
 
@@ -1464,3 +1467,5 @@ Library 是本机可搜索的来源元数据集合；在本交付中它只保存
 计划修订说明（2026-08-19 13:29Z）：完整会话重读发现六个新增 inline source。一个 existing nonempty SQLite ABA concern 由 locked bundled SQLite 的 write-time `HAS_MOVED` 检查证明为 no-fix；其余五项是既有 P2 portable transfer、durable schema 和 identity guarantees 内的 ordinary remediation，已逐源以 fixed/open 预登记，等待代码、测试、preliminary commit、GitHub reply 与 closure。
 
 计划修订说明（2026-08-19 13:39Z）：第五轮 ordinary remediation 已完成代码、focused/full validation 与产品/架构/设计/reference 同步。五个 fixed/open ledger entry 现在含实际路径、回归名称和 passing evidence；no-fix entry 保留 bundled SQLite write-time moved-check 的可复核理由。下一步审阅完整 diff、推送 preliminary evidence，再逐一回复并关闭 thread。
+
+计划修订说明（2026-08-19 13:40Z）：code/preliminary ledger commit `8cec7fd1d1e4c79c801215e23af54095e1f83bf5` 已推送，并已核对 local、upstream 与 ready PR head 一致。每个 fixed source 现引用该 SHA 和测试；no-fix source 记录无代码改动及同一 preliminary evidence。下一步重新读取会话、回复每个 source、关闭可关闭 thread，再提交最终 reconciliation。
