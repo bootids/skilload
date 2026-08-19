@@ -41,6 +41,8 @@ Each leaf converts validated syntax into one application request with a stable d
 
 The version-1 configuration key registry is exactly `cache_limit_bytes`, `agents.claude.executable`, and `agents.codex.executable`. The two Agent setters consume one absolute path argument and unset restores basename lookup rather than storing a default string. Source-bearing operations accept a fully qualified `--ref refs/heads/...`, `--ref refs/tags/...`, or full SHA when URL/shorthand input needs disambiguation. `workspace sync` alone accepts `--rebind-from <OLD-WORKSPACE>` and still requires explicit Agents including every Agent recorded by the old local manifest. `library list` and `library search` alone accept `--limit` and `--offset` with the exact `SKL-LIB-005` ranges/defaults. These are options on existing leaves, not additional commands or aliases.
 
+可移植 Library 传输叶子使用原生路径选项，而不是隐式标准输入协议：`library import --input <PATH> [--dry-run]` 读取一个受限的可移植 `LibraryExportData` 文档，`library export --output <PATH>` 以原子方式写入该文档。命令正常的人类结果或 API-v1 JSON 信封与输出文件保持分离，因此调用方无需剥离信封即可在随后导入前检查操作结果。这些选项属于既有叶子，不创建别名或另一命令族。
+
 ## Common Arguments
 
 Common presentation arguments are accepted at a documented consistent position:

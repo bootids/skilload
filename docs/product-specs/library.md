@@ -58,6 +58,8 @@ The **Library** is the user's durable, searchable collection of source metadata.
 
 **Acceptance.** Inspecting an export finds no local absolute path or authorization/deployment record. Repeating export over unchanged Library state yields semantically identical data and stable ordering.
 
+**接口澄清（Revision 1）。** `library export --output <PATH>` 必须以原子方式向请求的原生路径写入且仅写入一个可移植的 `LibraryExportData` 文档；正常的人类输出或 `--json` 命令结果仍是既定操作结果，不属于该文件。`library import --input <PATH> [--dry-run]` 必须从请求的原生路径读取同一可移植文档。这些文件选项是版本 1 唯一的传输方式；它们不增加命令别名或第二种 API 信封。
+
 ## SKL-LIB-010 - Atomic import and conflicts (Revision 1)
 
 **Behavior.** Library import MUST support dry-run and MUST validate the whole versioned JSON batch before mutation. Before schema deserialization or `ImportPlan` construction, a streaming non-model pass MUST stop and reject an input beyond 67,108,864 bytes, 10,000 entry objects, 1,000,000 total JSON values (each object, array, string, number, Boolean, or null counts once), eight nested object/array levels, 1,048,576 UTF-8 bytes in one string token, or 128 bytes in one number token. It MUST also reject duplicate object keys and invalid JSON during that pass. The complete schema and every metadata value MUST then satisfy `SKL-LIB-008`; unknown fields or wrong types are errors. The batch is atomic. Existing sources are kept by default; an alias conflict fails the batch. An explicit replace mode MAY replace Library metadata only and MUST NOT import or alter Trust, global state, workspace state, or local paths.
