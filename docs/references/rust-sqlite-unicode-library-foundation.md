@@ -9,10 +9,11 @@
 ## 已验证结论
 
 * crates.io 在 2026-08-19 将未撤回的 `rusqlite` 最新稳定版列为 `0.40.2`。该版本没有声明 `rust-version`；交付必须使用仓库已固定的 Rust 1.97.1 完整构建、测试和锁定依赖来验证兼容性。
-* 应在工作区中声明 `rusqlite = { version = "0.40.2", default-features = false, features = ["bundled"] }`。关闭默认特性避免引入其默认的缓存和 wasm 后端；`bundled` 选择随包编译的 SQLite，而不是链接各操作系统提供的 SQLite。
-* `rusqlite 0.40.2` 的 `bundled` 特性通过 `libsqlite3-sys 0.38.2` 构建 SQLite；该构建脚本明确传入 `SQLITE_ENABLE_FTS5`、`SQLITE_DEFAULT_FOREIGN_KEYS=1` 等编译选项。因此交付应以 `PRAGMA compile_options` 包含 `ENABLE_FTS5` 和实际 FTS5 表创建作为可观测验证，而不是假设宿主 SQLite 的能力。
-* `unicode-normalization 0.1.25` 的生成表声明 `UNICODE_VERSION = (17, 0, 0)`，不能用于 Revision 1。`unicode-normalization 0.1.23` 的生成表声明 `UNICODE_VERSION = (15, 1, 0)`；必须以精确版本 `=0.1.23` 声明，不能使用允许 Cargo 解析到更新 Unicode 数据的兼容版本范围。
-* 该 crate 提供 NFC，但不提供 Revision 1 所需的完整默认大小写折叠。实现必须将 Unicode 15.1.0 `CaseFolding.txt` 中状态 `C` 与 `F` 的映射以及 `PropList.txt` 的 `White_Space` 集合以受版本控制、离线构建的表纳入仓库；不得在构建或运行时下载 UCD，也不得用区域敏感的小写替代。
+* P2 在 workspace 声明 `rusqlite = { version = "0.40.2", default-features = false, features = ["bundled"] }`。关闭默认特性避免引入其默认的缓存和 wasm 后端；`bundled` 选择随包编译的 SQLite，而不是链接各操作系统提供的 SQLite。
+* `rusqlite 0.40.2` 的 `bundled` 特性通过 `libsqlite3-sys 0.38.2` 构建 SQLite；该构建脚本明确传入 `SQLITE_ENABLE_FTS5`、`SQLITE_DEFAULT_FOREIGN_KEYS=1` 等编译选项。P2 以 `PRAGMA compile_options` 包含 `ENABLE_FTS5` 作为可观测验证，但不提前创建 FTS 表或暴露 `library search`。
+* `unicode-normalization 0.1.25` 的生成表声明 `UNICODE_VERSION = (17, 0, 0)`，不能用于 Revision 1。P2 使用精确 `unicode-normalization =0.1.23`，其生成表声明 `(15, 1, 0)`；不能使用允许 Cargo 解析到更新 Unicode 数据的兼容版本范围。
+* P2 将 Unicode 15.1.0 的 `CaseFolding.txt`、`PropList.txt` 与 Unicode License v3 置于 `crates/skilload-core/unicode/15.1.0/`；2026-08-19 获取的文本 SHA-256 分别为 `4e55acfdc32825a22e87670e9056a3bf94ad7c5400065778e9e10f8314372bcf`、`05672956317b6296bc2ec3d6cef1f6452b57ff4f2efc6dc55b0a19277d5fcfd1` 与 `e7a93b009565cfce55919a381437ac4db883e9da2126fa28b91d12732bc53d96`。build script 只读取这些本地输入，抽取 `C`/`F` case-fold mappings 与 `White_Space`，构建和运行时均不联网。
+* P2 直接依赖 `libc =0.2.189`，仅为 Unix `O_NOFOLLOW` 与 `O_NONBLOCK` 常量提供固定来源；它不引入 unsafe code 或新的 native I/O abstraction。
 
 ## 注意事项
 

@@ -4,10 +4,15 @@ mod args;
 mod human;
 mod json;
 
-use args::{Cli, Command, ConfigCommand};
+use args::{Cli, Command, ConfigCommand, LibraryCommand};
 use clap::{Parser, error::ErrorKind};
 use skilload_core::adapters::configuration::FileConfigurationStore;
-use skilload_core::{AppError, Application, ConfigEntries, ConfigEntry, ConfigKey};
+use skilload_core::adapters::portable_library::PortableLibraryTransferStore;
+use skilload_core::adapters::sqlite_library::SqliteLibraryRepository;
+use skilload_core::{
+    AppError, Application, ConfigEntries, ConfigEntry, ConfigKey, LibraryExportRequest,
+    LibraryImportRequest, LibraryImportResult, NativePath, PortableLibraryDocument,
+};
 use std::env;
 use std::ffi::OsString;
 use std::io::{self, Write};
@@ -23,6 +28,14 @@ enum Projection {
     Entries {
         operation: &'static str,
         entries: ConfigEntries,
+    },
+    LibraryImport {
+        outcome: &'static str,
+        data: LibraryImportResult,
+    },
+    LibraryExport {
+        output: NativePath,
+        document: PortableLibraryDocument,
     },
 }
 
@@ -51,13 +64,17 @@ fn run(arguments: Vec<OsString>) -> Result<(), u8> {
     let _ = cli.no_color;
     let Some(command) = cli.command else {
         if cli.json {
-            eprintln!("error: --json requires a configuration command");
+            eprintln!("error: --json requires an implemented command");
             return Err(2);
         }
         write_stdout(args::top_level_help().as_bytes()).map_err(report_stdout_error)?;
         return Ok(());
     };
-    let application = Application::new(Arc::new(FileConfigurationStore::new()));
+    let application = Application::new(
+        Arc::new(FileConfigurationStore::new()),
+        Arc::new(SqliteLibraryRepository::new()),
+        Arc::new(PortableLibraryTransferStore::new()),
+    );
     let projection = dispatch(&application, command);
     match projection {
         Ok(projection) => render_success(cli.json, projection),
@@ -135,6 +152,34 @@ fn dispatch(
                 })
                 .map_err(|error| ("config.list", error)),
         },
+        Command::Library { command } => match command {
+            LibraryCommand::Import { input, dry_run } => application
+                .library_import(LibraryImportRequest {
+                    input: NativePath::new(input),
+                    dry_run,
+                })
+                .map(|operation| Projection::LibraryImport {
+                    outcome: if operation.data.dry_run {
+                        "observed"
+                    } else {
+                        operation.outcome.as_str()
+                    },
+                    data: operation.data,
+                })
+                .map_err(|error| ("library.import", error)),
+            LibraryCommand::Export { output } => {
+                let output = NativePath::new(output);
+                application
+                    .library_export(LibraryExportRequest {
+                        output: output.clone(),
+                    })
+                    .map(|operation| Projection::LibraryExport {
+                        output,
+                        document: operation.document,
+                    })
+                    .map_err(|error| ("library.export", error))
+            }
+        },
     }
 }
 
@@ -150,6 +195,14 @@ fn render_success(json_output: bool, projection: Projection) -> Result<(), u8> {
             json::entries(operation, entries)
                 .map_err(|error| report_internal_serialization_error(error.to_string()))?
         }
+        Projection::LibraryImport { outcome, data } if json_output => {
+            json::library_import("library.import", outcome, data)
+                .map_err(|error| report_internal_serialization_error(error.to_string()))?
+        }
+        Projection::LibraryExport { document, .. } if json_output => {
+            json::library_export("library.export", document)
+                .map_err(|error| report_internal_serialization_error(error.to_string()))?
+        }
         Projection::Entry {
             operation,
             outcome,
@@ -160,6 +213,14 @@ fn render_success(json_output: bool, projection: Projection) -> Result<(), u8> {
         }
         Projection::Entries { entries, .. } => {
             return write_stdout(human::render_entries(&entries).as_bytes())
+                .map_err(report_stdout_error);
+        }
+        Projection::LibraryImport { outcome, data } => {
+            return write_stdout(human::render_library_import(outcome, &data).as_bytes())
+                .map_err(report_stdout_error);
+        }
+        Projection::LibraryExport { output, document } => {
+            return write_stdout(human::render_library_export(&output, &document).as_bytes())
                 .map_err(report_stdout_error);
         }
     };

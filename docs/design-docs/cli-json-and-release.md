@@ -1,6 +1,6 @@
 # CLI, JSON, Testing, and Release Design
 
-Status: partially implemented design for the 0.1 CLI MVP. `PLAN-0002` implements the `0.0.1` configuration slice for `SKL-CLI-002`, `SKL-CLI-003`, and `SKL-CLI-011`; the remaining CLI, release, and compatibility design remains planned.
+Status: 部分实现的 0.1 CLI MVP design。`PLAN-0002` 实现 `0.0.1` configuration slice 的 `SKL-CLI-002`、`SKL-CLI-003` 与 `SKL-CLI-011`；`PLAN-0003` 实现 `library import`/`library export` 的可移植传输表面与其适用的 API-v1 projection，其他 CLI、release 与 compatibility design 仍为 planned。
 
 ## Behavior Traceability
 
@@ -13,7 +13,7 @@ Status: partially implemented design for the 0.1 CLI MVP. `PLAN-0002` implements
 
 Use `clap` derive definitions in `crates/skilload-cli` as the single command schema. Help, parser tests, manager asset contract tests, and operation identifiers derive from or are checked against that schema so command lists cannot drift.
 
-The current `0.0.1` schema intentionally registers only the real `config get|set|unset|list` leaves plus text help/version. It uses the same `clap` schema for parsing and help, has no aliases or generated help subcommand, treats unknown future domain names as usage errors, and must not scaffold the remaining canonical leaves before their application behavior exists.
+当前 `0.0.1` schema 只注册具有真实实现的 `config get|set|unset|list`、`library import --input <PATH> [--dry-run]` 与 `library export --output <PATH>`，以及文本 help/version。它以同一 `clap` schema 驱动 parsing 与 help，不注册 aliases 或 generated help subcommand；未知 future domain/Library names 必须为 usage error，未实现 canonical leaves 不得被 scaffold。
 
 The canonical tree is:
 
@@ -164,7 +164,7 @@ Real GitHub and real Claude/Codex smoke tests are explicit, credential-aware job
 
 The P1 foundation provides a root Cargo workspace, committed `Cargo.lock`, `rust-toolchain.toml`, and `mise.toml`. mise pins Rust and any Node/npm/pnpm used only for repository tooling; the released product has no Node runtime dependency.
 
-The current configuration binary intentionally links neither SQLite/FTS5 nor an HTTPS client and executes no external program. The later full 0.1 binary links SQLite with FTS5 and an HTTPS client suitable for GitHub. Its required external runtime executables are system `git`, system `ssh` only for SSH Git transport, and the selected Agent CLI only for additive/repair/functional Agent operations. Exact-owned removal-only operations need no Agent executable. `gh` remains optional. Build metadata exposes product version, Git commit, target triple, and manager asset version without embedding build-machine paths or timestamps that prevent reproducibility.
+当前二进制以 bundled SQLite（含 FTS5 编译能力）实现 P2 可移植 Library 元数据传输，但不创建 FTS schema、不链接 HTTPS client，也不执行外部程序。后续 full 0.1 binary 将在具有真实 source/deployment 行为时加入 HTTPS client、system `git`、仅限 SSH Git transport 的 system `ssh` 与 selected Agent CLI；exact-owned removal-only operations 不需要 Agent executable。`gh` 仍可选。Build metadata 暴露 product version、Git commit、target triple 与 manager asset version，且不嵌入 build-machine path 或阻碍 reproducibility 的 timestamp。
 
 ## Release Matrix and Provenance
 

@@ -1,6 +1,6 @@
 # Application and Persistence Design
 
-Status: partially implemented design for the 0.1 CLI MVP. `PLAN-0002` implements the configuration-only `skilload-core` path; SQLite and every durable/domain system beyond configuration remain planned.
+Status: 部分实现的 0.1 CLI MVP design。`PLAN-0002` 实现 configuration-only `skilload-core` 路径；`PLAN-0003` 实现 SQLite-backed 可移植 Library import/export，其他 durable/domain system 仍为 planned。
 
 This design supports the durable and application-layer portions of `SKL-LIB-*`, `SKL-TRUST-*`, `SKL-WSP-*`, `SKL-GLB-*`, `SKL-MGR-*`, `SKL-CACHE-*`, `SKL-OPS-*`, and `SKL-CLI-*`, within the boundaries in `ARCHITECTURE.md`.
 
@@ -31,7 +31,7 @@ This design supports the durable and application-layer portions of `SKL-LIB-*`, 
 
 `crates/skilload-cli` owns `clap` command definitions, conversion into application requests, human rendering, JSON envelope serialization, and process exit status. It composes production adapters once at startup but does not expose them to command handlers.
 
-The current P1 implementation contains `domain/configuration.rs`, `application/configuration.rs`, `ports/configuration.rs`, `adapters/xdg.rs`, `adapters/configuration.rs`, and `error.rs`. Its `Application` facade owns the four configuration use cases and receives a focused configuration store; the store resolves all four XDG roots, reads absent configuration as an in-memory default, uses a bounded lock only for real writes, and atomically replaces `config.toml`. It deliberately creates no SQLite database or dormant domain module.
+当前实现包含 P1 的 `domain/configuration.rs`、`application/configuration.rs`、`ports/configuration.rs`、`adapters/xdg.rs`、`adapters/configuration.rs` 与 `error.rs`，以及 P2 的 `domain/source.rs`、`domain/library.rs`、`domain/unicode_15_1.rs`、`application/library.rs`、`ports/library.rs`、`adapters/portable_library.rs`、`adapters/sqlite_library.rs` 和 local Unicode 15.1.0 build generator。`Application` 同时接收 focused configuration store、Library repository 与 transfer store；构造不打开 SQLite。P2 对 absent Library 的 export/dry-run 返回内存空视图，真实 import 只在完整 input/schema/domain/conflict plan 后创建 data/state，并以 staging SQLite publish `data/skilload.db`。
 
 Representative application interfaces should have this shape (names may be refined without changing the boundary):
 
@@ -82,7 +82,7 @@ The cache index is rebuildable operational metadata rather than durable product 
 
 ## Durable SQLite Model
 
-Use SQLite compiled into the binary with FTS5 enabled once the durable-domain delivery begins. The exact SQL remains a later delivery decision, but ownership is fixed:
+P2 已使用随二进制 bundled 的 SQLite（FTS5 编译能力已验证）实现 v1 最小 schema：`schema_info`、`state_revision`、`library_entries` 与 `library_tags`。P2 不创建 `library_fts`、Trust、global、profile、workspace、ownership、confirmation 或 journal 表；下列完整 ownership model 仍是后续交付的设计边界：
 
 * `schema_info`: current schema version and migration metadata.
 * `state_revision`: a monotonic semantic revision incremented by committed product-state mutations, not by confirmation-token bookkeeping or derived-index maintenance.
@@ -183,8 +183,8 @@ Library export 在创建 staging 文件前比较 no-follow output target 与有�
 
 ## Testing Consequences
 
-Default tests use temporary XDG/HOME roots and an in-memory or temporary-file SQLite database compiled with the same FTS5 features as production. Repository contract tests run against both an in-memory fake and SQLite adapter. Tag and metadata fixtures cover whitespace trimming, NFC composition, full default case folding, Turkish locale independence, direct alias/category/note/tag-count limits, first-spelling retention, import/export ordering, removal by equivalent spelling, and FTS matches through both display and comparison forms. Pagination fixtures compare fake/SQLite default and adjacent pages, same-snapshot totals, offset-at/beyond-total emptiness, unsigned-64-bit offsets above SQLite's signed bound without conversion, and stable ordering under unchanged data. Import-reader fixtures exercise every exact byte/entry/value/depth/string/number boundary, duplicate keys, early termination, no partial model/plan, and atomic conflict failure. Path tests cover unset, empty, relative, and absolute values for every XDG variable; prove that relative values fall back identically from different current directories; prove invalid fallback `HOME` fails before filesystem access; reject equal, nested, or symlink-aliased effective application roots; and separately reject present empty/relative `CLAUDE_CONFIG_DIR`/`CODEX_HOME` plus required invalid `HOME` before Agent-root access. Configuration fixtures cover all three exact keys, unknown keys/tables, cache integers through signed-64-bit maximum plus overflow/zero rejection and decimal-string projection, absolute/relative/empty/non-UTF-8 Agent paths, unset defaults, idempotence, and `PathValue` projection. Workspace-store fixtures enforce exact byte/record/node/depth/scalar ceilings and forbidden YAML features without returning a partial model, while manifest fixtures inject alternate Git directories/worktrees/indexes/configuration and prove the bound real-index check preserves both persistent representations and pending recovery. Persistence fixtures keep branch/tag same-name source keys distinct, allow a `NULL` executable only for proved removal, move every workspace foreign key atomically during a proved instance rebind, and prove database-wide source migration cannot update any workspace row. Other tests prove that query construction creates no path; migration backup manifests survive injected failure and obey the newest-three/previous-generation retention rule; isolated restore validation rejects corrupt, newer, foreign-key-invalid, and WAL-mixed candidates and migrates a supported older candidate only on a disposable copy; atomic restore and rollback preserve one complete generation; explicit reset adopts no surviving artifact; FTS rebuild preserves base rows; unknown schema blocks writes; and concurrent mutations return deterministic commit/busy results.
+P2 默认测试使用 temporary XDG/HOME roots、bundled SQLite 与 generated input；它们覆盖 Unicode 15.1.0 tag normalization、canonical source/portable evidence、六种 non-model import ceiling、duplicate keys、nonregular/identity-drift input、first-import staging cleanup、SQLite transaction rollback、post-commit error、deterministic export、database/WAL/SHM/lock collision、rename 后 failure 与 `database_corrupt`。fake repository、FTS/query、pagination、migration/recovery、Trust 与其他 full-model fixture 仍属于后续交付。
 
 ## Decisions Deferred Beyond the Configuration Foundation
 
-`PLAN-0002` selected and locked the Rust toolchain, `clap`, `serde`, TOML, error, filesystem-staging, JSON, and test dependencies for the configuration slice. A later durable-domain delivery selects final SQLite/FTS5 and HTTP dependency versions and SQL names, and must prove embedded FTS5 and release portability. Those dependency choices remain implementation details unless they change the ownership or boundary model.
+`PLAN-0002` 固定 Rust toolchain、`clap`、`serde`、TOML、error、filesystem-staging、JSON 与 test dependencies。`PLAN-0003` 将 `rusqlite 0.40.2`（`default-features = false`、`bundled`）、`unicode-normalization =0.1.23` 与 `libc =0.2.189` 锁入 workspace，并固定 P2 SQL names 与 local Unicode 15.1.0 数据。HTTP、forward migration/backup、FTS schema 与其余 durable-domain dependency decisions 继续由后续交付决定。

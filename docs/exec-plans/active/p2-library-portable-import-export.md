@@ -61,6 +61,13 @@ depends_on: [PLAN-0002]
 - [x] (2026-08-19 04:30Z) 处理 PR #3 的第二轮规划评审：将 export target collision、rename 后 sync failure、非常规 import input、首次 persistence failure 与同 batch canonical source duplicate 纳入 `SKL-LIB-009`/`SKL-LIB-010` Revision 3；恢复 database recovery 的第 2 节标题，更新 API catalog、持久化设计和 Review Conversation Log；未改动任何运行时代码。
 - [x] (2026-08-19 04:43Z) 已将第二轮 PR #3 评审的六个有效问题以提交 `e7467f70d55cc48548f4c17e4df067d529719e34` 推送，逐一回复并关闭全部内联线程；本 Review Conversation Log 已记录每个 reply URL 和验证证据，计划仍为 `plan`、PR 仍为 Draft。
 - [x] (2026-08-19 05:05Z) 已完成 `execute-exec-plan` 预检：工作树干净，当前/远端分支与 Draft PR #3 的 `6bb4230a103d47a5b165d831672df7c8f3fb6d12` 一致，`PLAN-0002` 已在 `origin/main` 的 `completed/` 中；本 Plan 已进入 `active`，开始里程碑 1。
+- [x] (2026-08-19 05:44Z) 完成里程碑 1：锁定 `rusqlite 0.40.2` bundled、精确 `unicode-normalization =0.1.23` 与 `libc =0.2.189`；将带许可证的 Unicode 15.1.0 `CaseFolding.txt`/`PropList.txt` 纳入版本控制，build script 生成 C/F folding 与 `White_Space` 表；实现 portable source、resolved evidence、metadata 与 tag domain。
+- [x] (2026-08-19 05:44Z) 完成里程碑 2：实现 no-follow/nonblocking/fstat input gate、六个非模型 JSON 上限与 duplicate-key scanner；实现共享两秒 database lock、v1 SQLite repository、first-import staging publish、conflict rollback、empty read/dry-run、deterministic export、protected target rejection 与 corruption diagnostics。
+- [x] (2026-08-19 05:44Z) 完成里程碑 3：`Application` 组合 configuration/Library ports；CLI 仅注册 `library import --input <PATH> [--dry-run]` 与 `library export --output <PATH>`，并投影 API-v1 success/error 与 terminal-safe human results。
+- [x] (2026-08-19 05:44Z) 完成里程碑 4 的文档同步：产品 status、architecture、persistence/CLI design 与 SQLite/Unicode reference 已反映 P2 的实际范围；未改变 `SKL-LIB-009`/`SKL-LIB-010` Revision 3 正文。
+- [x] (2026-08-19 05:52Z) 完成完整运行时验证：`cargo fmt --all --check`、workspace Clippy `-D warnings`、workspace all-features locked tests（6、12、41 个测试通过）与 workspace build 均通过；实际 CLI smoke 证明 dry-run 无状态、commit/export 成功、isolated round trip 字节相同。
+- [x] (2026-08-19 05:52Z) 已 staged 全部 35 个交付文件并完整检查 diff；`git diff --cached --check` 通过，包含 vendored Unicode 输入在内的每个变更均已检查。
+- [ ] 提交并推送代码、测试、锁文件、文档与 active Plan；确认 local HEAD 等于 Draft PR implementation head。
 - [ ] 在代码、测试和同步文档均提交推送后，运行 `gh pr ready`，确认 `isDraft: false` 和 `headRefOid` 等于已推送实现 HEAD，再自动移动计划到 `review`。
 - [ ] 收到明确人类合并授权后，完成预检、评审会话记录、completed 事务、必要检查、合并、默认分支更新和本地交付分支清理。
 
@@ -79,6 +86,8 @@ depends_on: [PLAN-0002]
   Evidence: 现有 `crates/skilload-core/src/adapters/configuration.rs` 先在第 215 行执行 `staging.persist`，后在第 223–232 行同步目录；后者失败不能撤销已发生的 rename。
 - Observation: `symlink_metadata` 后直接 path-based 打开不能单独保证 untrusted import 的资源有界性，因为目标可在检查后替换为 FIFO。
   Evidence: `crates/skilload-core/src/adapters/configuration.rs` 已使用 `OpenOptionsExt`，而 `ARCHITECTURE.md` cross-cutting invariant 1 要求 Library import JSON 在 unrestricted staging/model 前受资源限制；P2 需要 no-follow、nonblocking descriptor 与 `fstat` 的双重检查。
+- Observation: 新增依赖首次不在 lockfile 时，计划中的 `cargo update -p rusqlite -p unicode-normalization -p libc` 以 package ID 未匹配失败。
+  Evidence: 先运行 `mise exec -- cargo check -p skilload-core` 仅将 13 个新依赖解析进 lockfile，随后同一 `cargo update -p` 命令成功并显示 `Locking 0 packages`；没有升级 P1 已锁定依赖。
 
 ## Decision Log
 
@@ -120,11 +129,17 @@ depends_on: [PLAN-0002]
 - Decision: P2 使用 no-follow、nonblocking descriptor 加 `fstat` 读取 import input，并对原本不存在的 database 使用同目录 staging publish。
   Rationale: 前者阻止 FIFO/device/race 在 scanner 前阻塞；后者使首次 commit 前失败没有 live database，且只需谨慎清理由调用创建的 lock 和空目录。
   Date/Author: 2026-08-19 / Codex
+- Decision: P2 的 v1 database 使用 `journal_mode = DELETE`，但 export 仍拒绝 live database、WAL、SHM 和 database-lock target。
+  Rationale: DELETE mode 避免首次 staging database 遗留 WAL/SHM sidecar；target guard 仍覆盖已存在 generation 与未来 journal-mode 变化，不能以当前实现细节缩小 Revision 3 的安全边界。
+  Date/Author: 2026-08-19 / Codex
+- Decision: `LibraryRepository::import` 在 Rust domain 中返回 `LibraryImportOperation`，而非裸 `(MutationOutcome, LibraryImportResult)` tuple。
+  Rationale: 该结构以一个 presentation-neutral value 保持同一 outcome/data 所有权，Application/CLI 不会分离或重算任一值；对 Product Baseline 的 API-v1 data 和 outcome 语义没有变化。
+  Date/Author: 2026-08-19 / Codex
 
 ## Outcomes & Retrospective
 
 
-执行授权后的 `execute-exec-plan` 预检已完成：`PLAN-0002` 在 `origin/main` 完成，当前分支、远端与 Draft PR #3 的 head 一致，且工作树干净。本 Plan 已进入 `active`，尚未开始运行时代码实现。预期结果仍是一个在有效 Library commit 后才发布 `data/skilload.db` 的可移植元数据传输垂直切片；commit 前失败清理本次创建的 staging/state 痕迹，commit 或 rename 后的 durability-sync failure 明确返回错误而不伪造旧状态。后续执行必须在这里记录实际实现范围、验证命令、测试计数、PR ready 证据和与本 Product Baseline 的逐项比对。
+实现与完整运行时验证已完成，发布事务尚未执行。P2 现在提供仅含 portable resolved Library evidence 的 `data/skilload.db`：dry-run/absent export 不创建 XDG roots，实际 import 在所有 scanner/schema/domain/conflict planning 后才 staging/publish，existing canonical source 保持 kept，alias/canonical duplicate 以规定 `internal_duplicate` rollback，export 以稳定顺序写出独立 JSON 文件。`mise exec -- cargo fmt --all --check`、`mise exec -- cargo clippy --workspace --all-targets --all-features -- -D warnings`、`mise exec -- cargo test --workspace --all-features --locked`（6、12、41 tests passed）和 `mise exec -- cargo build --workspace --all-features --locked` 均已通过。实际 `target/debug/skilload` smoke 在两个隔离 XDG root 中验证 dry-run observed/no-state、changed import、portable-only export 与 byte-identical second import/export。下一步只剩 staged diff gate、commit/push、PR ready/review 原子事务；随后记录 commit SHA、ready evidence 并逐项比对 `SKL-LIB-009`/`SKL-LIB-010` Revision 3。
 
 ## Review Conversation Log
 
@@ -276,7 +291,7 @@ GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_
 ## Context and Orientation
 
 
-仓库是一个 Rust Cargo workspace。`crates/skilload-core` 负责 domain、application、ports 和 adapters；`crates/skilload-cli` 是唯一进程入口，负责 clap 参数、终端文本和 API-v1 JSON。现有核心模块是 `domain/configuration.rs`、`application/configuration.rs`、`ports/configuration.rs`、`adapters/xdg.rs`、`adapters/configuration.rs` 和 `error.rs`；CLI 的 `args.rs`、`main.rs`、`json.rs`、`human.rs` 只支持 `config get|set|unset|list`。任何新增 Library 行为都必须沿相同内向方向加入，不允许 command handler 直接操作 SQLite 或文件。
+仓库是一个 Rust Cargo workspace。`crates/skilload-core` 负责 domain、application、ports 和 adapters；`crates/skilload-cli` 是唯一进程入口，负责 clap 参数、终端文本和 API-v1 JSON。P2 已在 `domain/source.rs`、`domain/library.rs`、`domain/unicode_15_1.rs`、`application/library.rs`、`ports/library.rs`、`adapters/portable_library.rs` 与 `adapters/sqlite_library.rs` 实现可移植传输；CLI 的 `args.rs`、`main.rs`、`json.rs`、`human.rs` 除 `config get|set|unset|list` 外只支持 `library import` 与 `library export`。任何后续 Library 行为仍必须沿相同内向方向加入，command handler 不得直接操作 SQLite 或文件。
 
 Library 是本机可搜索的来源元数据集合；在本交付中它只保存一个可移植记录：`ResolvedSkill` 的 canonical source、数字 repository ID、40 位 commit、`sha256:` integrity、验证过的 name/description 和 entry/byte count，加上可选 alias/category/tags/note。canonical source 是带有小写 owner/repository、规范化 Skill path 和完整 branch/tag/SHA ref intent 的字符串身份；它不是 URL、缓存路径或 Trust 凭据。导入的记录永远没有 Trust；未来 Trust 查询可以把它投影为 `missing`，但 P2 不创建 Trust 表或命令。
 
@@ -400,6 +415,8 @@ Library 是本机可搜索的来源元数据集合；在本交付中它只保存
 
 依赖证据应保留在 `docs/references/rust-sqlite-unicode-library-foundation.md`：`rusqlite 0.40.2` bundled build 明确启用 FTS5；`unicode-normalization 0.1.23` 表为 15.1.0，而 0.1.25 为 17.0.0。该参考是实施时依赖选择与版本断言的依据，不是运行时网络依赖。
 
+2026-08-19 05:52Z 的验证 evidence：vendored Unicode 输入 SHA-256 与 reference 一致；focused `portable_library` 8 tests、`sqlite_library` 6 tests、`library` filter 16 tests、CLI contract 12 tests 均通过。实际 smoke 使用 `target/debug/skilload library import --input <PATH> --dry-run --json`、实际 import、`library export --output <PATH> --json`，并由第二隔离 root 重导入/重导出得到 byte-identical document。
+
 成功的 portable output 形状应类似下列缩进示例，字段值仅说明结构；真实 source/description 必须由 validator 保留：
 
     {
@@ -420,9 +437,10 @@ Library 是本机可搜索的来源元数据集合；在本交付中它只保存
 ## Interfaces and Dependencies
 
 
-最终 implementation 至少需要以下明确的核心接口；字段可为私有，但语义、所有权和返回值不得改变。
+最终 implementation 具有以下核心接口；字段可为私有，但 portable identity、ownership 与 Product Baseline 的 observable result 不得改变。
 
     pub enum RefIntent { Branch(String), Tag(String), Commit(String) }
+    pub enum RefKind { Branch, Tag, Commit }
 
     pub struct SourceIdentity {
         pub canonical: String,
@@ -430,7 +448,12 @@ Library 是本机可搜索的来源元数据集合；在本交付中它只保存
         pub repository: String,
         pub repository_display: String,
         pub path: String,
-        pub ref_intent: RefIntent,
+        pub ref_kind: RefKind,
+        pub ref_value: String,
+    }
+
+    impl SourceIdentity {
+        pub fn ref_intent(&self) -> RefIntent;
     }
 
     pub struct ResolvedSkill { /* source, repository_id, commit, integrity, name, description, entry_count, byte_count */ }
@@ -463,7 +486,7 @@ Library 是本机可搜索的来源元数据集合；在本交付中它只保存
 
     pub trait LibraryRepository: Send + Sync {
         fn export(&self) -> Result<PortableLibraryDocument, AppError>;
-        fn import(&self, document: &PortableLibraryDocument, dry_run: bool) -> Result<(MutationOutcome, LibraryImportResult), AppError>;
+        fn import(&self, document: &PortableLibraryDocument, dry_run: bool) -> Result<LibraryImportOperation, AppError>;
     }
 
 `Application` 必须持有 `Arc<dyn ConfigurationStore>`、`Arc<dyn LibraryRepository>` 和 `Arc<dyn LibraryTransferStore>`，但除了 Library commands 不得打开 SQLite。`SqliteLibraryRepository` 只能使用 `StateRootResolver`/`Environment` 的有效 XDG roots，`PortableLibraryTransferStore` 只能处理传入的 native file path；CLI 不得接触 SQL、文件 transaction 或 Unicode table。JSON 序列化必须从 domain/application 结果投影，而不是直接序列化 SQLite 行或 error prose。
@@ -477,3 +500,5 @@ Library 是本机可搜索的来源元数据集合；在本交付中它只保存
 计划修订说明（2026-08-19）：第二轮 PR #3 规划评审发现 output 可覆盖活动 database generation、非常规 input 可绕过资源上界、同 batch canonical source 未定义、首次 import 失败可遗留 state、以及 rename 后 sync failure 的错误承诺不成立。本修订将 `SKL-LIB-009`/`SKL-LIB-010` 提升为 Revision 3，定义拒绝/cleanup/错误语义和 `internal_duplicate` 字段，并恢复 recovery procedure 的第 2 节标题；仍未开始实现。
 
 计划修订说明（2026-08-19）：收到明确执行授权后完成 `execute-exec-plan` 预检，确认 `PLAN-0002` 已在 `origin/main` 完成、PR #3 为 Draft 且工作树/分支/PR head 一致；本 Plan 移入 `active/`，尚未开始实现。
+
+计划修订说明（2026-08-19）：完成 P2 四个实现里程碑：vendored Unicode 15.1.0 输入/build generator、portable Library domain、受限 transfer/SQLite adapters、application/CLI/API-v1 projections、focused tests 与 governed documentation。Plan 仍为 `active`，等待完整验证、提交推送和 Draft-to-review 原子事务。

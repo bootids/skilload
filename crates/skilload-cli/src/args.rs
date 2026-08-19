@@ -1,5 +1,6 @@
 use clap::{CommandFactory, Parser, Subcommand};
 use std::ffi::{OsStr, OsString};
+use std::path::PathBuf;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -10,7 +11,7 @@ use std::ffi::{OsStr, OsString};
     propagate_version = true
 )]
 pub struct Cli {
-    #[arg(long, global = true, help = "Render a configuration result as JSON.")]
+    #[arg(long, global = true, help = "Render a command result as JSON.")]
     pub json: bool,
     #[arg(long = "no-color", global = true, help = "Disable terminal color.")]
     pub no_color: bool,
@@ -23,6 +24,10 @@ pub enum Command {
     Config {
         #[command(subcommand)]
         command: ConfigCommand,
+    },
+    Library {
+        #[command(subcommand)]
+        command: LibraryCommand,
     },
 }
 
@@ -40,6 +45,20 @@ pub enum ConfigCommand {
         key: String,
     },
     List,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum LibraryCommand {
+    Import {
+        #[arg(long)]
+        input: PathBuf,
+        #[arg(long)]
+        dry_run: bool,
+    },
+    Export {
+        #[arg(long)]
+        output: PathBuf,
+    },
 }
 
 pub fn top_level_help() -> String {
@@ -73,14 +92,19 @@ pub fn json_configuration_operation(arguments: &[OsString]) -> Option<&'static s
             value if value == OsStr::new("--json") || value == OsStr::new("--no-color")
         ) && !is_option_like(argument.as_os_str())
     });
-    if positionals.next()?.as_os_str() != OsStr::new("config") {
-        return None;
-    }
     match positionals.next()?.as_os_str() {
-        value if value == OsStr::new("get") => Some("config.get"),
-        value if value == OsStr::new("set") => Some("config.set"),
-        value if value == OsStr::new("unset") => Some("config.unset"),
-        value if value == OsStr::new("list") => Some("config.list"),
+        value if value == OsStr::new("config") => match positionals.next()?.as_os_str() {
+            value if value == OsStr::new("get") => Some("config.get"),
+            value if value == OsStr::new("set") => Some("config.set"),
+            value if value == OsStr::new("unset") => Some("config.unset"),
+            value if value == OsStr::new("list") => Some("config.list"),
+            _ => None,
+        },
+        value if value == OsStr::new("library") => match positionals.next()?.as_os_str() {
+            value if value == OsStr::new("import") => Some("library.import"),
+            value if value == OsStr::new("export") => Some("library.export"),
+            _ => None,
+        },
         _ => None,
     }
 }
@@ -114,19 +138,35 @@ mod tests {
     use super::*;
 
     #[test]
-    fn only_the_real_configuration_leaves_are_registered() {
+    fn only_real_configuration_and_library_leaves_are_registered() {
         let command = Cli::command();
+        let top_level: Vec<_> = command
+            .get_subcommands()
+            .map(|subcommand| subcommand.get_name())
+            .collect();
+        assert_eq!(top_level, ["config", "library"]);
+
         let config = command
             .get_subcommands()
             .find(|subcommand| subcommand.get_name() == "config")
             .unwrap();
-        let names: Vec<_> = config
+        let config_names: Vec<_> = config
             .get_subcommands()
             .map(|subcommand| subcommand.get_name())
             .collect();
-        assert_eq!(names, ["get", "set", "unset", "list"]);
+        assert_eq!(config_names, ["get", "set", "unset", "list"]);
+
+        let library = command
+            .get_subcommands()
+            .find(|subcommand| subcommand.get_name() == "library")
+            .unwrap();
+        let library_names: Vec<_> = library
+            .get_subcommands()
+            .map(|subcommand| subcommand.get_name())
+            .collect();
+        assert_eq!(library_names, ["import", "export"]);
         assert!(
-            !config
+            !library
                 .get_subcommands()
                 .any(|subcommand| subcommand.get_name() == "help")
         );
@@ -158,7 +198,7 @@ mod tests {
     }
 
     #[test]
-    fn json_parser_failures_preserve_identifiable_configuration_operations() {
+    fn json_parser_failures_preserve_identifiable_implemented_operations() {
         assert_eq!(
             json_configuration_operation(&[
                 "skilload".into(),
@@ -207,6 +247,25 @@ mod tests {
                 "unknown".into(),
             ]),
             None
+        );
+        assert_eq!(
+            json_configuration_operation(&[
+                "skilload".into(),
+                "--json".into(),
+                "library".into(),
+                "import".into(),
+            ]),
+            Some("library.import")
+        );
+        assert_eq!(
+            json_configuration_operation(&[
+                "skilload".into(),
+                "library".into(),
+                "export".into(),
+                "--json".into(),
+                "--output".into(),
+            ]),
+            Some("library.export")
         );
     }
 }

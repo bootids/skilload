@@ -1,4 +1,7 @@
-use skilload_core::{AppError, ConfigEntries, ConfigEntry, ConfigValue, NativePath};
+use skilload_core::{
+    AppError, ConfigEntries, ConfigEntry, ConfigValue, LibraryImportResult, NativePath,
+    PortableLibraryDocument,
+};
 use std::fmt::Write as _;
 use std::os::unix::ffi::OsStrExt;
 
@@ -17,6 +20,26 @@ pub fn render_entries(entries: &ConfigEntries) -> String {
         append_entry(&mut output, entry);
     }
     output
+}
+
+pub fn render_library_import(outcome: &str, data: &LibraryImportResult) -> String {
+    format!(
+        "library.import: {outcome}\nformat_version: {}\ndry_run: {}\nadded: {}\nupdated: {}\nkept: {}\nconflicts: {}\n",
+        data.format_version,
+        data.dry_run,
+        data.added.len(),
+        data.updated.len(),
+        data.kept.len(),
+        data.conflicts.len(),
+    )
+}
+
+pub fn render_library_export(output: &NativePath, document: &PortableLibraryDocument) -> String {
+    format!(
+        "library.export: observed\noutput: {}\nentries: {}\n",
+        quote_path(output),
+        document.entries.len(),
+    )
 }
 
 pub fn render_error(error: &AppError) -> String {
@@ -44,6 +67,24 @@ pub fn render_error(error: &AppError) -> String {
             path.as_ref()
                 .map(|path| format!(" for {}", quote_path(path)))
                 .unwrap_or_default()
+        ),
+        AppError::InputLimit {
+            limit_kind,
+            measured,
+            allowed,
+            path,
+        } => format!(
+            "error [{}]: limit {} measured {} exceeds allowed {} for {}\n",
+            error.code(),
+            quote_string(limit_kind),
+            measured,
+            allowed,
+            quote_path(path)
+        ),
+        AppError::Conflict { conflicts } => format!(
+            "error [{}]: Library import has {} conflict(s)\n",
+            error.code(),
+            conflicts.len()
         ),
         AppError::InvalidEnvironment {
             variable,
@@ -87,6 +128,11 @@ pub fn render_error(error: &AppError) -> String {
             quote_string(domain),
             found_version,
             supported_version
+        ),
+        AppError::DatabaseCorrupt { database, .. } => format!(
+            "error [{}]: database {} requires database-corruption-v1 recovery\n",
+            error.code(),
+            quote_path(database)
         ),
         AppError::InvalidState {
             domain,

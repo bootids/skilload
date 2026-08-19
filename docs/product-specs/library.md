@@ -1,6 +1,6 @@
 # Library
 
-Status: planned baseline for the skilload CLI MVP.
+Status: 部分实现。`PLAN-0003` 实现了 Revision 3 的 `SKL-LIB-009` 与 `SKL-LIB-010`；其他 Library 行为仍为 skilload CLI MVP 的 planned 范围。
 
 The **Library** is the user's durable, searchable collection of source metadata. It is not a content store, Trust store, workspace manifest, or deployment list.
 

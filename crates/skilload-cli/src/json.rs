@@ -1,6 +1,9 @@
 use crate::human::display_path;
 use serde::Serialize;
-use skilload_core::{AppError, ConfigEntries, ConfigEntry, ConfigValue, NativePath};
+use skilload_core::{
+    AppError, ConfigEntries, ConfigEntry, ConfigValue, LibraryImportResult, NativePath,
+    PortableLibraryDocument, SourceIdentity,
+};
 use std::os::unix::ffi::OsStrExt;
 
 #[derive(Serialize)]
@@ -37,9 +40,12 @@ struct ErrorBody {
 enum ErrorDetails {
     Usage(UsageDetails),
     Validation(ValidationDetails),
+    Limit(LimitDetails),
+    Conflict(ConflictDetails),
     Environment(EnvironmentDetails),
     Busy(BusyDetails),
     Schema(SchemaDetails),
+    DatabaseCorrupt(DatabaseCorruptDetails),
     InvalidState(InvalidStateDetails),
     Internal(InternalDetails),
 }
@@ -61,6 +67,30 @@ struct ValidationDetails {
 }
 
 #[derive(Serialize)]
+struct LimitDetails {
+    limit_kind: String,
+    measured: String,
+    allowed: String,
+    source: Option<()>,
+    source_path: Option<()>,
+    path: Option<PathValue>,
+}
+
+#[derive(Serialize)]
+struct ConflictDetails {
+    conflicts: Vec<ConflictProjection>,
+}
+
+#[derive(Serialize)]
+struct ConflictProjection {
+    kind: String,
+    name: Option<String>,
+    agent: Option<()>,
+    path: Option<PathValue>,
+    source: Option<SourceIdentity>,
+}
+
+#[derive(Serialize)]
 struct EnvironmentDetails {
     variable: String,
     path: Option<PathValue>,
@@ -78,6 +108,14 @@ struct SchemaDetails {
     domain: String,
     found_version: u64,
     supported_version: u64,
+}
+
+#[derive(Serialize)]
+struct DatabaseCorruptDetails {
+    database: PathValue,
+    backups: Vec<PathValue>,
+    recoverable_exports: Vec<String>,
+    recovery_procedure: &'static str,
 }
 
 #[derive(Serialize)]
@@ -160,6 +198,34 @@ pub fn entries(operation: &'static str, entries: ConfigEntries) -> serde_json::R
     })
 }
 
+pub fn library_import(
+    operation: &'static str,
+    outcome: &'static str,
+    data: LibraryImportResult,
+) -> serde_json::Result<Vec<u8>> {
+    serde_json::to_vec(&SuccessEnvelope {
+        api_version: 1,
+        operation,
+        ok: true,
+        result: SuccessResult { outcome, data },
+    })
+}
+
+pub fn library_export(
+    operation: &'static str,
+    document: PortableLibraryDocument,
+) -> serde_json::Result<Vec<u8>> {
+    serde_json::to_vec(&SuccessEnvelope {
+        api_version: 1,
+        operation,
+        ok: true,
+        result: SuccessResult {
+            outcome: "observed",
+            data: document,
+        },
+    })
+}
+
 pub fn error(operation: &'static str, error: &AppError) -> serde_json::Result<Vec<u8>> {
     serde_json::to_vec(&ErrorEnvelope {
         api_version: 1,
@@ -220,6 +286,31 @@ fn error_details(error: &AppError) -> ErrorDetails {
             source_path: None,
             path: path.as_ref().map(path_value),
         }),
+        AppError::InputLimit {
+            limit_kind,
+            measured,
+            allowed,
+            path,
+        } => ErrorDetails::Limit(LimitDetails {
+            limit_kind: limit_kind.clone(),
+            measured: measured.to_string(),
+            allowed: allowed.to_string(),
+            source: None,
+            source_path: None,
+            path: Some(path_value(path)),
+        }),
+        AppError::Conflict { conflicts } => ErrorDetails::Conflict(ConflictDetails {
+            conflicts: conflicts
+                .iter()
+                .map(|conflict| ConflictProjection {
+                    kind: conflict.kind.clone(),
+                    name: conflict.name.clone(),
+                    agent: None,
+                    path: None,
+                    source: conflict.source.clone(),
+                })
+                .collect(),
+        }),
         AppError::InvalidEnvironment {
             variable,
             path,
@@ -263,6 +354,16 @@ fn error_details(error: &AppError) -> ErrorDetails {
             domain: domain.clone(),
             state: state.clone(),
             expected: expected.clone(),
+        }),
+        AppError::DatabaseCorrupt {
+            database,
+            backups,
+            recoverable_exports,
+        } => ErrorDetails::DatabaseCorrupt(DatabaseCorruptDetails {
+            database: path_value(database),
+            backups: backups.iter().map(path_value).collect(),
+            recoverable_exports: recoverable_exports.clone(),
+            recovery_procedure: "database-corruption-v1",
         }),
         AppError::Internal { incident_id } => ErrorDetails::Internal(InternalDetails {
             incident_id: incident_id.clone(),

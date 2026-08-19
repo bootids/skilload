@@ -1,0 +1,988 @@
+use crate::adapters::configuration::{
+    acquire_restrictive_lock, ensure_restrictive_directory, environment_io,
+    sync_created_directory_entries,
+};
+use crate::adapters::xdg::{SystemEnvironment, XdgRootResolver};
+use crate::domain::configuration::{MutationOutcome, NativePath};
+use crate::domain::library::{
+    LIBRARY_FORMAT_VERSION, LibraryImportOperation, LibraryImportResult, PortableLibraryDocument,
+    PortableLibraryEntry,
+};
+use crate::domain::source::{RefKind, ResolvedSkill, SourceIdentity, parse_decimal_u64};
+use crate::domain::unicode_15_1::normalize_tag;
+use crate::error::{AppError, Conflict};
+use crate::ports::configuration::{Environment, ResolvedRoots, StateRootResolver};
+use crate::ports::library::LibraryRepository;
+use rusqlite::{Connection, Error as SqlError, ErrorCode, OpenFlags, OptionalExtension, params};
+use std::collections::HashMap;
+use std::fs::{self, File};
+use std::io;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use tempfile::Builder;
+
+const SCHEMA_VERSION: u64 = 1;
+
+pub struct SqliteLibraryRepository {
+    environment: Arc<dyn Environment>,
+    root_resolver: Arc<dyn StateRootResolver>,
+    hooks: Arc<dyn PersistenceHooks>,
+}
+
+impl SqliteLibraryRepository {
+    pub fn new() -> Self {
+        Self {
+            environment: Arc::new(SystemEnvironment),
+            root_resolver: Arc::new(XdgRootResolver),
+            hooks: Arc::new(NoopPersistenceHooks),
+        }
+    }
+
+    pub fn with_environment(
+        environment: Arc<dyn Environment>,
+        root_resolver: Arc<dyn StateRootResolver>,
+    ) -> Self {
+        Self {
+            environment,
+            root_resolver,
+            hooks: Arc::new(NoopPersistenceHooks),
+        }
+    }
+
+    #[cfg(test)]
+    fn with_hooks(
+        environment: Arc<dyn Environment>,
+        root_resolver: Arc<dyn StateRootResolver>,
+        hooks: Arc<dyn PersistenceHooks>,
+    ) -> Self {
+        Self {
+            environment,
+            root_resolver,
+            hooks,
+        }
+    }
+
+    fn resolve_roots(&self) -> Result<ResolvedRoots, AppError> {
+        self.root_resolver.resolve(self.environment.as_ref())
+    }
+
+    fn database_path(roots: &ResolvedRoots) -> PathBuf {
+        roots.data.effective.join("skilload.db")
+    }
+
+    fn database_exists(path: &Path) -> Result<bool, AppError> {
+        match fs::symlink_metadata(path) {
+            Ok(metadata)
+                if metadata.file_type().is_file() && !metadata.file_type().is_symlink() =>
+            {
+                Ok(true)
+            }
+            Ok(_) => Err(AppError::invalid_state(
+                "library_database",
+                "database_path_is_not_a_regular_file",
+                ["a regular data/skilload.db file"],
+            )),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(environment_io(
+                "XDG_DATA_HOME",
+                path,
+                "inspect skilload.db",
+                error,
+            )),
+        }
+    }
+
+    fn read_existing(&self, path: &Path) -> Result<Vec<PortableLibraryEntry>, AppError> {
+        let mut connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .map_err(|error| database_error(path, error))?;
+        let transaction = connection
+            .transaction()
+            .map_err(|error| database_error(path, error))?;
+        validate_database(&transaction, path)?;
+        let entries = load_entries(&transaction, path)?;
+        let validated = PortableLibraryDocument {
+            format_version: LIBRARY_FORMAT_VERSION,
+            entries: entries.clone(),
+        }
+        .validate()
+        .map_err(|_| AppError::database_corrupt(NativePath::new(path.to_path_buf())))?;
+        if validated.entries != entries {
+            return Err(AppError::database_corrupt(NativePath::new(
+                path.to_path_buf(),
+            )));
+        }
+        transaction
+            .commit()
+            .map_err(|error| database_error(path, error))?;
+        Ok(entries)
+    }
+
+    fn plan(
+        document: &PortableLibraryDocument,
+        existing: &[PortableLibraryEntry],
+        dry_run: bool,
+    ) -> Result<ImportPlan, AppError> {
+        let mut by_canonical = HashMap::with_capacity(existing.len());
+        let mut aliases = HashMap::new();
+        for entry in existing {
+            by_canonical.insert(entry.skill.source.canonical.as_str(), entry);
+            if let Some(alias) = &entry.alias {
+                aliases.insert(alias.as_str(), &entry.skill.source);
+            }
+        }
+
+        let mut additions = Vec::new();
+        let mut kept = Vec::new();
+        for entry in &document.entries {
+            if by_canonical.contains_key(entry.skill.source.canonical.as_str()) {
+                kept.push(entry.skill.source.clone());
+                continue;
+            }
+            if let Some(alias) = &entry.alias
+                && aliases.contains_key(alias.as_str())
+            {
+                return Err(AppError::conflict(vec![Conflict::internal_duplicate(
+                    Some(alias.clone()),
+                    entry.skill.source.clone(),
+                )]));
+            }
+            additions.push(entry.clone());
+        }
+        additions.sort_by(|left, right| {
+            left.skill
+                .source
+                .canonical
+                .cmp(&right.skill.source.canonical)
+        });
+        kept.sort_by(|left, right| left.canonical.cmp(&right.canonical));
+        let added = additions
+            .iter()
+            .map(|entry| entry.skill.source.clone())
+            .collect::<Vec<_>>();
+        Ok(ImportPlan {
+            additions,
+            result: LibraryImportResult {
+                format_version: LIBRARY_FORMAT_VERSION,
+                dry_run,
+                added,
+                updated: Vec::new(),
+                kept,
+                conflicts: Vec::new(),
+            },
+        })
+    }
+
+    fn import_existing(
+        &self,
+        roots: &ResolvedRoots,
+        document: &PortableLibraryDocument,
+    ) -> Result<LibraryImportOperation, AppError> {
+        let lock = acquire_restrictive_lock(roots, "database.lock", "database")?;
+        let result = (|| {
+            let roots = self.root_resolver.revalidate(roots)?;
+            let database = Self::database_path(&roots);
+            if !Self::database_exists(&database)? {
+                return Err(AppError::invalid_state(
+                    "library_database",
+                    "database_identity_drift",
+                    ["the planned regular database file"],
+                ));
+            }
+            let mut connection =
+                Connection::open(&database).map_err(|error| database_error(&database, error))?;
+            validate_database(&connection, &database)?;
+            let existing = load_entries(&connection, &database)?;
+            let plan = Self::plan(document, &existing, false)?;
+            if plan.additions.is_empty() {
+                return Ok(LibraryImportOperation {
+                    outcome: MutationOutcome::Unchanged,
+                    data: plan.result,
+                });
+            }
+            let transaction = connection
+                .transaction()
+                .map_err(|error| database_error(&database, error))?;
+            apply_additions(&transaction, &plan.additions, &database)?;
+            transaction
+                .commit()
+                .map_err(|error| database_error(&database, error))?;
+            self.hooks.after_commit_before_sync()?;
+            File::open(&database)
+                .and_then(|file| file.sync_all())
+                .map_err(|error| {
+                    database_sync_error(&database, "sync committed database", error)
+                })?;
+            File::open(&roots.data.effective)
+                .and_then(|directory| directory.sync_all())
+                .map_err(|error| {
+                    database_sync_error(&database, "sync database directory", error)
+                })?;
+            Ok(LibraryImportOperation {
+                outcome: MutationOutcome::Changed,
+                data: plan.result,
+            })
+        })();
+        let unlock = lock.unlock();
+        if let Err(error) = unlock {
+            return Err(environment_io(
+                "XDG_STATE_HOME",
+                &roots.state.effective.join("locks/database.lock"),
+                "unlock database.lock",
+                error,
+            ));
+        }
+        result
+    }
+
+    fn import_first(
+        &self,
+        roots: &ResolvedRoots,
+        plan: ImportPlan,
+    ) -> Result<LibraryImportOperation, AppError> {
+        let mut created_directories =
+            ensure_restrictive_directory(&roots.state.effective, "XDG_STATE_HOME")?;
+        created_directories.extend(ensure_restrictive_directory(
+            &roots.state.effective.join("locks"),
+            "XDG_STATE_HOME",
+        )?);
+        let lock_path = roots.state.effective.join("locks/database.lock");
+        let prior_lock = fs::symlink_metadata(&lock_path)
+            .ok()
+            .map(|metadata| metadata_identity(&metadata));
+        let lock = acquire_restrictive_lock(roots, "database.lock", "database")?;
+        let created_lock = prior_lock
+            .is_none()
+            .then(|| {
+                fs::symlink_metadata(&lock_path)
+                    .ok()
+                    .map(|metadata| metadata_identity(&metadata))
+            })
+            .flatten();
+
+        let mut committed = false;
+        let result = (|| {
+            let roots = self.root_resolver.revalidate(roots)?;
+            let database = Self::database_path(&roots);
+            if Self::database_exists(&database)? {
+                return Err(AppError::invalid_state(
+                    "library_database",
+                    "database_identity_drift",
+                    ["an absent database before first import"],
+                ));
+            }
+            created_directories.extend(ensure_restrictive_directory(
+                &roots.data.effective,
+                "XDG_DATA_HOME",
+            )?);
+            let roots = self.root_resolver.revalidate(&roots)?;
+            let database = Self::database_path(&roots);
+            if Self::database_exists(&database)? {
+                return Err(AppError::invalid_state(
+                    "library_database",
+                    "database_identity_drift",
+                    ["an absent database before first import"],
+                ));
+            }
+            let data_root = roots.data.effective.clone();
+            let staging = Builder::new()
+                .prefix(".skilload-library-db-")
+                .suffix(".tmp")
+                .tempfile_in(&data_root)
+                .map_err(|error| {
+                    database_sync_error(&database, "create staging database", error)
+                })?;
+            staging
+                .as_file()
+                .set_permissions(fs::Permissions::from_mode(0o600))
+                .map_err(|error| {
+                    database_sync_error(&database, "restrict staging database", error)
+                })?;
+            let staging_path = staging.path().to_path_buf();
+            let mut connection = Connection::open(&staging_path)
+                .map_err(|error| database_error(&staging_path, error))?;
+            initialize_schema(&connection, &staging_path)?;
+            let transaction = connection
+                .transaction()
+                .map_err(|error| database_error(&staging_path, error))?;
+            apply_additions(&transaction, &plan.additions, &staging_path)?;
+            self.hooks.before_commit()?;
+            transaction
+                .commit()
+                .map_err(|error| database_error(&staging_path, error))?;
+            committed = true;
+            self.hooks.after_commit_before_sync()?;
+            drop(connection);
+            staging.as_file().sync_all().map_err(|error| {
+                database_sync_error(&staging_path, "sync committed staging database", error)
+            })?;
+            self.hooks.before_publish()?;
+            let roots = self.root_resolver.revalidate(&roots)?;
+            let database = Self::database_path(&roots);
+            if Self::database_exists(&database)? {
+                return Err(AppError::invalid_state(
+                    "library_database",
+                    "database_identity_drift",
+                    ["an absent database before first import publish"],
+                ));
+            }
+            staging.persist(&database).map_err(|error| {
+                database_sync_error(&database, "publish committed staging database", error.error)
+            })?;
+            File::open(&roots.data.effective)
+                .and_then(|directory| directory.sync_all())
+                .map_err(|error| {
+                    database_sync_error(&database, "sync published database directory", error)
+                })?;
+            sync_created_directory_entries(&created_directories, "XDG_DATA_HOME")?;
+            Ok(LibraryImportOperation {
+                outcome: MutationOutcome::Changed,
+                data: plan.result,
+            })
+        })();
+        let unlock = lock.unlock();
+        if let Err(error) = unlock {
+            return Err(environment_io(
+                "XDG_STATE_HOME",
+                &lock_path,
+                "unlock database.lock",
+                error,
+            ));
+        }
+        if result.is_err() && !committed {
+            cleanup_first_import(&lock_path, created_lock, &created_directories);
+        }
+        result
+    }
+}
+
+impl Default for SqliteLibraryRepository {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl LibraryRepository for SqliteLibraryRepository {
+    fn export(&self) -> Result<PortableLibraryDocument, AppError> {
+        let roots = self.resolve_roots()?;
+        let database = Self::database_path(&roots);
+        if !Self::database_exists(&database)? {
+            return Ok(PortableLibraryDocument::empty());
+        }
+        let mut document = PortableLibraryDocument {
+            format_version: LIBRARY_FORMAT_VERSION,
+            entries: self.read_existing(&database)?,
+        };
+        document.sort_deterministically()?;
+        Ok(document)
+    }
+
+    fn import(
+        &self,
+        document: &PortableLibraryDocument,
+        dry_run: bool,
+    ) -> Result<LibraryImportOperation, AppError> {
+        let document = document.clone().validate()?;
+        let roots = self.resolve_roots()?;
+        let database = Self::database_path(&roots);
+        if dry_run {
+            let existing = if Self::database_exists(&database)? {
+                self.read_existing(&database)?
+            } else {
+                Vec::new()
+            };
+            let plan = Self::plan(&document, &existing, true)?;
+            return Ok(LibraryImportOperation {
+                outcome: MutationOutcome::Unchanged,
+                data: plan.result,
+            });
+        }
+        if Self::database_exists(&database)? {
+            self.import_existing(&roots, &document)
+        } else if document.entries.is_empty() {
+            Ok(LibraryImportOperation {
+                outcome: MutationOutcome::Unchanged,
+                data: Self::plan(&document, &[], false)?.result,
+            })
+        } else {
+            let plan = Self::plan(&document, &[], false)?;
+            self.import_first(&roots, plan)
+        }
+    }
+}
+
+trait PersistenceHooks: Send + Sync {
+    fn before_commit(&self) -> Result<(), AppError> {
+        Ok(())
+    }
+
+    fn after_commit_before_sync(&self) -> Result<(), AppError> {
+        Ok(())
+    }
+
+    fn before_publish(&self) -> Result<(), AppError> {
+        Ok(())
+    }
+}
+
+struct NoopPersistenceHooks;
+
+impl PersistenceHooks for NoopPersistenceHooks {}
+
+struct ImportPlan {
+    additions: Vec<PortableLibraryEntry>,
+    result: LibraryImportResult,
+}
+
+fn initialize_schema(connection: &Connection, path: &Path) -> Result<(), AppError> {
+    connection
+        .execute_batch(
+            "
+            PRAGMA foreign_keys = ON;
+            PRAGMA journal_mode = DELETE;
+            CREATE TABLE schema_info (version INTEGER NOT NULL CHECK (version >= 1));
+            INSERT INTO schema_info (version) VALUES (1);
+            CREATE TABLE state_revision (revision INTEGER NOT NULL CHECK (revision >= 0));
+            INSERT INTO state_revision (revision) VALUES (0);
+            CREATE TABLE library_entries (
+                canonical_source TEXT PRIMARY KEY NOT NULL,
+                owner TEXT NOT NULL,
+                repository TEXT NOT NULL,
+                repository_display TEXT NOT NULL,
+                skill_path TEXT NOT NULL,
+                ref_kind TEXT NOT NULL,
+                ref_value TEXT NOT NULL,
+                repository_id TEXT NOT NULL,
+                commit_sha TEXT NOT NULL,
+                integrity TEXT NOT NULL,
+                name TEXT NOT NULL,
+                description TEXT NOT NULL,
+                entry_count TEXT NOT NULL,
+                byte_count TEXT NOT NULL,
+                alias TEXT UNIQUE,
+                category TEXT,
+                note TEXT
+            );
+            CREATE TABLE library_tags (
+                canonical_source TEXT NOT NULL,
+                comparison_key TEXT NOT NULL,
+                display TEXT NOT NULL,
+                PRIMARY KEY (canonical_source, comparison_key),
+                FOREIGN KEY (canonical_source) REFERENCES library_entries(canonical_source) ON DELETE CASCADE
+            );
+            ",
+        )
+        .map_err(|error| database_error(path, error))?;
+    Ok(())
+}
+
+fn validate_database(connection: &Connection, path: &Path) -> Result<(), AppError> {
+    connection
+        .execute_batch("PRAGMA foreign_keys = ON;")
+        .map_err(|error| database_error(path, error))?;
+    let raw_version: i64 = connection
+        .query_row("SELECT version FROM schema_info", [], |row| row.get(0))
+        .map_err(|error| database_error(path, error))?;
+    if raw_version < 0 {
+        return Err(AppError::database_corrupt(NativePath::new(
+            path.to_path_buf(),
+        )));
+    }
+    let version = raw_version as u64;
+    if version > SCHEMA_VERSION {
+        return Err(AppError::SchemaNewer {
+            domain: "library".to_owned(),
+            found_version: version,
+            supported_version: SCHEMA_VERSION,
+        });
+    }
+    if version < SCHEMA_VERSION {
+        return Err(AppError::MigrationRequired {
+            domain: "library".to_owned(),
+            found_version: version,
+            supported_version: SCHEMA_VERSION,
+        });
+    }
+    let state_revision: i64 = connection
+        .query_row("SELECT revision FROM state_revision", [], |row| row.get(0))
+        .map_err(|_| AppError::database_corrupt(NativePath::new(path.to_path_buf())))?;
+    if state_revision < 0 {
+        return Err(AppError::database_corrupt(NativePath::new(
+            path.to_path_buf(),
+        )));
+    }
+    let integrity: String = connection
+        .query_row("PRAGMA integrity_check", [], |row| row.get(0))
+        .map_err(|error| database_error(path, error))?;
+    if integrity != "ok" {
+        return Err(AppError::database_corrupt(NativePath::new(
+            path.to_path_buf(),
+        )));
+    }
+    let foreign_key_issue: Option<String> = connection
+        .query_row("PRAGMA foreign_key_check", [], |row| row.get(0))
+        .optional()
+        .map_err(|error| database_error(path, error))?;
+    if foreign_key_issue.is_some() {
+        return Err(AppError::database_corrupt(NativePath::new(
+            path.to_path_buf(),
+        )));
+    }
+    Ok(())
+}
+
+fn load_entries(
+    connection: &Connection,
+    path: &Path,
+) -> Result<Vec<PortableLibraryEntry>, AppError> {
+    let mut statement = connection
+        .prepare(
+            "SELECT canonical_source, owner, repository, repository_display, skill_path, ref_kind, ref_value,
+                    repository_id, commit_sha, integrity, name, description, entry_count, byte_count, alias, category, note
+             FROM library_entries ORDER BY canonical_source",
+        )
+        .map_err(|error| database_error(path, error))?;
+    let entries = statement
+        .query_map([], |row| {
+            Ok(StoredEntry {
+                canonical: row.get(0)?,
+                owner: row.get(1)?,
+                repository: row.get(2)?,
+                repository_display: row.get(3)?,
+                skill_path: row.get(4)?,
+                ref_kind: row.get(5)?,
+                ref_value: row.get(6)?,
+                repository_id: row.get(7)?,
+                commit: row.get(8)?,
+                integrity: row.get(9)?,
+                name: row.get(10)?,
+                description: row.get(11)?,
+                entry_count: row.get(12)?,
+                byte_count: row.get(13)?,
+                alias: row.get(14)?,
+                category: row.get(15)?,
+                note: row.get(16)?,
+            })
+        })
+        .map_err(|error| database_error(path, error))?;
+    let mut loaded = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|error| database_error(path, error))?;
+        let source = SourceIdentity::new(
+            entry.canonical,
+            entry.owner,
+            entry.repository,
+            entry.repository_display,
+            entry.skill_path,
+            parse_ref_kind(&entry.ref_kind, path)?,
+            entry.ref_value,
+        )
+        .map_err(|_| AppError::database_corrupt(NativePath::new(path.to_path_buf())))?;
+        let skill = ResolvedSkill::new(
+            source.clone(),
+            parse_decimal_u64(&entry.repository_id, "repository_id")
+                .map_err(|_| AppError::database_corrupt(NativePath::new(path.to_path_buf())))?,
+            entry.commit,
+            entry.integrity,
+            entry.name,
+            entry.description,
+            parse_decimal_u64(&entry.entry_count, "entry_count")
+                .map_err(|_| AppError::database_corrupt(NativePath::new(path.to_path_buf())))?,
+            parse_decimal_u64(&entry.byte_count, "byte_count")
+                .map_err(|_| AppError::database_corrupt(NativePath::new(path.to_path_buf())))?,
+        )
+        .map_err(|_| AppError::database_corrupt(NativePath::new(path.to_path_buf())))?;
+        let tags = load_tags(connection, path, &source.canonical)?;
+        loaded.push(PortableLibraryEntry {
+            skill,
+            alias: entry.alias,
+            category: entry.category,
+            tags,
+            note: entry.note,
+        });
+    }
+    Ok(loaded)
+}
+
+fn load_tags(
+    connection: &Connection,
+    path: &Path,
+    canonical: &str,
+) -> Result<Vec<String>, AppError> {
+    let mut statement = connection
+        .prepare(
+            "SELECT display FROM library_tags WHERE canonical_source = ?1 ORDER BY comparison_key",
+        )
+        .map_err(|error| database_error(path, error))?;
+    let values = statement
+        .query_map(params![canonical], |row| row.get(0))
+        .map_err(|error| database_error(path, error))?;
+    values
+        .collect::<Result<Vec<String>, _>>()
+        .map_err(|error| database_error(path, error))
+}
+
+fn apply_additions(
+    connection: &Connection,
+    additions: &[PortableLibraryEntry],
+    path: &Path,
+) -> Result<(), AppError> {
+    for entry in additions {
+        let source = &entry.skill.source;
+        connection
+            .execute(
+                "INSERT INTO library_entries (
+                    canonical_source, owner, repository, repository_display, skill_path, ref_kind, ref_value,
+                    repository_id, commit_sha, integrity, name, description, entry_count, byte_count, alias, category, note
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+                params![
+                    source.canonical,
+                    source.owner,
+                    source.repository,
+                    source.repository_display,
+                    source.path,
+                    ref_kind_name(source.ref_kind),
+                    source.ref_value,
+                    entry.skill.repository_id.to_string(),
+                    entry.skill.commit,
+                    entry.skill.integrity,
+                    entry.skill.name,
+                    entry.skill.description,
+                    entry.skill.entry_count.to_string(),
+                    entry.skill.byte_count.to_string(),
+                    entry.alias,
+                    entry.category,
+                    entry.note,
+                ],
+            )
+            .map_err(|error| database_error(path, error))?;
+        for tag in &entry.tags {
+            let tag = normalize_tag(tag)?;
+            connection
+                .execute(
+                    "INSERT INTO library_tags (canonical_source, comparison_key, display) VALUES (?1, ?2, ?3)",
+                    params![source.canonical, tag.comparison_key, tag.display],
+                )
+                .map_err(|error| database_error(path, error))?;
+        }
+    }
+    connection
+        .execute("UPDATE state_revision SET revision = revision + 1", [])
+        .map_err(|error| database_error(path, error))?;
+    Ok(())
+}
+
+fn parse_ref_kind(value: &str, path: &Path) -> Result<RefKind, AppError> {
+    match value {
+        "branch" => Ok(RefKind::Branch),
+        "tag" => Ok(RefKind::Tag),
+        "commit" => Ok(RefKind::Commit),
+        _ => Err(AppError::database_corrupt(NativePath::new(
+            path.to_path_buf(),
+        ))),
+    }
+}
+
+fn ref_kind_name(value: RefKind) -> &'static str {
+    match value {
+        RefKind::Branch => "branch",
+        RefKind::Tag => "tag",
+        RefKind::Commit => "commit",
+    }
+}
+
+fn database_error(path: &Path, error: SqlError) -> AppError {
+    match &error {
+        SqlError::SqliteFailure(code, _)
+            if matches!(
+                code.code,
+                ErrorCode::DatabaseCorrupt | ErrorCode::NotADatabase
+            ) =>
+        {
+            AppError::database_corrupt(NativePath::new(path.to_path_buf()))
+        }
+        SqlError::SqliteFailure(_, Some(message)) if message.contains("no such table") => {
+            AppError::database_corrupt(NativePath::new(path.to_path_buf()))
+        }
+        _ => AppError::invalid_state(
+            "library_database",
+            format!("sqlite_error: {error}"),
+            ["a readable Library schema version 1 database"],
+        ),
+    }
+}
+
+fn database_sync_error(path: &Path, action: &str, error: io::Error) -> AppError {
+    AppError::invalid_state(
+        "library_database",
+        format!("{action}: {error}"),
+        [NativePath::new(path.to_path_buf())
+            .as_path()
+            .display()
+            .to_string()],
+    )
+}
+
+fn metadata_identity(metadata: &fs::Metadata) -> (u64, u64) {
+    (metadata.dev(), metadata.ino())
+}
+
+fn cleanup_first_import(
+    lock_path: &Path,
+    created_lock: Option<(u64, u64)>,
+    created_directories: &[PathBuf],
+) {
+    if let Some(identity) = created_lock
+        && fs::symlink_metadata(lock_path)
+            .ok()
+            .is_some_and(|metadata| metadata_identity(&metadata) == identity)
+    {
+        let _ = fs::remove_file(lock_path);
+    }
+    for directory in created_directories.iter().rev() {
+        if fs::symlink_metadata(directory)
+            .ok()
+            .is_some_and(|metadata| {
+                metadata.file_type().is_dir() && !metadata.file_type().is_symlink()
+            })
+        {
+            let _ = fs::remove_dir(directory);
+        }
+    }
+}
+
+struct StoredEntry {
+    canonical: String,
+    owner: String,
+    repository: String,
+    repository_display: String,
+    skill_path: String,
+    ref_kind: String,
+    ref_value: String,
+    repository_id: String,
+    commit: String,
+    integrity: String,
+    name: String,
+    description: String,
+    entry_count: String,
+    byte_count: String,
+    alias: Option<String>,
+    category: Option<String>,
+    note: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::source::RefKind;
+    use crate::ports::configuration::Environment;
+    use std::collections::HashMap;
+    use std::ffi::OsString;
+    use tempfile::tempdir;
+
+    #[derive(Default)]
+    struct TestEnvironment(HashMap<String, OsString>);
+
+    impl TestEnvironment {
+        fn with_roots(root: &Path) -> Self {
+            let mut values = HashMap::new();
+            values.insert("HOME".to_owned(), root.join("home").into_os_string());
+            values.insert(
+                "XDG_CONFIG_HOME".to_owned(),
+                root.join("config").into_os_string(),
+            );
+            values.insert(
+                "XDG_DATA_HOME".to_owned(),
+                root.join("data").into_os_string(),
+            );
+            values.insert(
+                "XDG_STATE_HOME".to_owned(),
+                root.join("state").into_os_string(),
+            );
+            values.insert(
+                "XDG_CACHE_HOME".to_owned(),
+                root.join("cache").into_os_string(),
+            );
+            Self(values)
+        }
+    }
+
+    impl Environment for TestEnvironment {
+        fn var_os(&self, key: &str) -> Option<OsString> {
+            self.0.get(key).cloned()
+        }
+    }
+
+    fn entry(path: &str, alias: Option<&str>) -> PortableLibraryEntry {
+        let source = SourceIdentity::new(
+            format!("github:owner/repository#{path}@refs/heads/main"),
+            "owner".to_owned(),
+            "repository".to_owned(),
+            "Repository".to_owned(),
+            path.to_owned(),
+            RefKind::Branch,
+            "refs/heads/main".to_owned(),
+        )
+        .unwrap();
+        PortableLibraryEntry {
+            skill: ResolvedSkill::new(
+                source,
+                42,
+                "0123456789012345678901234567890123456789".to_owned(),
+                "sha256:0123456789012345678901234567890123456789012345678901234567890123"
+                    .to_owned(),
+                "review".to_owned(),
+                "Description".to_owned(),
+                1,
+                10,
+            )
+            .unwrap(),
+            alias: alias.map(ToOwned::to_owned),
+            category: None,
+            tags: vec!["Review".to_owned()],
+            note: None,
+        }
+    }
+
+    fn document(entries: Vec<PortableLibraryEntry>) -> PortableLibraryDocument {
+        PortableLibraryDocument {
+            format_version: 1,
+            entries,
+        }
+    }
+
+    #[test]
+    fn dry_run_is_inert_and_first_import_round_trips() {
+        let temporary = tempdir().unwrap();
+        let environment = Arc::new(TestEnvironment::with_roots(temporary.path()));
+        let repository =
+            SqliteLibraryRepository::with_environment(environment, Arc::new(XdgRootResolver));
+        let import = document(vec![entry("skills/review", Some("review"))]);
+        let dry_run = repository.import(&import, true).unwrap();
+        assert_eq!(dry_run.data.added.len(), 1);
+        assert!(!temporary.path().join("data/skilload").exists());
+        assert!(!temporary.path().join("state/skilload").exists());
+
+        let committed = repository.import(&import, false).unwrap();
+        assert_eq!(committed.outcome, MutationOutcome::Changed);
+        let database = temporary.path().join("data/skilload/skilload.db");
+        let connection = Connection::open(&database).unwrap();
+        let mut options = connection.prepare("PRAGMA compile_options").unwrap();
+        let options = options
+            .query_map([], |row| row.get::<_, String>(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert!(options.iter().any(|option| option == "ENABLE_FTS5"));
+        let exported = repository.export().unwrap();
+        assert_eq!(exported.entries, import.clone().validate().unwrap().entries);
+
+        let repeated = repository.import(&import, false).unwrap();
+        assert_eq!(repeated.outcome, MutationOutcome::Unchanged);
+    }
+
+    #[test]
+    fn alias_conflict_rolls_back_new_batch() {
+        let temporary = tempdir().unwrap();
+        let environment = Arc::new(TestEnvironment::with_roots(temporary.path()));
+        let repository =
+            SqliteLibraryRepository::with_environment(environment, Arc::new(XdgRootResolver));
+        repository
+            .import(&document(vec![entry("skills/one", Some("same"))]), false)
+            .unwrap();
+        let error = repository
+            .import(
+                &document(vec![
+                    entry("skills/new", None),
+                    entry("skills/two", Some("same")),
+                ]),
+                false,
+            )
+            .unwrap_err();
+        assert_eq!(error.code(), "conflict");
+        assert_eq!(repository.export().unwrap().entries.len(), 1);
+    }
+
+    #[test]
+    fn first_import_conflict_precedes_any_state_creation() {
+        let temporary = tempdir().unwrap();
+        let repository = SqliteLibraryRepository::with_environment(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(XdgRootResolver),
+        );
+        let duplicate = entry("skills/review", None);
+        let error = repository
+            .import(&document(vec![duplicate.clone(), duplicate]), false)
+            .unwrap_err();
+        assert_eq!(error.code(), "conflict");
+        assert!(!temporary.path().join("data/skilload").exists());
+        assert!(!temporary.path().join("state/skilload").exists());
+    }
+
+    #[test]
+    fn corrupt_database_is_not_replaced() {
+        let temporary = tempdir().unwrap();
+        let data = temporary.path().join("data/skilload");
+        fs::create_dir_all(&data).unwrap();
+        let database = data.join("skilload.db");
+        fs::write(&database, b"not sqlite").unwrap();
+        let environment = Arc::new(TestEnvironment::with_roots(temporary.path()));
+        let repository =
+            SqliteLibraryRepository::with_environment(environment, Arc::new(XdgRootResolver));
+        let error = repository.export().unwrap_err();
+        assert_eq!(error.code(), "database_corrupt");
+        assert_eq!(fs::read(&database).unwrap(), b"not sqlite");
+    }
+
+    struct BeforeCommitFailure;
+
+    impl PersistenceHooks for BeforeCommitFailure {
+        fn before_commit(&self) -> Result<(), AppError> {
+            Err(AppError::Internal {
+                incident_id: "before-first-library-commit".to_owned(),
+            })
+        }
+    }
+
+    struct AfterCommitFailure;
+
+    impl PersistenceHooks for AfterCommitFailure {
+        fn after_commit_before_sync(&self) -> Result<(), AppError> {
+            Err(AppError::Internal {
+                incident_id: "after-first-library-commit".to_owned(),
+            })
+        }
+    }
+
+    #[test]
+    fn first_import_precommit_failure_removes_only_created_state() {
+        let temporary = tempdir().unwrap();
+        let repository = SqliteLibraryRepository::with_hooks(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(XdgRootResolver),
+            Arc::new(BeforeCommitFailure),
+        );
+        let error = repository
+            .import(&document(vec![entry("skills/review", None)]), false)
+            .unwrap_err();
+        assert_eq!(error.code(), "internal_invariant");
+        assert!(!temporary.path().join("data/skilload").exists());
+        assert!(!temporary.path().join("state/skilload").exists());
+    }
+
+    #[test]
+    fn first_import_postcommit_failure_is_not_reported_as_success() {
+        let temporary = tempdir().unwrap();
+        let repository = SqliteLibraryRepository::with_hooks(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(XdgRootResolver),
+            Arc::new(AfterCommitFailure),
+        );
+        let error = repository
+            .import(&document(vec![entry("skills/review", None)]), false)
+            .unwrap_err();
+        assert_eq!(error.code(), "internal_invariant");
+        assert!(temporary.path().join("data/skilload").is_dir());
+        assert!(temporary.path().join("state/skilload").is_dir());
+    }
+}

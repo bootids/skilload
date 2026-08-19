@@ -1,12 +1,12 @@
 # skilload Architecture
 
-Status: partially implemented architecture for the 0.1 CLI MVP. `PLAN-0002` establishes the Rust workspace and the configuration vertical slice; SQLite, source resolution, cache content, deployment, manager assets, and every other product domain remain planned.
+Status: 0.1 CLI MVP 架构处于部分实现状态。`PLAN-0002` 建立 Rust workspace 与配置垂直切片；`PLAN-0003` 增加可移植 Library 导入/导出、受限 SQLite Library 元数据与本地 Unicode 15.1.0 规范化。来源解析、缓存内容、部署、manager 资产及其他产品域仍为 planned。
 
 Product behavior is authoritative in [`docs/product-specs/`](docs/product-specs/README.md). This file defines boundaries, dependency direction, state ownership, and invariants. Technical mechanisms and rationale live in [`docs/design-docs/`](docs/design-docs/).
 
 ## System Shape
 
-The intended 0.1 system is one local Rust binary. It resolves and validates GitHub-hosted Skill directories, stores durable metadata and desired state, maintains immutable external content in a removable cache, and reconciles owned links into native Claude Code and Codex Skill roots. It never wraps or launches an Agent. The current P1 binary implements only the configuration slice of that system.
+目标 0.1 系统是一个本地 Rust 二进制：它解析并验证 GitHub 托管的 Skill 目录，存储 durable metadata 与 desired state，在可移除 cache 中维护不可变外部内容，并将受管链接收敛到原生 Claude Code/Codex Skill roots；它绝不包装或启动 Agent。当前二进制实现配置切片和仅限元数据、离线的可移植 Library 传输，不解析网络来源、不创建 Trust、不缓存、部署或执行外部内容。
 
 The current Cargo workspace is:
 
@@ -24,9 +24,7 @@ The current Cargo workspace is:
       skilload-cli/
         src/
 
-The implemented modules are `skilload-core` configuration domain/application/port/adapter files, `error.rs`, and `skilload-cli` argument, JSON, human-rendering, and process-entry files. The omitted ownership modules and manager assets remain planned and must be added only with their real application behavior.
-
-`skilload-core` is the reusable domain/application library. `skilload-cli` is the only 0.1 presentation adapter and produces the single binary. The P1 slice currently exposes only `config get|set|unset|list`; its filesystem policy remains in the core adapter, and its CLI only parses, dispatches, and renders. Future module names under `skilload-core` identify ownership areas and must preserve the boundaries below. Embedded manager assets, when implemented, are source files compiled into the binary rather than external cache content.
+已实现模块包括 `skilload-core` 的 configuration 与 Library domain/application/port/adapter 文件、`error.rs`，以及 `skilload-cli` 的参数、JSON、人类渲染和进程入口文件。P2 Library adapter 只拥有 `data/skilload.db` 中的可移植来源元数据、tags 与 semantic revision；它不拥有 Skill bytes、Trust、workspace、global 或 manager state。未实现的 ownership modules 与 manager assets 必须只在具有真实应用行为时加入。
 
 ## Dependency Direction
 
@@ -47,11 +45,11 @@ Dependencies point inward:
 
 * Domain values and rules do not import CLI, SQLite, HTTP, process, filesystem, clock, or Agent-specific code.
 * Application services coordinate domain rules through explicit ports. They own use-case transaction boundaries and return presentation-neutral results.
-* Adapters implement ports for XDG/config files in the current slice. SQLite/FTS5, immutable cache, system Git, GitHub metadata HTTP, time/randomness, and Claude/Codex adapters remain planned.
+* Adapters 在当前切片中实现 XDG/config 文件、受限可移植文件传输与 bundled SQLite Library repository；SQLite 的 FTS5 编译能力已被固定，但本切片不创建 FTS 表也不暴露 search。immutable cache、system Git、GitHub metadata HTTP、time/randomness 和 Claude/Codex adapters 仍为 planned。
 * The CLI parses arguments, invokes one application command/query, and renders human or JSON output. It does not issue SQL, edit workspace files, run Git, or manage links directly.
 * Future TUI, Web, or other interfaces must call the same application layer. They may not bypass Trust, ownership, transaction, or network policies.
 
-See [application and persistence design](docs/design-docs/application-and-persistence.md) for the planned ports and composition.
+当前已实现 port 与 composition 见 [application and persistence design](docs/design-docs/application-and-persistence.md)。
 
 ## Ownership Boundaries
 
@@ -115,7 +113,7 @@ This is recoverable command atomicity, not a claim that unrelated filesystems an
 
 ## External Boundaries
 
-The current configuration binary does not execute an external program, perform network access, or link SQLite/FTS5 or an HTTP client. Future source/deployment domains require system `git` for source object retrieval, a safe system `ssh` only when an SSH Git transport is attempted, and the selected Agent CLI for additive, repair, or functional Agent operations. An exact-owned removal-only plan does not require an installed Agent executable. `gh` is optional as an authenticated metadata-token source. Every future discovery, including an accepted direct or `/usr/bin/env` script interpreter, uses the shared trusted resolver from `SKL-WSP-022`; only `agents.claude.executable` and `agents.codex.executable` may override a basename, and those values are absolute paths. Node.js is not a product runtime dependency.
+当前二进制不执行外部程序且不进行网络访问；它以 bundled SQLite（含 FTS5 编译能力）保存 P2 的可移植 Library 元数据，但不注册 FTS/search，也不链接 HTTP client。未来 source/deployment domains 需要 system `git` 用于 source object retrieval、仅在 SSH Git transport 时使用安全的 system `ssh`，以及 selected Agent CLI 用于 additive/repair/functional Agent 操作。exact-owned removal-only plan 不需要安装 Agent executable。`gh` 仍是可选 authenticated metadata-token source。未来 discovery（包括可接受的 direct 或 `/usr/bin/env` script interpreter）使用 `SKL-WSP-022` 的 shared trusted resolver；只有 `agents.claude.executable` 与 `agents.codex.executable` 可以覆盖 basename，且值必须绝对路径。
 
 Network access is limited to the operations named by `SKL-OPS-008` and only GitHub.com is a content source. Agent directories and their version-sensitive behavior are isolated behind adapters and recorded in [the Agent discovery reference](docs/references/claude-and-codex-skill-discovery.md).
 
