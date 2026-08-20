@@ -133,7 +133,8 @@ Revision 2 的 `SKL-CLI-004`、`SKL-CLI-005` 与 `SKL-CLI-012` 以 API-v2 curren
 
 
 - [x] (2026-08-20T06:17Z) 已收到明确人类合并授权并完成 completion preflight：工作树和远端分支干净且同 head，PR #3 open/ready、base 为 `main`、Plan/branch/PR metadata 匹配，`PLAN-0002` 已在 `origin/main` completed，branch scope 仅含本 Plan 的 40 个受管路径，完整会话没有遗漏或未解决问题。
-- [ ] 将本 completed-state commit 推送后，探测并等待其 required checks；随后重新检查 mutable PR/conversation gates，以 completion SHA 执行 merge，确认 GitHub `MERGED` 后更新 `main` 并删除本地 delivery branch。
+- [x] (2026-08-20T06:18Z) `gh pr checks https://github.com/bootids/skilload/pull/3 --required` 对 completion SHA `726bc1960cc1de5be3c58111a46a3fe35e053d44` 返回 `no required checks reported on the 'codex/p2-library-portable-import-export' branch`；required-check 集合为空，按 merge workflow 视为通过，无需 watcher。
+- [ ] 推送此 gate-evidence commit 后，立即重复 mutable PR/conversation gate 并再次确认 required-check 集合为空；以该稳定 completion SHA 执行 merge，确认 GitHub `MERGED` 后更新 `main` 并删除本地 delivery branch。
 
 ## Surprises & Discoveries
 
@@ -425,6 +426,8 @@ P2 implementation 与完整验证已完成，PR #3 已于 2026-08-19 05:57Z 转�
 2026-08-20T06:13Z 已完成 active-to-ready 的 GitHub 事务：PR #3 为 open、ready，`headRefOid` 等于已推送的 active implementation/ledger commit `842b3d3b32d4c09fe40f4f61b0de68a048f59fa8`。本 review-state commit 仅记录该 ready evidence 并移动 Plan；推送后必须重新读取完整会话与 PR head，确认没有新问题或状态漂移。
 2026-08-20T06:14Z 的 review-state post-push reconciliation 确认 PR #3 仍为 open/ready，`d5d78e44b144fdae61b38f298a13d491c603dcf5` 同时是 local、upstream 与 GitHub head。14 条 top-level trigger、121 个 review body 没有独立问题；90 个 inline thread 均已 resolved，90 个 Review Conversation Log source 全覆盖且均为 resolved。Plan 现处于唯一的 `review/` 副本；合并前仍须执行 `docs/PLANS.md` completion preflight 和 required-check gate。
 2026-08-20T06:17Z 的 completion preflight 完成：本次分支的 40 个变更均在 P2 Library delivery scope；`git diff --check origin/main...HEAD` 通过，`PLAN-0002` 在 `origin/main` 已 completed，PR #3 的 base/head/state/Plan metadata 一致且当前 full conversation 没有遗漏或未解决问题。人类明确授权合并，因此本 completed-state commit 仅在进入默认分支后成为官方 archive；required checks、重复 mutable gates 和 merge 仍须针对该 completion SHA 完成。
+2026-08-20T06:18Z 的 required-check probe 对 `726bc1960cc1de5be3c58111a46a3fe35e053d44` 返回 branch 的 required-check 集合为空。该空集合是通过 gate；不启动 watcher。此 gate-evidence commit 推送后仍须以新的稳定 head 再次检查 PR、完整 conversation 和 required-check 集合，随后使用 `--match-head-commit` merge。
+
 
 
 
@@ -2181,3 +2184,5 @@ Library 是本机可搜索的来源元数据集合；在本交付中它只保存
 计划修订说明（2026-08-20T06:14Z）：review-state commit `d5d78e44b144fdae61b38f298a13d491c603dcf5` 推送后，PR/head/工作树与唯一 `review/` Plan 已重新核对。完整 conversation reconciliation 覆盖 14 条 top-level、121 个 review body 与 90 个 inline thread；无未记录问题或未解决 thread。Plan 已满足 ready-for-review 状态，下一步按已收到的合并授权执行 completion preflight。
 
 计划修订说明（2026-08-20T06:17Z）：已按明确人类合并授权完成只读 completion preflight：P2 scope、依赖、PR base/head、review Plan、工作树、完整 conversation 与差异检查均通过。Plan 现移入 `completed/` 并设为 `completed`；本 commit 仅是待合并声明，官方 archive 仅在 GitHub 报告 `MERGED` 且进入 `main` 后成立。推送后将仅等待 completion SHA 的 required checks，再重复 PR/conversation gate 后 merge。
+
+计划修订说明（2026-08-20T06:18Z）：completion SHA `726bc1960cc1de5be3c58111a46a3fe35e053d44` 的 `gh pr checks --required` probe 明确返回该 delivery branch 没有 required checks。按 merge workflow，空 required-check 集合已记录为通过且不启动 watcher；gate-evidence commit 推送后将立即重复 mutable PR/conversation/check gate，并以新的 stable completion SHA merge。
