@@ -788,8 +788,8 @@ impl OwnedStagingSidecar {
             .zip(statat(&directory.handle, &self.name, AtFlags::SYMLINK_NOFOLLOW).ok())
             .is_some_and(|(held, entry)| {
                 FileType::from_raw_mode(entry.st_mode) == FileType::RegularFile
-                    && (held.st_dev as u64, held.st_ino) == self.identity
-                    && (entry.st_dev as u64, entry.st_ino) == self.identity
+                    && stat_identity(held.st_dev, held.st_ino) == Some(self.identity)
+                    && stat_identity(entry.st_dev, entry.st_ino) == Some(self.identity)
             })
     }
 }
@@ -874,9 +874,11 @@ impl<'directory> FirstImportStaging<'directory> {
                 Ok(entry) => entry,
                 Err(_) => continue,
             };
-            let identity = (held.st_dev as u64, held.st_ino);
+            let Some(identity) = stat_identity(held.st_dev, held.st_ino) else {
+                continue;
+            };
             if FileType::from_raw_mode(entry.st_mode) == FileType::RegularFile
-                && (entry.st_dev as u64, entry.st_ino) == identity
+                && stat_identity(entry.st_dev, entry.st_ino) == Some(identity)
             {
                 self.owned_sidecars.push(OwnedStagingSidecar {
                     name,
@@ -1450,10 +1452,17 @@ fn revalidate_database_entry(
     directory.revalidate()?;
     let entry = statat(&directory.handle, database_name, AtFlags::SYMLINK_NOFOLLOW)
         .map_err(|_| SqliteLibraryRepository::database_identity_drift())?;
-    if entry.st_dev as u64 != identity.0 || entry.st_ino != identity.1 {
+    if stat_identity(entry.st_dev, entry.st_ino) != Some(identity) {
         return Err(SqliteLibraryRepository::database_identity_drift());
     }
     Ok(())
+}
+
+fn stat_identity<T>(device: T, inode: u64) -> Option<(u64, u64)>
+where
+    T: TryInto<u64>,
+{
+    device.try_into().ok().map(|device| (device, inode))
 }
 
 fn metadata_identity(metadata: &fs::Metadata) -> (u64, u64) {

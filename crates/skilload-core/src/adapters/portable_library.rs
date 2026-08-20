@@ -402,7 +402,7 @@ impl<'parent> OutputPublicationGuard<'parent> {
             },
         )?;
         if FileType::from_raw_mode(entry.st_mode) != FileType::RegularFile
-            || (entry.st_dev as u64, entry.st_ino) != expected_identity
+            || stat_identity(entry.st_dev, entry.st_ino) != Some(expected_identity)
         {
             return Err(AppError::validation(
                 "library_export_publication_identity_drift",
@@ -438,7 +438,7 @@ impl<'parent> OutputPublicationGuard<'parent> {
             .ok()
             .is_some_and(|entry| {
                 FileType::from_raw_mode(entry.st_mode) == FileType::RegularFile
-                    && (entry.st_dev as u64, entry.st_ino) == self.identity
+                    && stat_identity(entry.st_dev, entry.st_ino) == Some(self.identity)
             })
     }
 }
@@ -851,6 +851,13 @@ fn absolute_path(path: &Path) -> io::Result<PathBuf> {
     } else {
         Ok(std::env::current_dir()?.join(path))
     }
+}
+
+fn stat_identity<T>(device: T, inode: u64) -> Option<(u64, u64)>
+where
+    T: TryInto<u64>,
+{
+    device.try_into().ok().map(|device| (device, inode))
 }
 
 fn metadata_identity(metadata: &fs::Metadata) -> (u64, u64) {
