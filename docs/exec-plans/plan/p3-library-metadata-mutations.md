@@ -73,6 +73,7 @@ depends_on: [PLAN-0003]
 - [x] (2026-08-20 07:08Z) 已创建 `codex/p3-library-metadata-mutations` 分支和本 `plan` 状态 ExecPlan；首个规划提交 `20d47866f78a904099eeb6b47df6c6e9302c4415` 已推送，没有修改运行时代码。
 - [x] (2026-08-20 07:18Z) 已创建 Draft PR https://github.com/bootids/skilload/pull/4，写回 canonical URL并完成第二个 planning metadata 提交；推送后等待后续明确的人类执行授权。
 - [x] (2026-08-20 08:06Z) 已完整读取 PR #4 的顶层评论、submitted review 和全部 inline threads；两个有效 planning 问题均已分类为可修复，并在不进入 `active`、不修改运行时代码的前提下修正完成范围与 smoke 可复现性。
+- [x] (2026-08-20 08:42Z) 已推送 planning 修订 `f2dd223d38666c015bc00f7c597372067da601d0`，在两个 inline threads 分别回复证据并成功关闭；Review Conversation Log 已记录回复 URL、commit、验证和最终 resolved state。
 - [ ] 后续收到明确 `execute-exec-plan` 提示后进入 `active`，实现 domain/application/port/error 合约。
 - [ ] 实现 SQLite 原子元数据 mutation、幂等路径、portable closure 和 failure/concurrency 回归。
 - [ ] 注册八个真实 CLI 叶子，完成 API-v2、人类输出、usage/not-found/conflict 投影与实际 CLI smoke。
@@ -131,42 +132,42 @@ depends_on: [PLAN-0003]
 ## Outcomes & Retrospective
 
 
-规划基线已完成并关联 Draft PR https://github.com/bootids/skilload/pull/4；首个规划提交已推送，本 metadata 更新提交将 URL、Progress 和 publication evidence 写回。2026-08-20 08:06Z 已处理两项 planning review：`SKL-CLI-010` 改为未完成的跨命令约束，实际 CLI smoke 改为显式仓库二进制与临时 XDG roots。没有运行时代码、测试或产品实现状态变化。预期结果仍是八个 canonical Library 元数据叶子拥有真实的离线、原子、幂等行为，并由 portable export/import round trip 证明；search、Trust、add、refresh 和其他 Library 命令保持明确缺席。当前等待单独的人类执行授权。
+规划基线已完成并关联 Draft PR https://github.com/bootids/skilload/pull/4；首个规划提交已推送，本 metadata 更新提交将 URL、Progress 和 publication evidence 写回。2026-08-20 08:06Z 至 08:42Z 已处理两项 planning review：`SKL-CLI-010` 改为未完成的跨命令约束，实际 CLI smoke 改为显式仓库二进制与临时 XDG roots；修订已作为 `f2dd223d38666c015bc00f7c597372067da601d0` 推送，两个 inline threads 都已回复并 resolved。没有运行时代码、测试或产品实现状态变化。预期结果仍是八个 canonical Library 元数据叶子拥有真实的离线、原子、幂等行为，并由 portable export/import round trip 证明；search、Trust、add、refresh 和其他 Library 命令保持明确缺席。当前等待单独的人类执行授权。
 
 ## Review Conversation Log
 
 
 ### PRRT_kwDOT7YN2s6auhyi — `SKL-CLI-010` 完成范围
 
-Source: 内联线程 `PRRT_kwDOT7YN2s6auhyi`，评论 `PRRC_kwDOT7YN2s7jqe3C`，https://github.com/bootids/skilload/pull/4#discussion_r3819564482（`chatgpt-codex-connector`；未过期、未解决）。
+Source: 内联线程 `PRRT_kwDOT7YN2s6auhyi`，评论 `PRRC_kwDOT7YN2s7jqe3C`，https://github.com/bootids/skilload/pull/4#discussion_r3819564482（`chatgpt-codex-connector`；未过期；最终已解决）。
 
 Problem: 当前 Plan 把 `SKL-CLI-010` 写入完整完成 baseline，但该行为的 acceptance 要求已实现的 `library add` 和 `library refresh` 经用户元数据保持测试验证；本交付明确不实现这些命令。
 
 Disposition: fixed.
 
-Status: open.
+Status: resolved.
 
-Resolution: 将把 `SKL-CLI-010` 改为本切片的约束而非完成 baseline，并明确它保持 planned，直至后续交付实现并验证 add/refresh acceptance。
+Resolution: 提交 `f2dd223d38666c015bc00f7c597372067da601d0` 修改 `docs/exec-plans/plan/p3-library-metadata-mutations.md`：从完成 Product Baseline 移除 `SKL-CLI-010` bullet，将其说明为 planned 命令边界约束，并在 Product Baseline、实现状态、Discovery、Decision Log、Outcomes 和 revision note 中说明其 add/refresh acceptance 留待后续交付。
 
-Evidence: `docs/product-specs/cli-contract.md` 的 `SKL-CLI-010` acceptance；本 Plan 的 Delivery Metadata、Product Baseline 和 command boundary。
+Evidence: 推送提交 `f2dd223d38666c015bc00f7c597372067da601d0`；`git diff --check` 通过；Plan 校验确认只有该 Plan 变更、frontmatter 仍为 `status: plan`、`SKL-CLI-010` 不再是完成-baseline bullet；`docs/product-specs/cli-contract.md` 的 acceptance 是此处 no-overclaim 的依据。
 
-GitHub outcome: 待推送修订、回复并关闭线程。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/4#discussion_r3819949870；thread resolved: true。
 
 ### PRRT_kwDOT7YN2s6auhym — 可复现的实际 CLI smoke
 
-Source: 内联线程 `PRRT_kwDOT7YN2s6auhym`，评论 `PRRC_kwDOT7YN2s7jqe3J`，https://github.com/bootids/skilload/pull/4#discussion_r3819564489（`chatgpt-codex-connector`；未过期、未解决）。
+Source: 内联线程 `PRRT_kwDOT7YN2s6auhym`，评论 `PRRC_kwDOT7YN2s7jqe3J`，https://github.com/bootids/skilload/pull/4#discussion_r3819564489（`chatgpt-codex-connector`；未过期；最终已解决）。
 
 Problem: smoke block 使用裸 `skilload`，且未给出临时 HOME/XDG roots 的具体设置，可能调用 PATH 中不存在或错误版本的二进制，并污染真实状态。
 
 Disposition: fixed.
 
-Status: open.
+Status: resolved.
 
-Resolution: 将把 smoke 替换为使用 `./target/debug/skilload`、绝对临时根、明确 HOME/XDG exports、输入/输出路径和清理 trap 的可复制命令。
+Resolution: 提交 `f2dd223d38666c015bc00f7c597372067da601d0` 将 Concrete Steps 的 smoke 改为完整可复制脚本：绝对 `mktemp -d` root、HOME/XDG exports、portable input、`trap` 清理、每次真实调用均使用 `./target/debug/skilload`，并以第二套显式 roots 做 re-import/export。
 
-Evidence: `crates/skilload-cli/tests/cli_contract.rs` 的隔离环境和 portable document fixture；Plan 当前 Concrete Steps。
+Evidence: 推送提交 `f2dd223d38666c015bc00f7c597372067da601d0`；`git diff --check` 通过；Plan 校验确认只有该 Plan 变更、11 处 `./target/debug/skilload` 调用和合法 portable fixture；提取的 smoke shell 脚本已通过 `sh -n`。
 
-GitHub outcome: 待推送修订、回复并关闭线程。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/4#discussion_r3819951369；thread resolved: true。
 
 ## Context and Orientation
 
@@ -443,3 +444,5 @@ changed 时数组恰有对应一个字段，unchanged 时为空。Library adapte
 2026-08-20 07:18Z：写回 Draft PR https://github.com/bootids/skilload/pull/4、首个远端规划提交和 publication progress，使 Plan frontmatter、正文和 GitHub 交付关系一致；仍未进入 `active` 或修改实现。
 
 2026-08-20 08:06Z：处理 PR #4 的完整 review conversation。根据 `SKL-CLI-010` 的 add/refresh acceptance，将该行为从本计划的完成 Product Baseline 改为 planned 约束；同时将实际 CLI smoke 改为显式 `./target/debug/skilload`、可复制临时 HOME/XDG roots、portable input 和隔离 re-import。两项均为 planning 文档修订，没有进入 `active` 或修改运行时代码。
+
+2026-08-20 08:42Z：planning 修订 `f2dd223d38666c015bc00f7c597372067da601d0` 已推送；已向两个 inline review sources 回复具体修订与验证，并确认两个 threads 均为 resolved。Review Conversation Log 与 GitHub 结果同步，Plan 与 PR 仍保持 `plan`/Draft 状态。
