@@ -14,7 +14,14 @@ A **source** identifies one Skill location and one intended Git ref on GitHub. *
 
 **Behavior.** Canonical source identity MUST include normalized `owner/repo`, normalized Skill path, and an explicit namespace-preserving ref intent in the textual form `github:<lowercase-owner>/<lowercase-repo>#<encoded-path>@<encoded-ref>`. A branch MUST serialize as its full `refs/heads/<name>` ref, a tag as its full `refs/tags/<name>` ref, and a commit as its lowercase 40-hex SHA. Path separators and ref slashes remain `/`; within each path segment and the ref, only RFC 3986 unreserved ASCII bytes (`A-Z`, `a-z`, `0-9`, `-`, `.`, `_`, and `~`) remain literal. Every other UTF-8 byte, including `%`, `#`, `@`, and every non-ASCII byte, MUST use uppercase percent encoding `%HH`. Percent decoding occurs exactly once before validation, and canonical serialization MUST contain exactly one literal `#` and one literal `@`; a repository-root Skill has an empty encoded path. Git path spelling and branch/tag spelling MUST NOT receive Unicode normalization because canonically equivalent spellings can identify different Git entries. Two otherwise equal sources with different ref namespaces, names, or SHAs are distinct. Source identity MUST NOT use a machine path or Library database ID.
 
+
+The normalized GitHub repository component MUST be 1 through 100 ASCII bytes from lowercase letters, digits, `.`, `-`, and `_`; `repository_display` preserves only the case spelling of that same repository identity. For a commit intent, the resolved commit carried by portable evidence MUST equal the full SHA in `ref_value`; a record cannot claim immutable source SHA A while its resolved metadata names SHA B.
+
+规范化 GitHub owner component MUST 为 1 至 39 个 ASCII bytes，只能含 lowercase ASCII 字母、数字或单个 `-`；它不得以 `-` 开头或结尾，也不得含连续 `--`。这是 GitHub 账户 login 约束在 canonical lowercase identity 中的直接投影。
+
 **Acceptance.** A repository with `refs/heads/release` and `refs/tags/release` produces distinct identities ending in `@refs/heads/release` and `@refs/tags/release`, even when the refs currently resolve to the same commit. Path `skills/foo@bar` at branch `main` serializes as `github:owner/repo#skills/foo%40bar@refs/heads/main`, while path `skills/foo` at branch `bar@main` serializes as `github:owner/repo#skills/foo@refs/heads/bar%40main`; parsing, export/import, database keys, and exact Trust keep all four tuples distinct.
+
+规范化 `a-b` owner 必须被接受；`-owner`、`owner-`、`owner--name` 与 40-byte owner 必须在任何持久化状态改变前以 structured source validation error 失败。
 
 ## SKL-SRC-003 - Default ref normalization (Revision 1)
 
@@ -31,6 +38,9 @@ A **source** identifies one Skill location and one intended Git ref on GitHub. *
 ## SKL-SRC-005 - Immutable SHA source (Revision 1)
 
 **Behavior.** A source whose ref is a full commit SHA is already immutable. Update MUST leave its pin unchanged and return the successful outcome `already_immutable` rather than treating it as an error.
+
+
+The resolved commit evidence for a full-SHA source MUST equal that source SHA exactly. This is a clarification of the existing immutable-source contract: it does not add a second immutable representation or permit an independently selected resolved commit.
 
 **Acceptance.** Repeated update of a SHA source performs no ref advancement, returns success with `already_immutable`, and leaves config, lock, database, cache, and links unchanged.
 

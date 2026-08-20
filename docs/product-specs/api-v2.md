@@ -1,12 +1,12 @@
-# JSON API Version 1 Schema Catalog
+# JSON API Version 2 Schema Catalog
 
-Status: 已归档的 API-v1 机器契约。当前 CLI JSON 生产者使用 [`api-v2.md`](api-v2.md)；本文件保留 Version 1 的不可变历史字段、code 和兼容性证据。
+Status: current normative field-level contract for `SKL-CLI-004`, `SKL-CLI-005`, `SKL-CLI-006`, and `SKL-CLI-012` in the 0.1 CLI MVP.
 
-This catalog remains the normative historical definition of API-v1. It fixes the initial API-v1 fields that a Version 1 producer preserved; new current behavior is defined by the API-v2 catalog.
+This catalog is part of the product specification. It fixes the API-v2 fields that 0.1.x patch releases must preserve. Domain behavior remains owned by the behavior IDs in the other product specifications; this file defines how each outcome is represented for machine clients and the built-in manager Skill.
 
 ## Schema Rules
 
-The notation `field: Type` means the field is required. `field?: Type` means a producer may omit it. `T | null` means the field is required and may contain JSON `null`. Objects are closed for the initial 0.1.0 producer schema, but version-1 consumers MUST ignore unknown fields so later 0.1.x releases can add optional fields under `SKL-CLI-012`. A producer MUST NOT omit a required empty array, replace a required nullable field with omission, or emit an undocumented enum value under API version 1.
+The notation `field: Type` means the field is required. `field?: Type` means a producer may omit it. `T | null` means the field is required and may contain JSON `null`. Objects are closed for the initial 0.1.0 producer schema, but version-2 consumers MUST ignore unknown fields so later 0.1.x releases can add optional fields under `SKL-CLI-012`. A producer MUST NOT omit a required empty array, replace a required nullable field with omission, or emit an undocumented enum value under API version 2.
 
 `String` is a valid Unicode JSON string. `Bool` is a JSON boolean. `UInt` is a JSON integer from 0 through 9,007,199,254,740,991 so common IEEE-754 consumers preserve it exactly. An unsigned 64-bit domain value uses `DecimalU64`, a string matching `0|[1-9][0-9]*` whose numeric value is at most 18,446,744,073,709,551,615. `Timestamp` is an RFC 3339 UTC string with a trailing `Z`. `Sha` matches `[0-9a-f]{40}`. `Integrity` matches `sha256:[0-9a-f]{64}`. `OpaqueId` and confirmation tokens are nonempty strings whose internal format clients MUST NOT parse.
 
@@ -17,7 +17,7 @@ All arrays are deterministically ordered. Sources sort by `source.canonical` byt
 Every JSON command writes exactly one of these objects:
 
     SuccessEnvelope {
-      api_version: 1,
+      api_version: 2,
       operation: Operation,
       ok: true,
       result: {
@@ -27,7 +27,7 @@ Every JSON command writes exactly one of these objects:
     }
 
     ErrorEnvelope {
-      api_version: 1,
+      api_version: 2,
       operation: Operation,
       ok: false,
       error: {
@@ -128,6 +128,8 @@ Offline results require `used: false` and `attempts: []`; `used` is true exactly
       entry_count: DecimalU64,
       byte_count: DecimalU64
     }
+
+`ResolvedSkill.entry_count` 与 `ResolvedSkill.byte_count` 都是正 `DecimalU64`。零仅适用于没有任何 resolved Skill 的聚合计数，不能表示单个已验证来源；每个有效来源至少包含其非空 regular `SKILL.md`。
 
     Warning {
       code: String,
@@ -556,7 +558,9 @@ Every error code maps to exactly one required details type and exit category. Co
     SchemaDetails { domain: String, found_version: UInt, supported_version: UInt }
     DatabaseCorruptDetails { database: PathValue, backups: PathValue[], recoverable_exports: String[], recovery_procedure: "database-corruption-v1" }
     RecoveryDetails { journal: PathValue, resource: TargetRef | null, reason: String }
-    InvalidStateDetails { domain: String, state: String, expected: String[] }
+    InvalidStateDetails { domain: String, state: String, path: PathValue | null, expected: String[] }
+
+`InvalidStateDetails.expected` 仅包含稳定状态标签、版本或完整性值；若错误涉及 native filesystem location，`path` MUST 携带该位置的 `PathValue`，否则为 null。该可选字段遵守 `SKL-CLI-012` 的 API-v2 演进规则。
     InternalDetails { incident_id: OpaqueId }
 
 `UsageDetails` uses `value` for a logical UTF-8 argument and `path` for a native path argument; at most one is non-null. `LookupDetails` requires exactly one of `selector` or `path` to be non-null: logical selectors remain strings and native filesystem targets use `PathValue`. In `LimitDetails` and `ValidationDetails`, a repository-relative Git path uses `source_path` while a host path uses `path`; a producer MUST NOT place either in the other field. `source_limit_exceeded` always uses `SourceLimitDetails` so both independently active dimensions are present even when only one was exceeded; generic fixed one-dimension limits use `LimitDetails`. `portable_path_collision` requires a non-null `collision_key` and null `target_root`; `filesystem_path_collision` requires the materialization `target_root` and may use null `collision_key` when the host alias rule has no portable textual key.
@@ -581,6 +585,7 @@ Every error code maps to exactly one required details type and exit category. Co
 | `source_limit_exceeded` | `SourceLimitDetails` | 4 |
 | `fetch_limit_exceeded` | `LimitDetails` | 5 |
 | `agent_input_limit_exceeded` | `LimitDetails` | 4 |
+| `library_input_limit_exceeded` | `LimitDetails` | 4 |
 | `invalid_root_skill_name` | `ValidationDetails` | 4 |
 | `portable_path_collision` | `PathCollisionDetails` | 4 |
 | `filesystem_path_collision` | `PathCollisionDetails` | 4 |
@@ -611,8 +616,8 @@ Every error code maps to exactly one required details type and exit category. Co
 | `invalid_state` | `InvalidStateDetails` | 4 |
 | `internal_invariant` | `InternalDetails` | 6 |
 
-Exit 0 is reserved for success. Exit 2 is syntax/usage, 3 confirmation, 4 domain validation/precondition, 5 external availability/permission/contention, and 6 integrity/schema/recovery/internal failure. Adding or removing an error code, changing its details type, or reusing it for a different condition requires a new API version; version 1 evolves only through optional fields that existing consumers are already required to ignore.
+Exit 0 is reserved for success. Exit 2 is syntax/usage, 3 confirmation, 4 domain validation/precondition, 5 external availability/permission/contention, and 6 integrity/schema/recovery/internal failure. Adding or removing an error code, changing its details type, or reusing it for a different condition requires a new API version; version 2 evolves only through optional fields that existing consumers are already required to ignore.
 
 ## Contract Acceptance
 
-Historical Version-1 fixtures remain immutable evidence for the archived producer contract. Current implementation and generated validator coverage target `api-v2.md`; a later current producer does not reinterpret Version-1 required fields, error codes, enum meanings, ordering, discriminators, or numeric/string encodings.
+The implementation must generate machine-readable schemas or equivalent validator fixtures from one typed source and compare them with this catalog. Coverage tests extract all 50 non-meta command leaves from the parser, require the exact 50 operation identifiers above, validate at least one success document for every allowed outcome/type pair used by a leaf, validate confirmation documents for every `Confirm: yes` leaf, and validate one document per error code. Focused fixtures cover `DecimalU64` at 9,007,199,254,740,992 and 18,446,744,073,709,551,615 plus overflow rejection; both `SourceLimitDetails` dimensions; repository/ref/source locators with null versus empty path; mixed per-source HTTPS/SSH attempt sequences; null and complete relocation evidence; and default, adjacent, and beyond-total Library pages. Manager-asset workflows must validate against the same fixtures. Compatibility tests retain the released 0.1.0 corpus and require every later 0.1.x producer to preserve all required fields, enum meanings, ordering, discriminators, and numeric/string encodings while consumers tolerate newly added optional fields.

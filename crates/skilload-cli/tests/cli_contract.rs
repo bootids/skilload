@@ -57,6 +57,227 @@ fn config_file(root: &Path) -> std::path::PathBuf {
     root.join("config/skilload/config.toml")
 }
 
+fn portable_document(path: &str, alias: Option<&str>) -> String {
+    let name = path.rsplit('/').next().unwrap();
+    let alias = alias
+        .map(|value| format!("\"{value}\""))
+        .unwrap_or_else(|| "null".to_owned());
+    format!(
+        r#"{{
+  "format_version": 1,
+  "entries": [
+    {{
+      "skill": {{
+        "source": {{
+          "canonical": "github:owner/repository#{path}@refs/heads/main",
+          "owner": "owner",
+          "repository": "repository",
+          "repository_display": "Repository",
+          "path": "{path}",
+          "ref_kind": "branch",
+          "ref_value": "refs/heads/main"
+        }},
+        "repository_id": "42",
+        "commit": "0123456789012345678901234567890123456789",
+        "integrity": "sha256:0123456789012345678901234567890123456789012345678901234567890123",
+        "name": "{name}",
+        "description": "Portable Library entry",
+        "entry_count": "1",
+        "byte_count": "10"
+      }},
+      "alias": {alias},
+      "category": null,
+      "tags": [" Review ", "review"],
+      "note": null
+    }}
+  ]
+}}"#
+    )
+}
+
+#[test]
+fn library_import_export_is_portable_atomic_and_inert_when_dry_run() {
+    let first = tempdir().unwrap();
+    fs::create_dir(first.path().join("home")).unwrap();
+    let input = first.path().join("portable-library.json");
+    fs::write(&input, portable_document("skills/review", Some("review"))).unwrap();
+    let input = input.to_str().unwrap();
+
+    let dry_run = json(&execute(
+        first.path(),
+        &["library", "import", "--input", input, "--dry-run", "--json"],
+    ));
+    assert_eq!(dry_run["operation"], "library.import");
+    assert_eq!(dry_run["result"]["outcome"], "observed");
+    assert_eq!(dry_run["result"]["data"]["dry_run"], true);
+    assert_eq!(
+        dry_run["result"]["data"]["added"].as_array().unwrap().len(),
+        1
+    );
+    for root in ["config", "data", "state", "cache"] {
+        assert!(
+            !first.path().join(root).exists(),
+            "{root} must remain absent"
+        );
+    }
+
+    let committed = json(&execute(
+        first.path(),
+        &["library", "import", "--input", input, "--json"],
+    ));
+    assert_eq!(committed["result"]["outcome"], "changed");
+    assert_eq!(committed["result"]["data"]["dry_run"], false);
+    let database = first.path().join("data/skilload/skilload.db");
+    let database_inode = fs::metadata(&database).unwrap().ino();
+    assert!(
+        first
+            .path()
+            .join("state/skilload/locks/database.lock")
+            .is_file()
+    );
+    assert!(!first.path().join("config").exists());
+    assert!(!first.path().join("cache").exists());
+
+    let exported_path = first.path().join("round-trip.json");
+    let exported = json(&execute(
+        first.path(),
+        &[
+            "library",
+            "export",
+            "--output",
+            exported_path.to_str().unwrap(),
+            "--json",
+        ],
+    ));
+    assert_eq!(exported["operation"], "library.export");
+    assert_eq!(exported["result"]["outcome"], "observed");
+    assert_eq!(
+        exported["result"]["data"]["entries"][0]["tags"],
+        serde_json::json!(["Review"])
+    );
+    let exported_document: Value =
+        serde_json::from_slice(&fs::read(&exported_path).unwrap()).unwrap();
+    assert_eq!(exported_document, exported["result"]["data"]);
+
+    let repeated = json(&execute(
+        first.path(),
+        &["library", "import", "--input", input, "--json"],
+    ));
+    assert_eq!(repeated["result"]["outcome"], "unchanged");
+    assert_eq!(database_inode, fs::metadata(&database).unwrap().ino());
+
+    let second = tempdir().unwrap();
+    fs::create_dir(second.path().join("home")).unwrap();
+    let imported_again = json(&execute(
+        second.path(),
+        &[
+            "library",
+            "import",
+            "--input",
+            exported_path.to_str().unwrap(),
+            "--json",
+        ],
+    ));
+    assert_eq!(imported_again["result"]["outcome"], "changed");
+    let second_export = second.path().join("second-round-trip.json");
+    let _ = json(&execute(
+        second.path(),
+        &[
+            "library",
+            "export",
+            "--output",
+            second_export.to_str().unwrap(),
+            "--json",
+        ],
+    ));
+    let second_document: Value = serde_json::from_slice(&fs::read(second_export).unwrap()).unwrap();
+    assert_eq!(exported_document, second_document);
+}
+
+#[test]
+fn library_import_errors_are_structured_and_leave_existing_data_unchanged() {
+    let temporary = tempdir().unwrap();
+    fs::create_dir(temporary.path().join("home")).unwrap();
+    let valid = temporary.path().join("valid.json");
+    fs::write(&valid, portable_document("skills/review", Some("review"))).unwrap();
+    assert!(
+        execute(
+            temporary.path(),
+            &[
+                "library",
+                "import",
+                "--input",
+                valid.to_str().unwrap(),
+                "--json"
+            ],
+        )
+        .status
+        .success()
+    );
+    let database = temporary.path().join("data/skilload/skilload.db");
+    let before = fs::read(&database).unwrap();
+
+    let duplicate = temporary.path().join("duplicate.json");
+    let mut duplicate_document: Value =
+        serde_json::from_str(&portable_document("skills/duplicate", None)).unwrap();
+    let duplicate_entry = duplicate_document["entries"][0].clone();
+    duplicate_document["entries"]
+        .as_array_mut()
+        .unwrap()
+        .push(duplicate_entry);
+    fs::write(&duplicate, serde_json::to_vec(&duplicate_document).unwrap()).unwrap();
+    let output = execute(
+        temporary.path(),
+        &[
+            "--json",
+            "library",
+            "import",
+            "--input",
+            duplicate.to_str().unwrap(),
+        ],
+    );
+    assert!(!output.status.success());
+    let error: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(error["operation"], "library.import");
+    assert_eq!(error["error"]["code"], "conflict");
+    assert!(error["error"]["details"]["conflicts"][0]["name"].is_null());
+    assert_eq!(fs::read(&database).unwrap(), before);
+
+    let duplicate_key = temporary.path().join("duplicate-key.json");
+    fs::write(
+        &duplicate_key,
+        r#"{"format_version":1,"format_version":1,"entries":[]}"#,
+    )
+    .unwrap();
+    let output = execute(
+        temporary.path(),
+        &[
+            "--json",
+            "library",
+            "import",
+            "--input",
+            duplicate_key.to_str().unwrap(),
+        ],
+    );
+    assert!(!output.status.success());
+    let error: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(error["error"]["code"], "validation_failed");
+    assert_eq!(fs::read(&database).unwrap(), before);
+
+    let protected_output = execute(
+        temporary.path(),
+        &[
+            "--json",
+            "library",
+            "export",
+            "--output",
+            database.to_str().unwrap(),
+        ],
+    );
+    assert!(!protected_output.status.success());
+    assert_eq!(fs::read(&database).unwrap(), before);
+}
+
 #[test]
 fn help_and_absent_queries_are_offline_and_filesystem_inert() {
     let temporary = tempdir().unwrap();
@@ -301,7 +522,7 @@ fn json_meta_and_invalid_native_path_errors_are_safe() {
     assert_eq!(no_operation.status.code(), Some(2));
     assert!(no_operation.stdout.is_empty());
     assert!(
-        String::from_utf8_lossy(&no_operation.stderr).contains("requires a configuration command")
+        String::from_utf8_lossy(&no_operation.stderr).contains("requires an implemented command")
     );
 
     let mut path_command = command(temporary.path());
@@ -381,7 +602,7 @@ fn parser_failures_are_terminal_safe_and_preserve_json_configuration_operations(
     assert_eq!(malformed_json.status.code(), Some(2));
     assert!(malformed_json.stderr.is_empty());
     let document: Value = serde_json::from_slice(&malformed_json.stdout).unwrap();
-    assert_eq!(document["api_version"], 1);
+    assert_eq!(document["api_version"], 2);
     assert_eq!(document["operation"], "config.set");
     assert_eq!(document["ok"], false);
     assert_eq!(document["error"]["code"], "usage_error");

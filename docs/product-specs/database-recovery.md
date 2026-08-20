@@ -23,15 +23,16 @@ Record byte sizes and SHA-256 digests. Never validate a backup by opening or cop
 
 ## 2. Salvage Readable Product Data
 
-When a read succeeds, preserve its JSON result before replacement or reset:
+当 read 操作成功时，在 replacement 或 reset 前保留其 JSON response；成功的 Library export 还必须将可移植文档保存到本节指定的 recovery directory。
 
-    skilload library export --json
+
+    skilload library export --output <recovery-directory>/library-export.json --json
     skilload trust list --json
     skilload global list --json
     skilload manager status --json --agent claude --agent codex
     skilload doctor --json
 
-Run `workspace list --json` and `workspace status --json` separately inside every known workspace that remains accessible. Preserve every full API envelope; only `result.data` from a successful version-1 `library.export` response is the directly importable Library document. Trust, global, manager, workspace, profile, ownership, and doctor results are evidence for manual re-establishment; they are not authorization to adopt files into a new database. A failed read is recorded and skipped rather than retried with write-capable repair.
+在每个仍可访问的已知 workspace 内分别运行 `workspace list --json` 与 `workspace status --json`。保留每个完整 API envelope 以及成功生成的 `library-export.json` 文档；只有该文件才是可直接 import 的 version-1 Library document。Trust、global、manager、workspace、profile、ownership 和 doctor 结果是手工重建的证据，不构成将文件纳入新数据库的授权。失败 read 应记录并跳过，不得以 write-capable repair 重试。
 
 An expert MAY use SQLite's external `.recover` tooling on a copy to inspect otherwise unreadable rows, but recovered SQL is not a supported database replacement and MUST NOT be installed directly. It can only inform a manually reviewed Library import or reconfiguration after reset.
 

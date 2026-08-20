@@ -7,15 +7,15 @@ use crate::ports::configuration::{
 };
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
-use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 use tempfile::Builder;
 
-const LOCK_WAIT: Duration = Duration::from_secs(2);
-const LOCK_RETRY: Duration = Duration::from_millis(25);
+pub(crate) const LOCK_WAIT: Duration = Duration::from_secs(2);
+pub(crate) const LOCK_RETRY: Duration = Duration::from_millis(25);
 
 pub struct FileConfigurationStore {
     environment: Arc<dyn Environment>,
@@ -111,58 +111,7 @@ impl FileConfigurationStore {
     }
 
     fn lock(&self, roots: &ResolvedRoots) -> Result<File, AppError> {
-        let state_root = &roots.state.effective;
-        ensure_restrictive_directory(state_root, "XDG_STATE_HOME")?;
-        let locks = state_root.join("locks");
-        ensure_restrictive_directory(&locks, "XDG_STATE_HOME")?;
-        let lock_path = locks.join("config.lock");
-        if let Ok(metadata) = fs::symlink_metadata(&lock_path)
-            && (metadata.file_type().is_symlink() || !metadata.file_type().is_file())
-        {
-            return Err(AppError::invalid_state(
-                "configuration_lock",
-                "lock_path_is_not_a_regular_file",
-                ["a regular config.lock file"],
-            ));
-        }
-        let file = OpenOptions::new()
-            .create(true)
-            .read(true)
-            .write(true)
-            .truncate(false)
-            .mode(0o600)
-            .open(&lock_path)
-            .map_err(|error| {
-                environment_io("XDG_STATE_HOME", &lock_path, "open config lock", error)
-            })?;
-        file.set_permissions(fs::Permissions::from_mode(0o600))
-            .map_err(|error| {
-                environment_io("XDG_STATE_HOME", &lock_path, "restrict config lock", error)
-            })?;
-
-        let start = Instant::now();
-        loop {
-            match file.try_lock() {
-                Ok(()) => return Ok(file),
-                Err(std::fs::TryLockError::WouldBlock) => {
-                    if start.elapsed() >= LOCK_WAIT {
-                        return Err(AppError::Busy {
-                            lock_domain: "configuration".to_owned(),
-                            waited_ms: LOCK_WAIT.as_millis() as u64,
-                        });
-                    }
-                    thread::sleep(LOCK_RETRY);
-                }
-                Err(std::fs::TryLockError::Error(error)) => {
-                    return Err(environment_io(
-                        "XDG_STATE_HOME",
-                        &lock_path,
-                        "lock config.lock",
-                        error,
-                    ));
-                }
-            }
-        }
+        acquire_restrictive_lock(roots, "config.lock", "configuration")
     }
 
     fn write_document(
@@ -300,7 +249,208 @@ fn config_path(roots: &ResolvedRoots) -> PathBuf {
     roots.config.effective.join("config.toml")
 }
 
-fn ensure_restrictive_directory(path: &Path, variable: &str) -> Result<Vec<PathBuf>, AppError> {
+pub(crate) fn acquire_restrictive_lock(
+    roots: &ResolvedRoots,
+    lock_name: &str,
+    lock_domain: &str,
+) -> Result<File, AppError> {
+    acquire_restrictive_lock_after_path_inspection(roots, lock_name, lock_domain, |_| {})
+}
+
+fn acquire_restrictive_lock_after_path_inspection(
+    roots: &ResolvedRoots,
+    lock_name: &str,
+    lock_domain: &str,
+    mut after_path_inspection: impl FnMut(&Path),
+) -> Result<File, AppError> {
+    let state_root = &roots.state.effective;
+    ensure_restrictive_directory(state_root, "XDG_STATE_HOME")?;
+    let locks = state_root.join("locks");
+    ensure_restrictive_directory(&locks, "XDG_STATE_HOME")?;
+    let lock_path = locks.join(lock_name);
+    let (file, expected_identity) = match fs::symlink_metadata(&lock_path) {
+        Ok(metadata) => {
+            ensure_regular_lock_file(&lock_path, &metadata, lock_domain)?;
+            let identity = metadata_identity(&metadata);
+            after_path_inspection(&lock_path);
+            (open_restrictive_lock(&lock_path)?, identity)
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            match create_restrictive_lock(&lock_path) {
+                Ok(file) => {
+                    let metadata = file.metadata().map_err(|error| {
+                        environment_io(
+                            "XDG_STATE_HOME",
+                            &lock_path,
+                            "inspect created durable lock",
+                            error,
+                        )
+                    })?;
+                    (file, metadata_identity(&metadata))
+                }
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                    let metadata = fs::symlink_metadata(&lock_path).map_err(|error| {
+                        environment_io(
+                            "XDG_STATE_HOME",
+                            &lock_path,
+                            "inspect raced durable lock",
+                            error,
+                        )
+                    })?;
+                    ensure_regular_lock_file(&lock_path, &metadata, lock_domain)?;
+                    let identity = metadata_identity(&metadata);
+                    after_path_inspection(&lock_path);
+                    (open_restrictive_lock(&lock_path)?, identity)
+                }
+                Err(error) => {
+                    return Err(environment_io(
+                        "XDG_STATE_HOME",
+                        &lock_path,
+                        "open durable lock",
+                        error,
+                    ));
+                }
+            }
+        }
+        Err(error) => {
+            return Err(environment_io(
+                "XDG_STATE_HOME",
+                &lock_path,
+                "inspect durable lock",
+                error,
+            ));
+        }
+    };
+
+    let lock_result: Result<(), AppError> = (|| {
+        ensure_opened_lock_identity(&lock_path, expected_identity, &file, lock_domain)?;
+        file.set_permissions(fs::Permissions::from_mode(0o600))
+            .map_err(|error| {
+                environment_io("XDG_STATE_HOME", &lock_path, "restrict durable lock", error)
+            })?;
+
+        let start = Instant::now();
+        loop {
+            match file.try_lock() {
+                Ok(()) => {
+                    ensure_opened_lock_identity(&lock_path, expected_identity, &file, lock_domain)?;
+                    return Ok(());
+                }
+                Err(std::fs::TryLockError::WouldBlock) => {
+                    if start.elapsed() >= LOCK_WAIT {
+                        return Err(AppError::Busy {
+                            lock_domain: lock_domain.to_owned(),
+                            waited_ms: LOCK_WAIT.as_millis() as u64,
+                        });
+                    }
+                    thread::sleep(LOCK_RETRY);
+                }
+                Err(std::fs::TryLockError::Error(error)) => {
+                    return Err(environment_io(
+                        "XDG_STATE_HOME",
+                        &lock_path,
+                        "lock durable lock",
+                        error,
+                    ));
+                }
+            }
+        }
+    })();
+    if let Err(error) = lock_result {
+        drop(file);
+        return Err(error);
+    }
+
+    Ok(file)
+}
+
+fn open_restrictive_lock(path: &Path) -> Result<File, AppError> {
+    let mut options = OpenOptions::new();
+    options
+        .read(true)
+        .write(true)
+        .truncate(false)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW);
+    options
+        .open(path)
+        .map_err(|error| environment_io("XDG_STATE_HOME", path, "open durable lock", error))
+}
+
+fn create_restrictive_lock(path: &Path) -> io::Result<File> {
+    let mut options = OpenOptions::new();
+    options
+        .create_new(true)
+        .read(true)
+        .write(true)
+        .truncate(false)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW);
+    options.open(path)
+}
+
+fn ensure_regular_lock_file(
+    _path: &Path,
+    metadata: &fs::Metadata,
+    lock_domain: &str,
+) -> Result<(), AppError> {
+    if metadata.file_type().is_symlink() || !metadata.file_type().is_file() {
+        Err(AppError::invalid_state(
+            lock_domain,
+            "lock_path_is_not_a_regular_file",
+            ["a regular durable lock file"],
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+fn ensure_opened_lock_identity(
+    path: &Path,
+    expected_identity: (u64, u64),
+    file: &File,
+    lock_domain: &str,
+) -> Result<(), AppError> {
+    let path_metadata = fs::symlink_metadata(path)
+        .map_err(|error| environment_io("XDG_STATE_HOME", path, "inspect durable lock", error))?;
+    ensure_regular_lock_file(path, &path_metadata, lock_domain)?;
+    let descriptor_metadata = file.metadata().map_err(|error| {
+        environment_io("XDG_STATE_HOME", path, "inspect opened durable lock", error)
+    })?;
+    if metadata_identity(&path_metadata) != expected_identity
+        || metadata_identity(&descriptor_metadata) != expected_identity
+        || metadata_identity(&path_metadata) != metadata_identity(&descriptor_metadata)
+    {
+        return Err(AppError::invalid_state(
+            lock_domain,
+            "lock_path_identity_drift",
+            ["the inspected durable lock file"],
+        ));
+    }
+    Ok(())
+}
+
+fn metadata_identity(metadata: &fs::Metadata) -> (u64, u64) {
+    (metadata.dev(), metadata.ino())
+}
+
+#[derive(Debug)]
+pub(crate) struct CreatedDirectory {
+    pub(crate) path: PathBuf,
+}
+
+pub(crate) fn ensure_restrictive_directory(
+    path: &Path,
+    variable: &str,
+) -> Result<Vec<CreatedDirectory>, AppError> {
+    ensure_restrictive_directory_after_creation(path, variable, |_| Ok(()))
+}
+
+fn ensure_restrictive_directory_after_creation(
+    path: &Path,
+    variable: &str,
+    mut after_creation: impl FnMut(&CreatedDirectory) -> Result<(), AppError>,
+) -> Result<Vec<CreatedDirectory>, AppError> {
     let mut missing_directories = Vec::new();
     let mut ancestor = path;
     loop {
@@ -331,20 +481,46 @@ fn ensure_restrictive_directory(path: &Path, variable: &str) -> Result<Vec<PathB
     }
 
     let mut created_directories = Vec::new();
-    for directory in missing_directories.into_iter().rev() {
-        if create_restrictive_directory(&directory, variable)? {
-            created_directories.push(directory);
+    let result = (|| {
+        for directory in missing_directories.into_iter().rev() {
+            if let Some(created_directory) = create_restrictive_directory(&directory, variable)? {
+                created_directories.push(created_directory);
+                after_creation(
+                    created_directories
+                        .last()
+                        .expect("created directory was just appended"),
+                )?;
+            }
         }
-    }
 
-    let metadata = fs::symlink_metadata(path)
-        .map_err(|error| environment_io(variable, path, "inspect directory", error))?;
-    ensure_real_directory(path, &metadata, variable)?;
-    restrict_directory_permissions(path, variable)?;
+        let metadata = fs::symlink_metadata(path)
+            .map_err(|error| environment_io(variable, path, "inspect directory", error))?;
+        ensure_real_directory(path, &metadata, variable)?;
+        restrict_directory_permissions(path, variable)?;
+        Ok(())
+    })();
+    result?;
     Ok(created_directories)
 }
 
-fn create_restrictive_directory(directory: &Path, variable: &str) -> Result<bool, AppError> {
+fn create_restrictive_directory(
+    directory: &Path,
+    variable: &str,
+) -> Result<Option<CreatedDirectory>, AppError> {
+    create_restrictive_directory_with_open(directory, variable, |directory| {
+        let mut options = OpenOptions::new();
+        options
+            .read(true)
+            .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW);
+        options.open(directory)
+    })
+}
+
+fn create_restrictive_directory_with_open(
+    directory: &Path,
+    variable: &str,
+    open_directory: impl FnOnce(&Path) -> io::Result<File>,
+) -> Result<Option<CreatedDirectory>, AppError> {
     let created = match fs::create_dir(directory) {
         Ok(()) => true,
         Err(error) if error.kind() == io::ErrorKind::AlreadyExists => false,
@@ -365,8 +541,42 @@ fn create_restrictive_directory(directory: &Path, variable: &str) -> Result<bool
     let metadata = fs::symlink_metadata(directory)
         .map_err(|error| environment_io(variable, directory, action, error))?;
     ensure_real_directory(directory, &metadata, variable)?;
-    restrict_directory_permissions(directory, variable)?;
-    Ok(created)
+    if !created {
+        restrict_directory_permissions(directory, variable)?;
+        return Ok(None);
+    }
+
+    let handle = open_directory(directory)
+        .map_err(|error| environment_io(variable, directory, "open created directory", error))?;
+    let handle_metadata = handle.metadata().map_err(|error| {
+        environment_io(
+            variable,
+            directory,
+            "inspect opened created directory",
+            error,
+        )
+    })?;
+    if metadata_identity(&metadata) != metadata_identity(&handle_metadata) {
+        return Err(AppError::invalid_environment(
+            variable,
+            Some(NativePath::new(directory.to_path_buf())),
+            "created directory identity drift",
+        ));
+    }
+    handle
+        .set_permissions(fs::Permissions::from_mode(0o700))
+        .map_err(|error| {
+            environment_io(
+                variable,
+                directory,
+                "restrict created directory permissions",
+                error,
+            )
+        })?;
+    let created_directory = CreatedDirectory {
+        path: directory.to_path_buf(),
+    };
+    Ok(Some(created_directory))
 }
 
 fn ensure_real_directory(
@@ -389,15 +599,15 @@ fn restrict_directory_permissions(path: &Path, variable: &str) -> Result<(), App
         .map_err(|error| environment_io(variable, path, "restrict directory permissions", error))
 }
 
-fn sync_created_directory_entries(
-    created_directories: &[PathBuf],
+pub(crate) fn sync_created_directory_entries(
+    created_directories: &[CreatedDirectory],
     variable: &str,
 ) -> Result<(), AppError> {
     for directory in created_directories.iter().rev() {
-        let parent = directory.parent().ok_or_else(|| {
+        let parent = directory.path.parent().ok_or_else(|| {
             AppError::invalid_environment(
                 variable,
-                Some(NativePath::new(directory.clone())),
+                Some(NativePath::new(directory.path.clone())),
                 "new directory has no parent",
             )
         })?;
@@ -435,7 +645,12 @@ fn ensure_regular_destination(path: &Path) -> Result<(), AppError> {
     }
 }
 
-fn environment_io(variable: &str, path: &Path, action: &str, error: io::Error) -> AppError {
+pub(crate) fn environment_io(
+    variable: &str,
+    path: &Path,
+    action: &str,
+    error: io::Error,
+) -> AppError {
     AppError::invalid_environment(
         variable,
         Some(NativePath::new(path.to_path_buf())),
@@ -446,6 +661,8 @@ fn environment_io(variable: &str, path: &Path, action: &str, error: io::Error) -
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::adapters::portable_library::PortableLibraryTransferStore;
+    use crate::adapters::sqlite_library::SqliteLibraryRepository;
     use crate::application::Application;
     use crate::ports::configuration::Environment;
     use std::collections::BTreeMap;
@@ -494,10 +711,18 @@ mod tests {
         ))
     }
 
+    fn application(store: Arc<FileConfigurationStore>) -> Application {
+        Application::new(
+            store,
+            Arc::new(SqliteLibraryRepository::new()),
+            Arc::new(PortableLibraryTransferStore::new()),
+        )
+    }
+
     #[test]
     fn absent_queries_and_unsets_create_no_roots() {
         let temporary = tempdir().unwrap();
-        let application = Application::new(store(temporary.path()));
+        let application = application(store(temporary.path()));
         let entries = application.config_list().unwrap();
         assert_eq!(entries.entries.len(), 3);
         let mutation = application
@@ -511,7 +736,7 @@ mod tests {
     #[test]
     fn mutation_is_atomic_and_idempotent_with_restrictive_modes() {
         let temporary = tempdir().unwrap();
-        let application = Application::new(store(temporary.path()));
+        let application = application(store(temporary.path()));
         let first = application
             .config_set(crate::ConfigKey::CacheLimitBytes, "1073741824".into())
             .unwrap();
@@ -560,9 +785,80 @@ mod tests {
         fs::create_dir(&directory).unwrap();
         fs::set_permissions(&directory, fs::Permissions::from_mode(0o600)).unwrap();
 
-        assert!(!create_restrictive_directory(&directory, "XDG_STATE_HOME").unwrap());
+        assert!(
+            create_restrictive_directory(&directory, "XDG_STATE_HOME")
+                .unwrap()
+                .is_none()
+        );
 
         assert_eq!(fs::metadata(&directory).unwrap().mode() & 0o777, 0o700);
+    }
+
+    #[test]
+    fn created_directory_is_retained_when_opening_it_fails() {
+        let temporary = tempdir().unwrap();
+        let directory = temporary.path().join("created");
+
+        let error = create_restrictive_directory_with_open(&directory, "XDG_STATE_HOME", |_| {
+            Err(io::Error::other("file descriptor exhaustion"))
+        })
+        .unwrap_err();
+
+        assert_eq!(error.code(), "invalid_environment_path");
+        assert!(directory.is_dir());
+    }
+
+    #[test]
+    fn restrictive_directory_retains_partial_created_prefix() {
+        let temporary = tempdir().unwrap();
+        let directory = temporary.path().join("first/second");
+
+        let error =
+            ensure_restrictive_directory_after_creation(&directory, "XDG_STATE_HOME", |created| {
+                if created.path.ends_with("second") {
+                    Err(AppError::Internal {
+                        incident_id: "after-second-directory-create".to_owned(),
+                    })
+                } else {
+                    Ok(())
+                }
+            })
+            .unwrap_err();
+
+        assert_eq!(error.code(), "internal_invariant");
+        assert!(temporary.path().join("first").is_dir());
+        assert!(directory.is_dir());
+    }
+
+    #[test]
+    fn lock_rejects_replacement_after_path_inspection() {
+        let temporary = tempdir().unwrap();
+        let environment = TestEnvironment::isolated(temporary.path());
+        let roots = XdgRootResolver.resolve(&environment).unwrap();
+        let locks = roots.state.effective.join("locks");
+        let lock = locks.join("database.lock");
+        let displaced = temporary.path().join("displaced.lock");
+        let replacement = temporary.path().join("replacement.lock");
+        fs::create_dir_all(&locks).unwrap();
+        fs::write(&lock, b"inspected lock").unwrap();
+        fs::write(&replacement, b"replacement lock").unwrap();
+
+        let error = acquire_restrictive_lock_after_path_inspection(
+            &roots,
+            "database.lock",
+            "database",
+            |path| {
+                fs::rename(path, &displaced).unwrap();
+                fs::rename(&replacement, path).unwrap();
+            },
+        )
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            AppError::InvalidState { state, .. } if state == "lock_path_identity_drift"
+        ));
+        assert_eq!(fs::read(lock).unwrap(), b"replacement lock");
     }
 
     #[test]
@@ -573,7 +869,7 @@ mod tests {
         let config = config_root.join("config.toml");
         fs::write(&config, "version = 1\nunknown = true\n").unwrap();
         let original = fs::read(&config).unwrap();
-        let application = Application::new(store(temporary.path()));
+        let application = application(store(temporary.path()));
         assert!(
             application
                 .config_set(crate::ConfigKey::CacheLimitBytes, "1".into())
@@ -653,7 +949,7 @@ mod tests {
                 retired_root: retired_root.clone(),
             }),
         ));
-        let application = Application::new(store);
+        let application = application(store);
 
         assert!(
             application
@@ -676,7 +972,7 @@ mod tests {
             Arc::new(XdgRootResolver),
             hooks.clone(),
         ));
-        let application = Application::new(store);
+        let application = application(store);
         application
             .config_set(crate::ConfigKey::CacheLimitBytes, "1".into())
             .unwrap();

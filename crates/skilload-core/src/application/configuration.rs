@@ -3,17 +3,26 @@ use crate::domain::configuration::{
 };
 use crate::error::AppError;
 use crate::ports::configuration::{ConfigurationStore, StoreOutcome};
+use crate::ports::library::{LibraryRepository, LibraryTransferStore};
 use std::ffi::OsString;
 use std::sync::Arc;
 
 pub struct Application {
-    configuration_store: Arc<dyn ConfigurationStore>,
+    pub(super) configuration_store: Arc<dyn ConfigurationStore>,
+    pub(super) library_repository: Arc<dyn LibraryRepository>,
+    pub(super) library_transfer_store: Arc<dyn LibraryTransferStore>,
 }
 
 impl Application {
-    pub fn new(configuration_store: Arc<dyn ConfigurationStore>) -> Self {
+    pub fn new(
+        configuration_store: Arc<dyn ConfigurationStore>,
+        library_repository: Arc<dyn LibraryRepository>,
+        library_transfer_store: Arc<dyn LibraryTransferStore>,
+    ) -> Self {
         Self {
             configuration_store,
+            library_repository,
+            library_transfer_store,
         }
     }
 
