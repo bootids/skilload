@@ -1,6 +1,6 @@
 # Library
 
-Status: 部分实现。`PLAN-0003` 实现了 Revision 4 的 `SKL-LIB-009` 与 Revision 5 的 `SKL-LIB-010`；`PLAN-0004` 实现了 Revision 1 的 `SKL-LIB-001` 与 `SKL-LIB-008`。其他 Library 行为仍为 skilload CLI MVP 的 planned 范围。
+Status: 部分实现。`PLAN-0003` 实现了 Revision 4 的 `SKL-LIB-009` 与 Revision 5 的 `SKL-LIB-010`；`PLAN-0004` 实现了 Revision 1 的 `SKL-LIB-001` 与 `SKL-LIB-008`。`SKL-LIB-004` 已在 `PLAN-0005` 的规划基线中修订为 Revision 2 的纯文本 AND 查询，但仍未实现；其他 Library 行为同样仍为 skilload CLI MVP 的 planned 范围。
 
 The **Library** is the user's durable, searchable collection of source metadata. It is not a content store, Trust store, workspace manifest, or deployment list.
 
@@ -22,11 +22,11 @@ The **Library** is the user's durable, searchable collection of source metadata.
 
 **Acceptance.** Repeating the same add produces no durable diff and returns the idempotent success outcome even when upstream metadata has changed.
 
-## SKL-LIB-004 - Full-text search fields (Revision 1)
+## SKL-LIB-004 - Full-text search fields (Revision 2)
 
-**Behavior.** Library search MUST use embedded SQLite FTS5 and index verified name, description, alias, tags, category, note, and repository. For every tag it MUST index both the stored display spelling and the comparison key from `SKL-LIB-008`, so canonically or case-equivalent tag input searches consistently without changing normalization of unrelated free-text fields.
+**Behavior.** Library search MUST 使用嵌入式 SQLite FTS5，并索引 verified name、description、alias、tags、category、note 与 repository。每个 tag 都 MUST 同时索引 `SKL-LIB-008` 的 stored display spelling 与 comparison key，使规范等价或大小写等价的 tag 输入得到一致结果，同时不得改变其他 free-text 字段的规范化。`library search <QUERY>` MUST 把 `<QUERY>` 解释为纯文本，而不是 FTS5 查询语言：按仓库固定的 Unicode 15.1.0 `White_Space` code points 分隔非空词项；每个词项生成 NFC 原文及 Unicode 15.1.0 完整默认大小写折叠后再 NFC 的形式；这两个形式作为同一词项的文字 alternatives，所有不同词项必须同时命中同一 entry，但可以命中不同索引字段。实现 MUST 对所有词项进行 FTS5 string quoting，因此 `AND`、`OR`、`NOT`、`NEAR`、引号、星号、括号、冒号与连字符都不得获得查询运算符含义。没有任何词项的查询 MUST 在执行 SQLite 查询前以 `validation_failed` 和 `library_search_query_empty` 失败。
 
-**Acceptance.** A query can match an entry through each indexed field, including a user note, without reading Skill content or contacting GitHub.
+**Acceptance.** 查询可以分别通过每个索引字段（包括 user note）命中 entry，且不读取 Skill content、不联系 GitHub。`code review` 只返回同时含两个词项的 entry，即使两个词项不相邻或位于不同字段；它不要求完整短语。`OR`、`NOT`、`*`、`name:review` 与包含双引号的输入都作为普通文本处理，不得扩大查询范围或触发 FTS5 grammar error。由 `Review`/`review`、组合/分解形式 `café`/`cafe\u0301` 产生的 tag 查询命中同一 entry；空字符串或全为 Unicode 15.1.0 `White_Space` 的查询以规定的 validation error 失败且不创建或修改状态。
 
 ## SKL-LIB-005 - Offline reads (Revision 1)
 

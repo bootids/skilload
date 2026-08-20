@@ -1,6 +1,6 @@
 # CLI, JSON, Testing, and Release Design
 
-Status: 部分实现的 0.1 CLI MVP design。`PLAN-0002` 实现 `0.0.1` configuration slice 的 `SKL-CLI-002`、`SKL-CLI-003` 与 `SKL-CLI-011`；`PLAN-0003` 实现 `library import`/`library export` 的可移植传输表面与其适用的 API-v2 projection；`PLAN-0004` 实现八个显式 Library metadata leaves 与其离线 API-v2/human projection，其他 CLI、release 与 compatibility design 仍为 planned。
+Status: 部分实现的 0.1 CLI MVP design。`PLAN-0002` 实现 `0.0.1` configuration slice 的 `SKL-CLI-002`、`SKL-CLI-003` 与 `SKL-CLI-011`；`PLAN-0003` 实现 `library import`/`library export` 的可移植传输表面与其适用的 API-v2 projection；`PLAN-0004` 实现八个显式 Library metadata leaves 与其离线 API-v2/human projection。`PLAN-0005` 仅已固定后续 `library list|search|get` 和 database doctor 的规划契约，尚未实现这些命令；其他 CLI、release 与 compatibility design 仍为 planned。
 
 ## Behavior Traceability
 
@@ -44,6 +44,8 @@ The version-1 configuration key registry is exactly `cache_limit_bytes`, `agents
 可移植 Library 传输叶子使用原生路径选项，而不是隐式标准输入协议：`library import --input <PATH> [--dry-run]` 读取一个受限的可移植 `LibraryExportData` 文档，`library export --output <PATH>` 以原子方式写入该文档。命令正常的人类结果或 API-v2 JSON 信封与输出文件保持分离，因此调用方无需剥离信封即可在随后导入前检查操作结果。这些选项属于既有叶子，不创建别名或另一命令族。
 
 P3 metadata leaves 各自将完整 canonical source 和一个逻辑 UTF-8 value（clear 不带 value）交给唯一 application method。CLI 不访问 repository；application 负责构造文本或 Unicode 15.1.0 tag value，SQLite port 负责锁、snapshot、transaction、durability 与结果。每个 success 使用对应的 `library.alias.*`、`library.category.*`、`library.tag.*` 或 `library.note.*` operation，返回 `LibraryMutationData` 的 committed entry、changed fields、`network: { used: false, attempts: [] }` 和三个 null acquisition-policy fields；missing canonical source 以 `not_found`/`LookupDetails`/exit 4 返回。人类输出以 terminal-safe quoted encoding 显示 operation、outcome、source、changed fields、trust state 和最终元数据。
+
+`PLAN-0005` 执行后才可注册 `library list [--limit <COUNT>] [--offset <COUNT>]`、`library search <QUERY> [--limit <COUNT>] [--offset <COUNT>]`、`library get <CANONICAL-SOURCE>` 与 `doctor [--fix]`。`library get` 在本切片只接受完整 canonical source；derived-name convenience selector 仍不启用。Search 把 `<QUERY>` 当作纯文本词项 AND：CLI 保留原始逻辑字符串用于 `LibrarySearchData.query`，domain 以本地 Unicode 15.1.0 数据构造完全 quoted 的 FTS expression，不能让 SQLite operator grammar 越过 application boundary。三项 Library read 均以 `observed` 返回；doctor 默认使用 `observed`，`--fix` 只有提交至少一个 migration/repair action 时使用 `changed`，没有 action 时使用 `unchanged`。当前 API-v2 `LibraryEntriesData`、`LibrarySearchData`、`LibraryEntry` 与 `DoctorData` 已是唯一输出 schema，不增加 operation alias 或新信封。
 
 ## Common Arguments
 
