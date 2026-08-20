@@ -2,7 +2,7 @@
 plan_id: PLAN-0005
 branch: codex/p4-library-indexed-reads
 pull_request: https://github.com/bootids/skilload/pull/5
-status: plan
+status: active
 depends_on: [PLAN-0004]
 ---
 
@@ -70,7 +70,7 @@ Read兼容性是显式边界。完整 v1 base rows可供 list/get/export只读�
 - [x] (2026-08-20 11:26Z) 创建本 `plan`-status ExecPlan；当前尚未提交、推送或创建 Draft PR。
 - [x] (2026-08-20 11:36Z) 以 `88eec453bbb7a08dea160601fa66093398be9c72` 提交并推送 planning baseline，创建 Draft PR https://github.com/bootids/skilload/pull/5；GitHub 已验证 `isDraft: true`、head/base 正确且 `headRefOid` 等于该提交。本 metadata update 将 canonical URL、Progress 与 publication evidence 作为第二个 planning commit 推送；随后等待明确 human execution trigger。
 - [x] (2026-08-20 12:03Z) 处理 PR #5 首轮规划评审的三个 inline 问题（FTS group 间显式 `AND`、base corruption 走 `database_corrupt` error、pre-open generation gate 防 sidecar）：修订本 Plan、`docs/design-docs/application-and-persistence.md` 与两个 reference 文档并推送；未改动任何运行时代码，Plan 保持 `plan`、PR 保持 Draft。
-- [ ] 收到执行授权后，用 `execute-exec-plan`验证 `PLAN-0004`已在默认分支 completed、PR仍为 Draft，进入 `active`并实现所有 milestones。
+- [x] (2026-08-20 12:20Z) 收到执行授权（human 触发 `execute-exec-plan`）：验证 `PLAN-0004` 在 `origin/main` 为 `completed`、PR #5 为 Draft（`isDraft: true`、head `0d1a97e66840ecdb91c79cf8aaa2dff37c31e386` 与本地 HEAD 一致、base `main`）、worktree clean；执行 `plan → active` 迁移并推送，随后开始实现 milestones。
 - [ ] 实现 domain query/page/doctor values与 focused ports/application operations。
 - [ ] 实现 schema v2 FTS、v1-compatible reads、transaction-maintained index与 list/search/get repository queries。
 - [ ] 实现 standalone backup、v1→v2 migration、read-only doctor snapshot与 FTS-only repair。
@@ -460,3 +460,5 @@ Backup manifest是private versioned serde record，不进入API-v2或portable ex
 2026-08-20：创建PLAN-0005 planning baseline。基于completed PLAN-0004与当前实现选择indexed offline Library reads；经用户决定把`SKL-LIB-004`提升到Revision 2并固定纯文本词项AND；固定schema v2 content-bearing FTS、explicit doctor migration/repair、v1 read compatibility、10,000-entry预算和dependency边界。11:36Z 将 initial commit `88eec453bbb7a08dea160601fa66093398be9c72` 推送到 delivery branch，创建 Draft PR https://github.com/bootids/skilload/pull/5，并写回 canonical URL、Progress 与 publication evidence。该修订只更新delivery metadata；在获得后续明确execution prompt前不实现runtime行为。
 
 2026-08-20 12:03Z：处理 PR #5 首轮规划评审。三个 inline 问题（FTS group 间显式 `AND`、base corruption 走 `database_corrupt` error、pre-open generation gate 防 WAL sidecar）均按 planning 边界以文档修订处置：更新本 Plan 的 Design Inputs、Milestone 2/3、Validation、Product Baseline 可观察路径、Surprises & Discoveries、Decision Log、Progress 与 Review Conversation Log，同步 `docs/design-docs/application-and-persistence.md`、`docs/references/sqlite-fts5-library-search.md` 与 `docs/references/sqlite-backup-and-corruption-recovery.md`。产品语义（`SKL-LIB-004` Revision 2）不变；未改动任何运行时代码，Plan 保持 `plan`、PR 保持 Draft。
+
+2026-08-20 12:20Z：进入执行。前置验证全部通过（依赖 completed、PR Draft、branch/HEAD 一致）；本文件移入 `docs/exec-plans/active/`，`status` 改为 `active`。未改动其他内容。
