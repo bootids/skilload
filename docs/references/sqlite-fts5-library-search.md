@@ -10,7 +10,7 @@ skilload 的 `SKL-LIB-004` 要求使用 bundled SQLite FTS5 搜索本地 Library
 
 * 仓库锁定的 `rusqlite 0.40.2` 通过 `libsqlite3-sys` bundled build 启用 `SQLITE_ENABLE_FTS5`；现有测试已经用 `PRAGMA compile_options` 验证 `ENABLE_FTS5`。P4 不需要加载动态 SQLite extension。
 * FTS5 把未加引号的 `AND`、`OR`、`NOT`、`NEAR`、括号、列过滤和 prefix 标记解释为查询 grammar。官方文档还明确说明，当前作为 syntax error 的未加引号字符可能在未来获得新语义。稳定的纯文本产品接口因此必须把每个用户词项编码成 FTS5 string：以双引号包围，并把内部双引号按 SQL/FTS5 规则写成两个双引号。
-* 仅以空白隔开的 quoted phrases 由 FTS5 解释为 implicit AND。`"code" "review"` 因此要求两个词项同时命中，但不要求二者相邻。把整个输入编码成一个 `"code review"` phrase 会额外要求相邻和顺序，不符合本仓库选择的词项 AND 语义。
+* 仅以空白隔开的 quoted phrases 由 FTS5 解释为 implicit AND。`"code" "review"` 因此要求两个词项同时命中，但不要求二者相邻。把整个输入编码成一个 `"code review"` phrase 会额外要求相邻和顺序，不符合本仓库选择的词项 AND 语义。implicit AND 只覆盖裸 quoted phrases：括号表达式与后续 phrase 或另一个括号 group 之间不存在隐式组合，`("Review" OR "review") "code"` 与 `("Review" OR "review") ("code" OR "CODE")` 都返回 `fts5: syntax error`（2026-08-20 isolated 实验证实）。因此带 raw/folded alternatives 的查询编译必须以显式 `AND` 连接各词项 group，例如 `("Review" OR "review") AND "code"` 正常命中。
 * 内建 `unicode61` tokenizer 以 Unicode 6.1 的 letter/number/private-use 分类形成 token，并执行其版本固定的大小写无关比较；默认还移除部分 Latin diacritics。`tokenize='unicode61 remove_diacritics 0'` 可避免把不相关 free text 的重音符号主动折叠。它不能替代 `SKL-LIB-008` 固定的 Unicode 15.1.0 tag 规则，所以索引必须同时保存 tag display spelling 与 comparison key，查询编译也必须用仓库本地 Unicode 15.1.0 数据生成 NFC 原文和完整默认大小写折叠后的 NFC alternative。
 * FTS5 不承诺产品需要的 canonical-source 顺序；`rank`/`bm25()` 只提供相关性排序。`SKL-LIB-005` 要求在分页前按 source order 排序，因此 list/search SQL 必须显式使用 canonical source 的 binary order，而不能依赖 rowid、MATCH 返回顺序或 rank。
 * External-content FTS table 的维护 trigger 不会为创建 trigger 之前的 rows 自动补建索引；官方文档要求显式执行 `rebuild`。Library tags 还是独立多行关系。使用普通 content-bearing FTS table，并由同一 adapter transaction 显式替换每个 entry 的聚合 FTS row，可避免 trigger 与 Rust mutation 各自实现一套 tag 聚合规则。该 table 是派生数据，不是第二个 Library owner。
@@ -21,7 +21,7 @@ skilload 的 `SKL-LIB-004` 要求使用 bundled SQLite FTS5 搜索本地 Library
 
 ## 对 `PLAN-0005` 的约束
 
-* 产品输入永远不是 raw FTS5 expression。先按仓库固定的 Unicode 15.1.0 `White_Space` 分隔词项，再为每个词项生成原文/完整折叠 alternatives并做 string quoting；不同词项以 implicit AND 连接。空词项集合在 SQLite 前失败。
+* 产品输入永远不是 raw FTS5 expression。先按仓库固定的 Unicode 15.1.0 `White_Space` 分隔词项，再为每个词项生成原文/完整折叠 alternatives并做 string quoting；同词项 alternatives 以括号内 OR 组成一个 group，不同词项的 group 之间以显式 `AND` 连接（括号 group 与后续词项之间没有 implicit AND，只能显式组合）。空词项集合在 SQLite 前失败。
 * Schema v2 使用一个普通 content-bearing `library_fts` virtual table。`canonical_source` 只用于 identity/join，不进入 token index；其余八类字段按产品规格分列。Tag display 和 comparison key 使用不同列，多个值以 tokenizer 明确认作 separator 的 ASCII newline 连接。
 * Import、metadata mutation、migration 和 doctor repair 只能通过一个共享的 adapter helper生成 FTS row；changed product transaction 同时维护 base row 与索引。单独修复派生索引不得推进 `state_revision`。
 * Read-only doctor 对 live database 只做 no-follow identity-bound read；需要 FTS special command 时只操作内存副本。`doctor --fix` 才可持有 durable database lock、创建 backup 或写 live database。

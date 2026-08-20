@@ -40,7 +40,7 @@ depends_on: [PLAN-0004]
 * `SKL-OPS-002` 仍未完成，因为同一 durable database 的 Trust、global、manager、workspace 等 future tables 尚不存在；本切片只加入其要求的 FTS5 derived index而不声称完整 ownership model。
 * `SKL-OPS-004`、`SKL-CACHE-006` 与 `SKL-CACHE-007` 仍未完成，因为完整 corruption restore、cache/deployment/workspace/manager inspection和所有 future repair 尚不可达。本切片只实现 real current-database doctor：只读 schema/base/FTS diagnosis、v1 migration和 FTS-only rebuild。Base corruption继续返回 `database_corrupt`并指向既有 `database-corruption-v1` operator procedure；不得增加隐藏 reset/restore 命令。
 
-完成时的可观察路径是：在 isolated XDG roots 中导入两个条目；list 按 source 排序并分页；search 通过每个索引字段命中且把 `OR`、`NOT`、`*`、引号和 `name:...` 当普通文本；get 对 canonical source返回 entry、对 missing source返回 `not_found`。默认 doctor在 absent/healthy/v1/FTS-drift fixtures 上不改变 filesystem bytes或 timestamps。对 v1 fixture运行 `doctor --fix` 后，可看到一对验证通过的 backup/manifest和 `migrate` action，schema成为 v2、base rows与 `state_revision` 不变、search开始工作；对 FTS-only drift运行 fix只产生 `repair` action且不改 base metadata。
+完成时的可观察路径是：在 isolated XDG roots 中导入两个条目；list 按 source 排序并分页；search 通过每个索引字段命中且把 `OR`、`NOT`、`*`、引号和 `name:...` 当普通文本；get 对 canonical source返回 entry、对 missing source返回 `not_found`。默认 doctor在 absent/healthy/v1/FTS-drift/corrupt/WAL-sidecar fixtures 上不改变 filesystem bytes或 timestamps；corrupt与 WAL-sidecar generation返回 typed `database_corrupt` error而不是成功 DoctorData。对 v1 fixture运行 `doctor --fix` 后，可看到一对验证通过的 backup/manifest和 `migrate` action，schema成为 v2、base rows与 `state_revision` 不变、search开始工作；对 FTS-only drift运行 fix只产生 `repair` action且不改 base metadata。
 
 规划基线已经把 Revision 2 query semantics同步到 `docs/product-specs/README.md`、`docs/product-specs/library.md`，把技术选择同步到 `docs/design-docs/application-and-persistence.md`、`docs/design-docs/cli-json-and-release.md`，并新增 `docs/references/sqlite-fts5-library-search.md`。执行完成时只更新这些文件、`ARCHITECTURE.md` 和本 Plan 的实现状态与实际证据；不得再次改变这里固定的产品语义，除非先按 repository rule取得新的产品决定并提升 behavior revision。
 
@@ -51,11 +51,11 @@ depends_on: [PLAN-0004]
 
 `docs/design-docs/application-and-persistence.md` 固定 `data/skilload.db`、`state/locks/database.lock`、pairwise-disjoint XDG roots、no-follow main-file identity gate、DELETE journal mode、一个 global durable-database mutation lock、transactional state mutation 与 descriptor-bound durability sync。当前 schema v1 有 `schema_info`、`state_revision`、`library_entries` 和 `library_tags`，没有 FTS。Schema v2只新增普通 content-bearing `library_fts` virtual table；不重建 base tables，也不引入 integer surrogate identity。每个 FTS row保存 unindexed canonical source与八类 indexed text columns；adapter在 import/metadata mutation 的同一 transaction中显式维护，migration/doctor从 base rows完整重建。
 
-FTS tokenizer固定为 bundled SQLite 的 `unicode61 remove_diacritics 0`。Domain 使用 `crates/skilload-core/src/domain/unicode_15_1.rs` 的固定 `is_white_space`、NFC与 `full_case_fold`生成逻辑词项；adapter只负责把每个 literal中的 `"`写成`""`并包围双引号，然后将同一词项的 raw/folded alternatives以 OR、不同词项以 implicit AND组合。用户字符串永远不作为 FTS grammar拼接。Tag display strings与 comparison keys分别用 ASCII newline聚合到不同列；newline是 tokenizer separator，不改变 tag storage。
+FTS tokenizer固定为 bundled SQLite 的 `unicode61 remove_diacritics 0`。Domain 使用 `crates/skilload-core/src/domain/unicode_15_1.rs` 的固定 `is_white_space`、NFC与 `full_case_fold`生成逻辑词项；adapter只负责把每个 literal中的 `"`写成`""`并包围双引号，然后将同一词项的 raw/folded alternatives以括号内 OR组合成一个 group，不同词项的 group之间以显式 `AND` 连接。FTS5 的 implicit AND只存在于裸 quoted phrases之间；括号表达式与后续 phrase或另一个 group之间不存在隐式组合，`("Review" OR "review") "code"` 是 syntax error，因此组合必须显式。用户字符串永远不作为 FTS grammar拼接。Tag display strings与 comparison keys分别用 ASCII newline聚合到不同列；newline是 tokenizer separator，不改变 tag storage。
 
-`docs/references/sqlite-fts5-library-search.md` 记录 FTS5 string/implicit-AND、`unicode61`、content-bearing index、special `integrity-check`/`rebuild` 与 rusqlite backup API事实。`docs/references/sqlite-backup-and-corruption-recovery.md` 规定 live WAL generation不能靠复制 main file备份；migration必须用 SQLite online backup得到 standalone snapshot。为 `rusqlite 0.40.2` 启用 `backup` feature，并加入 `sha2 0.11.0`（`default-features = false`）流式计算 SHA-256；不得引入 async runtime、ORM、外部 search service或通用 migration framework。
+`docs/references/sqlite-fts5-library-search.md` 记录 FTS5 string quoting、bare-phrase implicit AND的语法边界与显式 `AND` 组合、`unicode61`、content-bearing index、special `integrity-check`/`rebuild` 与 rusqlite backup API事实。`docs/references/sqlite-backup-and-corruption-recovery.md` 规定 live WAL generation不能靠复制 main file备份；migration必须用 SQLite online backup得到 standalone snapshot，并记录 read-only SQLite 打开 WAL-mode generation会创建 `-shm`/`-wal` sidecar、`immutable=1` 会忽略 WAL 内容的实验事实。为 `rusqlite 0.40.2` 启用 `backup` feature，并加入 `sha2 0.11.0`（`default-features = false`）流式计算 SHA-256；不得引入 async runtime、ORM、外部 search service或通用 migration framework。
 
-Read兼容性是显式边界。完整 v1 base rows可供 list/get/export只读；search和所有 database writes返回现有 API-v2 `migration_required`，直到 `doctor --fix`。Default doctor从 identity-bound read-only source向内存 SQLite destination做 online backup，在副本上执行需要 writable connection的 FTS5 special check，因此 live XDG state保持不变。Unknown newer schema只报告并拒绝 fix/write。FTS-only drift在 base tables、foreign keys和每个 domain row均验证成功后才能重建；schema migration和 derived repair都不推进 product `state_revision`。
+Read兼容性是显式边界。完整 v1 base rows可供 list/get/export只读；search和所有 database writes返回现有 API-v2 `migration_required`，直到 `doctor --fix`。Default doctor从 identity-bound read-only source向内存 SQLite destination做 online backup，在副本上执行需要 writable connection的 FTS5 special check，因此 live XDG state保持不变。该不变性不能仅由 read-only flag推出：read-only SQLite connection打开 WAL-mode generation时会在可写 data directory创建并保留 `-shm`（header 为 WAL 而 sidecar缺失时连 `-wal` 也一并创建），`immutable=1` 虽不创建 sidecar却忽略 WAL 内容。因此所有对已存在 live database的 read-only opens（list/get/search/export/doctor inspect）在打开 SQLite 前必须先经 pre-open generation gate：用既有 no-follow held descriptor直接读取 main file的 100-byte header并盘点 `-wal`/`-shm` sibling；journal-mode bytes（偏移18/19）非 (1,1) 或存在任一 WAL sibling的 generation不属于任何 skilload 二进制可能发布的 DELETE-journal state，不经 SQLite 打开，直接按 base corruption返回 `database_corrupt`。Unknown newer schema只报告并拒绝 fix/write。FTS-only drift在 base tables、foreign keys和每个 domain row均验证成功后才能重建；schema migration和 derived repair都不推进 product `state_revision`。
 
 ## Purpose / Big Picture
 
@@ -69,6 +69,7 @@ Read兼容性是显式边界。完整 v1 base rows可供 list/get/export只读�
 - [x] (2026-08-20 11:26Z) 取得产品决定：`library search`采用纯文本词项 AND，不采用完整短语或 raw FTS5 language；将 `SKL-LIB-004`提升为 Revision 2并同步规划设计/reference。
 - [x] (2026-08-20 11:26Z) 创建本 `plan`-status ExecPlan；当前尚未提交、推送或创建 Draft PR。
 - [x] (2026-08-20 11:36Z) 以 `88eec453bbb7a08dea160601fa66093398be9c72` 提交并推送 planning baseline，创建 Draft PR https://github.com/bootids/skilload/pull/5；GitHub 已验证 `isDraft: true`、head/base 正确且 `headRefOid` 等于该提交。本 metadata update 将 canonical URL、Progress 与 publication evidence 作为第二个 planning commit 推送；随后等待明确 human execution trigger。
+- [x] (2026-08-20 12:03Z) 处理 PR #5 首轮规划评审的三个 inline 问题（FTS group 间显式 `AND`、base corruption 走 `database_corrupt` error、pre-open generation gate 防 sidecar）：修订本 Plan、`docs/design-docs/application-and-persistence.md` 与两个 reference 文档并推送；未改动任何运行时代码，Plan 保持 `plan`、PR 保持 Draft。
 - [ ] 收到执行授权后，用 `execute-exec-plan`验证 `PLAN-0004`已在默认分支 completed、PR仍为 Draft，进入 `active`并实现所有 milestones。
 - [ ] 实现 domain query/page/doctor values与 focused ports/application operations。
 - [ ] 实现 schema v2 FTS、v1-compatible reads、transaction-maintained index与 list/search/get repository queries。
@@ -90,6 +91,10 @@ Read兼容性是显式边界。完整 v1 base rows可供 list/get/export只读�
   Evidence:普通 content-bearing FTS table可保存 `canonical_source UNINDEXED`并通过稳定文本身份join；避免 external-content rowid与 `VACUUM`稳定性问题，也避免重建现有 base/foreign-key schema。
 - Observation: `sha2 0.11.0` 是 2026-08-20 crates.io 当前 stable，声明 Rust 1.85且 MIT OR Apache-2.0，可被仓库 Rust 1.97.1使用。
   Evidence: `docs/references/sqlite-fts5-library-search.md`保存 crates.io metadata与来源。
+- Observation: FTS5 没有“括号表达式 + 后续 phrase/group”的 implicit AND；`("Review" OR "review") "code"` 与两个括号 group 并排都是 syntax error，显式 `AND` 才有效。
+  Evidence: 2026-08-20 planning 实验（SQLite 3.53.4）：`"code" "review"` 正常；`("Review" OR "review") "code"` 返回 `fts5: syntax error near ""code""`；`("Review" OR "review") AND "code"` 正常命中。原 implicit AND 组合在任何 raw≠folded 词项上会违反 `SKL-LIB-004` Revision 2 “不触发 FTS grammar error” 的 acceptance。
+- Observation: read-only SQLite connection打开 WAL-mode generation会在可写目录创建并保留 `-shm`（header 为 (2,2) 且无 sidecar 时连 `-wal` 也一并创建）；`immutable=1` 不创建 sidecar 但忽略 WAL 内容，会产生错误诊断。
+  Evidence: 2026-08-20 planning 实验证实三种情形的 sidecar 文件清单变化与 `immutable=1` 的 “no such table” 误读；结论已固化到 `docs/references/sqlite-backup-and-corruption-recovery.md`。
 
 ## Decision Log
 
@@ -124,6 +129,12 @@ Read兼容性是显式边界。完整 v1 base rows可供 list/get/export只读�
 - Decision:为 locked `rusqlite 0.40.2`增加 `backup` feature，并加入 exact `sha2 =0.11.0`且关闭 default features；不引入 time、hex或migration framework crate。
   Rationale:SQLite online backup是已有设计的唯一安全 live-generation snapshot；SHA-256可按固定buffer流式计算，epoch nanoseconds加 tempfile随机后缀足以生成无碰撞 UTC-derived backup名称，hex可直接写入固定数组/formatter。
   Date/Author: 2026-08-20 / Codex
+- Decision: 不同词项的 FTS group以显式 `AND` 连接，不使用 implicit AND 组合。
+  Rationale: 2026-08-20 规划评审（PRRT_kwDOT7YN2s6ay0q9）指出并经 isolated 实验证实：FTS5 只在裸 quoted phrases间支持 implicit AND，括号 OR group后接 phrase/group都是 syntax error；raw≠folded 词项必然产生 group，原方案会让多词查询违反 `SKL-LIB-004` Revision 2 的 no-grammar-error acceptance。
+  Date/Author: 2026-08-20 / Codex
+- Decision: 所有已存在 live database的 read-only opens前执行 pre-open generation gate；WAL-mode header或 `-wal`/`-shm` sibling直接按 `database_corrupt` 拒绝，不经 SQLite 打开。Doctor 对 base corruption返回 typed `database_corrupt` error（`DatabaseCorruptDetails`）而不是 DoctorData finding；`fix` 同样不对其返回 `unchanged`。
+  Rationale: 2026-08-20 规划评审（PRRT_kwDOT7YN2s6ay0rD、PRRT_kwDOT7YN2s6ay0rJ）指出并经实验证实：read-only 打开 WAL-mode generation会创建并保留 `-shm`/`-wal`，`immutable=1` 则忽略 WAL 内容；同时 `SKL-OPS-004`、`docs/product-specs/database-recovery.md` 第1步与 API-v2 catalog都要求 doctor 以 `database_corrupt` details报告 base corruption，`DoctorFinding`（severity/code/message）无法携带 backup list、recoverable exports或 `database-corruption-v1`。skilload 只发布 DELETE-journal database，此类 generation只能来自外部，按 P2 既有 sidecar-hygiene 先例归入 corruption class。
+  Date/Author: 2026-08-20 / Codex
 
 ## Outcomes & Retrospective
 
@@ -133,7 +144,58 @@ Read兼容性是显式边界。完整 v1 base rows可供 list/get/export只读�
 ## Review Conversation Log
 
 
-No review conversation has been processed.
+2026-08-20 12:03Z 首轮规划评审（Codex bot review，commit `375e2e85c7ce085b562044808a0c792c79b0ce9d`）：top-level 评论 `IC_kwDOT7YN2s8AAAABPzQF5Q`（`@codex` bot 触发）与 review body `PRR_kwDOT7YN2s8AAAABKPf_-A`（自动化包装文本）未提出独立问题。三个 inline thread 的问题均已按 planning 边界处置，详见以下条目。
+
+### PRRT_kwDOT7YN2s6ay0q9 - FTS group 间需要显式 AND
+
+
+Source: PRRT_kwDOT7YN2s6ay0q9 / PRRC_kwDOT7YN2s7jw2UK（https://github.com/bootids/skilload/pull/5#discussion_r3821233418）
+
+Problem: Plan 第164行原规定不同词项“仅以空格连接形成 implicit AND”，但每个词项的 raw/folded alternatives以括号 OR group编码后，`("Review" OR "review") "code"` 被 FTS5 拒绝为 syntax error；FTS5 只在裸 quoted phrases间支持 implicit AND，任何 raw≠folded 多词查询都会违反 `SKL-LIB-004` Revision 2 “不触发 FTS grammar error” 的 acceptance。
+
+Disposition: fixed
+
+Status: open
+
+Resolution: 本 Plan 第54/56/164行、`docs/design-docs/application-and-persistence.md`（Durable SQLite Model 段）与 `docs/references/sqlite-fts5-library-search.md` 已改为：同词项 alternatives以括号内 OR组合成一个 group，不同词项的 group之间以显式 `AND` 连接；reference 文档补充了实验证据。产品语义（纯文本词项 AND）不变，属技术组合规则修正，无需提升 behavior revision。
+
+Evidence: isolated SQLite 实验证实 `("Review" OR "review") "code"` 返回 `fts5: syntax error near ""code""` 而 `("Review" OR "review") AND "code"` 正常命中；修订随本轮 planning commit 推送（SHA 见本条目 GitHub outcome 前的最终 Evidence 更新）。
+
+GitHub outcome: 待推送后回复并 resolve（thread 当前 isResolved: false）。
+
+### PRRT_kwDOT7YN2s6ay0rD - base corruption 必须保留 database_corrupt
+
+
+Source: PRRT_kwDOT7YN2s6ay0rD / PRRC_kwDOT7YN2s7jw2UT（https://github.com/bootids/skilload/pull/5#discussion_r3821233427）
+
+Problem: Milestone 3 原文让 schema/base validation发现的 base corruption进入成功 `observed` DoctorData（unfixable finding），`fix` 对其返回 `unchanged`；这与本 Plan Product Baseline 第41行、`SKL-OPS-004`（`database_corrupt` diagnostics MUST 携带 backup/export/`database-corruption-v1`）及 `docs/product-specs/database-recovery.md` 第1步（`skilload doctor --json` 返回 `database_corrupt` details）矛盾，`DoctorFinding`（severity/code/message）无法携带 `DatabaseCorruptDetails` 的必需字段。
+
+Disposition: fixed
+
+Status: open
+
+Resolution: 本 Plan Milestone 3 已改为：base corruption（schema/base validation 任何失败）不进入 DoctorData，而是按既有 error mapping返回 typed `database_corrupt` 错误，`DatabaseCorruptDetails` 含 database `PathValue`、已验证 backup manifests、仍可读 portable exports 与 `recovery_procedure: "database-corruption-v1"`；`fix` 在同一 diagnosis 阶段即返回该错误，绝不进入 action/`unchanged` 路径。newer schema 保持 unfixable `library_schema_newer` finding + `unchanged`。Validation 段补充 corrupt fixture 的 typed error 与 filesystem 不变性断言。
+
+Evidence: `SKL-OPS-004`、`docs/product-specs/api-v2.md`（`database_corrupt` → `DatabaseCorruptDetails`）、`docs/product-specs/database-recovery.md` 第1步与本 Plan 第41行 baseline 一致；修订随本轮 planning commit 推送。
+
+GitHub outcome: 待推送后回复并 resolve（thread 当前 isResolved: false）。
+
+### PRRT_kwDOT7YN2s6ay0rJ - 只读 doctor 不得创建 WAL sidecars
+
+
+Source: PRRT_kwDOT7YN2s6ay0rJ / PRRC_kwDOT7YN2s7jw2UZ（https://github.com/bootids/skilload/pull/5#discussion_r3821233433）
+
+Problem: live database 为 WAL-mode（或带 `-wal`/`-shm` sibling）时，普通 read-only SQLite connection会在可写 data directory创建并保留 `skilload.db-shm`（实验还证实 header 为 WAL 而 sidecar缺失时会连 `-wal` 一起创建），破坏 default doctor 的 filesystem-inert 契约并污染待恢复 generation；`immutable=1` 虽不创建 sidecar但忽略 WAL 内容，不能作为诊断通道。
+
+Disposition: fixed
+
+Status: open
+
+Resolution: 本 Plan 固化 pre-open generation gate：所有已存在 live database的 read-only opens（list/get/search/export/doctor inspect）先用既有 no-follow held descriptor直接读取 main file 100-byte header并盘点 `-wal`/`-shm` sibling；journal-mode bytes 非 (1,1) 或存在任一 WAL sibling的 generation不经 SQLite 打开，直接按 base corruption返回 `database_corrupt`（skilload 只发布 DELETE-journal database，该状态只能来自外部，且与 P2 “sidecar 统一报告 database_corrupt” 先例一致）。Design Inputs、Milestone 2/3、Validation 与 Product Baseline 可观察路径均已同步；实验事实固化到 `docs/references/sqlite-backup-and-corruption-recovery.md`。
+
+Evidence: 2026-08-20 planning 实验：WAL+`-wal` fixture 以 `mode=ro` 打开后出现并保留 `skilload.db-shm`；WAL header 无 sidecar fixture 打开后出现 `-shm`+`-wal`；`immutable=1` 无 sidecar但 `no such table`（WAL 内容被忽略）。修订随本轮 planning commit 推送。
+
+GitHub outcome: 待推送后回复并 resolve（thread 当前 isResolved: false）。
 
 ## Context and Orientation
 
@@ -161,7 +223,7 @@ Schema v1固定 `schema_info(version=1)`、`state_revision`、以 `canonical_sou
 
 Null optional metadata投影为空字符串。Tags按 comparison key稳定排序，display和comparison分别用 `\n`连接。每个 canonical source必须在 FTS table恰有一行；doctor比较这一完整集合与 base rows，不能只比较 row count。
 
-“纯文本词项 AND”指：保留原始 query供 API回显；按 pinned `is_white_space`切分；对每个词项产生 NFC raw与 `full_case_fold(raw).nfc()`，去除同一词项的重复alternative；adapter将 literal `a"b`编码为 FTS string `"a""b"`；同词项 alternatives用括号内 OR，不同词项仅以空格连接形成 implicit AND。没有词项时不调用 SQLite。Search结果不按 relevance，而在 count/page transaction中按 `canonical_source COLLATE BINARY`排序。
+“纯文本词项 AND”指：保留原始 query供 API回显；按 pinned `is_white_space`切分；对每个词项产生 NFC raw与 `full_case_fold(raw).nfc()`，去除同一词项的重复alternative；adapter将 literal `a"b`编码为 FTS string `"a""b"`；同词项 alternatives用括号内 OR组成一个 group，不同词项的 group之间以显式 `AND` 连接（FTS5 的 implicit AND只是裸 quoted phrases间的特例；`("Review" OR "review") "code"` 是 syntax error，`("Review" OR "review") AND "code"` 才有效）。没有词项时不调用 SQLite。Search结果不按 relevance，而在 count/page transaction中按 `canonical_source COLLATE BINARY`排序。
 
 “Standalone migration backup”指通过 SQLite online backup API从已打开并绑定identity的 source connection复制到独立 destination database，而不是复制 live main/WAL文件。Sibling manifest至少包含 format version、source/target schema、UTC epoch nanoseconds、database bytes、`sha256:` digest、source device/inode和 `complete: true`。只有 database和manifest都写完、sync、验证并在 held backup-directory descriptor中发布后才能开始 live migration。
 
@@ -201,7 +263,7 @@ Null optional metadata投影为空字符串。Tags按 comparison key稳定排序
 
 把first import初始化切换为schema v2。新增一个接受transaction和完整 `PortableLibraryEntry`/stored entry的共享helper，按tag comparison order生成一行FTS projection。`apply_additions`在同一transaction插入base/tags/FTS；`apply_metadata_change`在同一transaction更新base/tags后替换目标FTS row。Changed mutation仍只推进一次 `state_revision`；unchanged不触发FTS DELETE/INSERT、transaction commit或sync。Existing v1 import/mutation在取得现有identity并验证base后返回 `MigrationRequired { found:1, supported:2 }`，不自动upgrade。
 
-实现list/search/get read transactions。Absent list/search返回empty page且不创建roots；absent get返回`not_found`。V1 list/get从base rows工作；v1 search返回migration_required。V2 list/search先在同一transaction计算total，再在`offset >= total`时不做SQLite signed offset conversion并返回empty；否则用CTE选择canonical page并一次LEFT JOIN tags，按source/tag comparison order流式组装entries，避免每entry query。Search CTE只接收adapter从domain terms编码的bound MATCH string；用户raw query不得拼入SQL/FTS grammar。Get用exact selector和同样single-query tag assembly，missing返回`not_found`。
+实现list/search/get read transactions。所有对已存在 database的 read-only opens先经 Design Inputs固化的 pre-open generation gate：WAL-mode header或 `-wal`/`-shm` sibling在 SQLite 前即返回 `database_corrupt`，不创建任何 sidecar。Absent list/search返回empty page且不创建roots；absent get返回`not_found`。V1 list/get从base rows工作；v1 search返回migration_required。V2 list/search先在同一transaction计算total，再在`offset >= total`时不做SQLite signed offset conversion并返回empty；否则用CTE选择canonical page并一次LEFT JOIN tags，按source/tag comparison order流式组装entries，避免每entry query。Search CTE只接收adapter从domain terms编码的bound MATCH string；用户raw query不得拼入SQL/FTS grammar。Get用exact selector和同样single-query tag assembly，missing返回`not_found`。
 
 该里程碑的repository tests必须证明每个字段可搜索、raw/folded tag等价、operators保持literal、same-name sources共存、source-order先于pagination、adjacent pages不重叠、offset==total/`u64::MAX`为空、limit边界在SQL前失败、read transaction在concurrent writer下提供同一snapshot。验证v1 list/get/export继续工作而search/writes要求migration；v2 import/mutations每次保持FTS一致；corrupt/missing/extra FTS rows不会反向改base。
 
@@ -210,9 +272,9 @@ Null optional metadata投影为空字符串。Tags按 comparison key稳定排序
 
 在workspace dependency中给locked `rusqlite 0.40.2`增加`backup` feature，并加入 `sha2 = { version = "=0.11.0", default-features = false }`。不要升级其他locked crates。为 `SqliteLibraryRepository` 实现 `DatabaseMaintenance`，复用现有 XDG resolver、no-follow database identity、data-directory descriptor、global lock与durability helpers。
 
-Default `inspect`在absent state返回healthy/empty `DoctorData`且不创建root。对existing database，以read-only identity-bound connection读取schema/base evidence；使用 `rusqlite::backup::Backup`复制到`:memory:` destination，在副本上执行完整v2 FTS content comparison与 `INSERT INTO library_fts(library_fts) VALUES('integrity-check')`。V1产生fixable `library_database_migration_required` finding并令 `database_writable=false`；healthy v2无finding且true；FTS-only drift产生fixable `library_fts_invalid`且false；newer/base corruption产生unfixable finding且false。Default outcome始终`observed`、`fix_requested=false`、每个finding `fixed=false`、actions empty。
+Default `inspect`在absent state返回healthy/empty `DoctorData`且不创建root。对existing database，先执行 pre-open generation gate：main file header的 journal-mode bytes非 (1,1) 或存在`-wal`/`-shm` sibling时，不打开 SQLite，直接返回typed `database_corrupt`错误，其 `DatabaseCorruptDetails` 含database `PathValue`、已验证backup manifests、仍可读portable exports与 `recovery_procedure: "database-corruption-v1"`，live filesystem零改动。通过gate的generation才以read-only identity-bound connection读取schema/base evidence；使用 `rusqlite::backup::Backup`复制到`:memory:` destination，在副本上执行完整v2 FTS content comparison与 `INSERT INTO library_fts(library_fts) VALUES('integrity-check')`。V1产生fixable `library_database_migration_required` finding并令 `database_writable=false`；healthy v2无finding且true；FTS-only drift产生fixable `library_fts_invalid`且false；newer产生unfixable `library_schema_newer` finding且false。Base corruption不进入 `DoctorData`：schema/base validation（schema version decode、integrity/foreign keys、domain rows）任何失败都按既有error mapping返回typed `database_corrupt`，满足 `SKL-OPS-004` 与 `docs/product-specs/database-recovery.md` 第1步对 doctor 返回 `database_corrupt` details的要求。可诊断generation的default outcome始终`observed`、`fix_requested=false`、每个finding `fixed=false`、actions empty。
 
-`fix`先运行同一diagnosis。Absent/healthy/newer/unfixable base corruption不写state并返回`unchanged`；后两者保留finding。V1 migration取得durable lock、重新绑定database/directory/schema/state revision baseline，然后在 `data/backups/` 的held no-follow directory中创建restrictive random staging database与manifest。Online backup完成后关闭destination、sync file、流式计算size/SHA-256、重开read-only验证schema/base/integrity/foreign keys、写completed manifest、sync并以no-clobber relative rename发布pair、sync parent。任何不匹配或collision保留foreign entry并返回typed error；只清理仍与held descriptors匹配的owned staging。
+`fix`先运行同一diagnosis，因此base corruption与WAL/sidecar generation同样在diagnosis阶段即返回`database_corrupt`，绝不进入action阶段或返回`unchanged`。Absent/healthy返回`unchanged`；newer保留finding并返回`unchanged`。V1 migration取得durable lock、重新绑定database/directory/schema/state revision baseline，然后在 `data/backups/` 的held no-follow directory中创建restrictive random staging database与manifest。Online backup完成后关闭destination、sync file、流式计算size/SHA-256、重开read-only验证schema/base/integrity/foreign keys、写completed manifest、sync并以no-clobber relative rename发布pair、sync parent。任何不匹配或collision保留foreign entry并返回typed error；只清理仍与held descriptors匹配的owned staging。
 
 Backup durable后，在live connection的一个transaction创建 `library_fts`、从base rows填充、运行content comparison与FTS integrity check、最后把`schema_info.version`更新为2并commit。Migration前后 `state_revision`必须相等。Commit后执行现有 descriptor-bound database/file/parent sync和最终identity revalidation；sync后错误不得声称v1仍在。只有live v2 durable后，才可保守prune超过三代的完整validated backup pairs；永不删除invalid、unpaired、symlinked、digest-drifted或唯一immediately-previous-schema backup。
 
@@ -312,7 +374,7 @@ Domain acceptance要求query normalization不依赖运行时Unicode版本：Unic
 
 Repository acceptance使用真实bundled SQLite。每个name/description/alias/tag display/tag key/category/note/repository字段都有独立match fixture；`code review`可跨字段且不相邻；canonical source order在page之前；total/returned/offset/limit准确；offset `u64::MAX`不向SQLite做overflow conversion。Reads不持有mutation lock、不写state revision、不修改FTS或timestamps。V2 import/mutations在同一transaction保持base/index一致，failure rollback两者；unchanged不做derived rewrite。
 
-Migration acceptance从P2/P3产生的真实v1 schema开始。Default doctor完全filesystem-inert；fix只在durable validated backup pair发布后开始live transaction；backup digest、manifest、SQLite integrity/foreign keys和source identity均可重验。每个failpoint留下old readable v1加完整/无backup，或完整v2且命令明确报告post-commit uncertainty；从不报告partial success。Schema v2的base rows、portable export和state revision与v1相同。Newer schema无write。FTS-only repair保持base database semantic records byte-equivalent或query-equivalent、state revision不变，并使content comparison与special integrity-check通过。
+Migration acceptance从P2/P3产生的真实v1 schema开始。Default doctor完全filesystem-inert，且该不变性覆盖 corrupt/WAL fixtures：base corruption与 WAL-mode/sidecar generation都返回typed `database_corrupt` error（details完整）而不创建`-shm`/`-wal`、不改动任何 byte/timestamp；fix只在durable validated backup pair发布后开始live transaction；backup digest、manifest、SQLite integrity/foreign keys和source identity均可重验。每个failpoint留下old readable v1加完整/无backup，或完整v2且命令明确报告post-commit uncertainty；从不报告partial success。Schema v2的base rows、portable export和state revision与v1相同。Newer schema无write。FTS-only repair保持base database semantic records byte-equivalent或query-equivalent、state revision不变，并使content comparison与special integrity-check通过。
 
 CLI acceptance逐leaf验证help/parser/dispatch/API-v2/human。Pagination只出现在list/search；`library get --limit`、future leaves和aliases均usage error。JSON success恰好一个value；list/search/get outcome为observed，doctor outcomes遵循catalog；not_found、validation、migration、schema-newer、database-corrupt与busy保持typed details/exit。Human输出表达同一query/page/entry/finding/action且所有untrusted字段terminal-safe。
 
@@ -352,6 +414,10 @@ Ready/review transaction严格遵守`docs/PLANS.md`。若`gh pr ready`失败，P
     'OR' -> '"OR"' -> OR按literal命中
     '*' -> '"*"' -> empty result，无grammar扩张
     empty -> empty MATCH expression -> FTS syntax error
+    'Review code' -> '("Review" OR "review") "code"' -> fts5: syntax error（括号 group 后无 implicit AND）
+    'Review code' -> '("Review" OR "review") AND "code"' -> 正常命中
+    WAL-mode fixture + mode=ro -> 创建并保留 skilload.db-shm（header 为 WAL 且无 sidecar 时连 -wal 一起创建）
+    WAL-mode fixture + immutable=1 -> 无 sidecar 但忽略 WAL 内容（no such table）
 
 因此product在SQLite前显式拒绝empty query，而不是泄露engine error。External facts与来源保存在`docs/references/sqlite-fts5-library-search.md`。
 
@@ -392,3 +458,5 @@ Backup manifest是private versioned serde record，不进入API-v2或portable ex
 
 
 2026-08-20：创建PLAN-0005 planning baseline。基于completed PLAN-0004与当前实现选择indexed offline Library reads；经用户决定把`SKL-LIB-004`提升到Revision 2并固定纯文本词项AND；固定schema v2 content-bearing FTS、explicit doctor migration/repair、v1 read compatibility、10,000-entry预算和dependency边界。11:36Z 将 initial commit `88eec453bbb7a08dea160601fa66093398be9c72` 推送到 delivery branch，创建 Draft PR https://github.com/bootids/skilload/pull/5，并写回 canonical URL、Progress 与 publication evidence。该修订只更新delivery metadata；在获得后续明确execution prompt前不实现runtime行为。
+
+2026-08-20 12:03Z：处理 PR #5 首轮规划评审。三个 inline 问题（FTS group 间显式 `AND`、base corruption 走 `database_corrupt` error、pre-open generation gate 防 WAL sidecar）均按 planning 边界以文档修订处置：更新本 Plan 的 Design Inputs、Milestone 2/3、Validation、Product Baseline 可观察路径、Surprises & Discoveries、Decision Log、Progress 与 Review Conversation Log，同步 `docs/design-docs/application-and-persistence.md`、`docs/references/sqlite-fts5-library-search.md` 与 `docs/references/sqlite-backup-and-corruption-recovery.md`。产品语义（`SKL-LIB-004` Revision 2）不变；未改动任何运行时代码，Plan 保持 `plan`、PR 保持 Draft。
