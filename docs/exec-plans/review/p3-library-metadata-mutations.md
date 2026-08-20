@@ -18,7 +18,7 @@ depends_on: [PLAN-0003]
 
 本交付直接依赖 `PLAN-0003`。该前置计划已经在默认分支的 `docs/exec-plans/completed/p2-library-portable-import-export.md` 中完成，提供 Rust workspace、API-v2 当前 producer、受限可移植 Library 导入/导出、Unicode 15.1.0 标签规范化，以及保存 Library 来源和元数据的 SQLite v1 schema。本计划不重复列出传递依赖 `PLAN-0001` 和 `PLAN-0002`。
 
-本交付只增加显式 Library 元数据变更：alias、category、tag 和 note 的 set/add/remove/clear。它不实现 GitHub 来源解析、Trust、`library add|remove|list|search|get|refresh`、FTS5 表、数据库迁移、cache、workspace、global、manager 或 doctor。未实现的命令继续是 usage error，不能注册占位叶子。本计划当前关联 ready PR https://github.com/bootids/skilload/pull/4；2026-08-20 09:26Z 已完成 authorized implementation 并进入 `review`，review-state commit `b83609f7841b5d126c2f4aa2e9e5678b19b0a3a6` 已推送且与 PR head 一致；后续 remediation 仅在本计划已界定的 Product Baseline 内进行。
+本交付只增加显式 Library 元数据变更：alias、category、tag 和 note 的 set/add/remove/clear。它不实现 GitHub 来源解析、Trust、`library add|remove|list|search|get|refresh`、FTS5 表、数据库迁移、cache、workspace、global、manager 或 doctor。未实现的命令继续是 usage error，不能注册占位叶子。本计划当前关联 ready PR https://github.com/bootids/skilload/pull/4；2026-08-20 09:26Z 已完成 authorized implementation 并进入 `review`，review-state commit `b83609f7841b5d126c2f4aa2e9e5678b19b0a3a6` 已推送并在当时与 PR head 一致；后续 ordinary remediation commits 在本计划已界定的 Product Baseline 内推进 PR head。
 
 ## Product Baseline
 
@@ -79,8 +79,8 @@ depends_on: [PLAN-0003]
 - [x] (2026-08-20 09:21Z) 已实现 SQLite 原子 mutation、幂等路径、完整 portable closure、10,000-entry 语义、portable ceiling、alias conflict、missing target 与两秒 process-lock 回归。
 - [x] (2026-08-20 09:21Z) 已注册八个真实 CLI 叶子，完成 API-v2、人类输出、usage/not-found/conflict projection 与使用 `./target/debug/skilload` 的实际 CLI smoke。
 - [x] (2026-08-20 09:24Z) 已同步产品状态、架构和设计文档；focused、workspace、10,000-entry、portable ceiling、round-trip、actual CLI smoke 与 release timing 均通过并记录证据。
-- [x] (2026-08-20 09:26Z) 已推送实现提交 `9077b84747edf586ec803d7dfc318a10cd1a617c`，运行 `gh pr ready` 并观察 PR #4 `isDraft: false`、`headRefOid` 等于该实现 SHA；本 Plan 已移入 `review`，review-state commit `b83609f7841b5d126c2f4aa2e9e5678b19b0a3a6` 已推送，当前远端 PR head 与本地 HEAD 一致。
-- [x] (2026-08-20 10:30Z) 已完整重读 PR #4 的顶层评论、submitted review 和全部 resolved/unresolved inline threads；将三个新的有效 review 问题分类为本 Product Baseline 内的 fixed，先用 regression 重现，再完成实现、focused/full gates 和实际 debug-binary smoke；remediation commit `3514a78266eb258725c3ecfc67633bd5c4ec1f0b` 已推送并与 PR head 一致，三个线程均已回复并 resolved，待推送本 Review Conversation Log 最终记录。
+- [x] (2026-08-20 09:26Z) 已推送实现提交 `9077b84747edf586ec803d7dfc318a10cd1a617c`，运行 `gh pr ready` 并观察 PR #4 `isDraft: false`、`headRefOid` 等于该实现 SHA；本 Plan 已移入 `review`，review-state commit `b83609f7841b5d126c2f4aa2e9e5678b19b0a3a6` 已推送并在当时与远端 PR head 和本地 HEAD 一致。
+- [x] (2026-08-20 10:30Z) 已完整重读 PR #4 的顶层评论、submitted review 和全部 resolved/unresolved inline threads；将三个新的有效 review 问题分类为本 Product Baseline 内的 fixed，先用 regression 重现，再完成实现、focused/full gates 和实际 debug-binary smoke；remediation commit `3514a78266eb258725c3ecfc67633bd5c4ec1f0b` 已推送，final Review Conversation Log commit `7c98b3a80989c1294693fe14cf6e87456f5b44ae` 已推送，三个线程均已回复并 resolved。
 - [ ] 后续收到明确 merge 提示后完成 preflight、进入 `completed`、通过 required checks、合并、更新 `main` 并删除本地交付分支。
 
 ## Surprises & Discoveries
