@@ -2,7 +2,7 @@
 plan_id: PLAN-0004
 branch: codex/p3-library-metadata-mutations
 pull_request: https://github.com/bootids/skilload/pull/4
-status: review
+status: completed
 depends_on: [PLAN-0003]
 ---
 
@@ -81,7 +81,7 @@ depends_on: [PLAN-0003]
 - [x] (2026-08-20 09:24Z) 已同步产品状态、架构和设计文档；focused、workspace、10,000-entry、portable ceiling、round-trip、actual CLI smoke 与 release timing 均通过并记录证据。
 - [x] (2026-08-20 09:26Z) 已推送实现提交 `9077b84747edf586ec803d7dfc318a10cd1a617c`，运行 `gh pr ready` 并观察 PR #4 `isDraft: false`、`headRefOid` 等于该实现 SHA；本 Plan 已移入 `review`，review-state commit `b83609f7841b5d126c2f4aa2e9e5678b19b0a3a6` 已推送并在当时与远端 PR head 和本地 HEAD 一致。
 - [x] (2026-08-20 10:30Z) 已完整重读 PR #4 的顶层评论、submitted review 和全部 resolved/unresolved inline threads；将三个新的有效 review 问题分类为本 Product Baseline 内的 fixed，先用 regression 重现，再完成实现、focused/full gates 和实际 debug-binary smoke；remediation commit `3514a78266eb258725c3ecfc67633bd5c4ec1f0b` 已推送，final Review Conversation Log commit `7c98b3a80989c1294693fe14cf6e87456f5b44ae` 已推送，三个线程均已回复并 resolved。
-- [ ] 后续收到明确 merge 提示后完成 preflight、进入 `completed`、通过 required checks、合并、更新 `main` 并删除本地交付分支。
+- [x] (2026-08-20 11:07Z) 收到明确 merge 授权后已完成只读 preflight：工具链、GitHub auth、干净且已推送的 delivery branch、`origin/main` ancestry、`PLAN-0003`、唯一 review Plan、PR #4 的 `main` base/ready/`MERGEABLE`/`CLEAN`、分支范围和 validation evidence 均已核对；当前完整会话的五个实际问题都已在 Review Conversation Log 记录、回复并 resolved，两个 CI status checks 成功，required-check set 为空。Plan 已转入 `completed`；本次 completion commit 推送后将重新检查其 PR head、required checks 与会话，再以该 SHA 合并、更新 `main` 并删除本地 delivery branch。
 
 ## Surprises & Discoveries
 
@@ -157,6 +157,8 @@ depends_on: [PLAN-0003]
 2026-08-20 09:26Z review transition：PR #4 已由 Draft 转为 ready，GitHub 返回 `isDraft: false` 与 implementation SHA `9077b84747edf586ec803d7dfc318a10cd1a617c` 一致。本 review Plan 记录该证据、Product Baseline 的 Revision 1 完成范围和全部验收结果；后续 review conversation 依照 `address-pr-threads` 处理，只有收到明确 merge 授权才可进入 `completed`。
 
 2026-08-20 10:30Z 已处理 ready PR 的三个新 review concerns：parser 在真实 `--` positional 后保留 help-like metadata 值；shared conflict message 不再伪称 import；direct `TagValue` 防御性验证同时比较 normalized display 与 comparison key。三项 regression 均先在修复前失败，随后 focused tests、完整 Rust gates 与实际 `./target/debug/skilload` smoke 全部通过；remediation commit `3514a78266eb258725c3ecfc67633bd5c4ec1f0b` 已推送并验证为 PR head，三个 GitHub replies 已成功发布且对应 inline threads 均为 resolved。
+
+2026-08-20 11:07Z final merge preflight：本次明确人类授权前，`mise install`、GitHub auth、clean/pushed branch、`origin/main` ancestry、`PLAN-0003` 的 default-branch `completed` 状态、唯一关联的 review Plan、PR #4 的 ready `main` base、`MERGEABLE`/`CLEAN`、branch scope 和 `git diff --check` 全部通过。`ubuntu-24.04` 与 `macos-15` 当前 status checks 均为 success；`gh pr checks --required` 明确报告 required-check set 为空。重新读取的 3 个顶层评论、7 个 review bodies 和 5 个 inline threads 没有新增实际问题，所有五个 logged threads 都为 resolved。最后的 runtime remediation 为 `3514a78266eb258725c3ecfc67633bd5c4ec1f0b`，之后只有本 Plan 的 review-head-history 澄清，所以现有 focused/full validation evidence 与当前 code 一致。本 Plan 在本次 completion commit 中进入 `completed`；只有 PR merge 进入 `main` 后，该 archive 才成为正式历史。
 
 ## Review Conversation Log
 
@@ -583,3 +585,5 @@ changed 时数组恰有对应一个字段，unchanged 时为空。Library adapte
 2026-08-20 09:26Z：实现提交 `9077b84747edf586ec803d7dfc318a10cd1a617c` 已推送后，PR #4 已成功转为 ready；已观察 GitHub ready state 与 implementation SHA 一致。按 transaction 将 Plan 移入 `review/` 并设置 `status: review`；review-state commit `b83609f7841b5d126c2f4aa2e9e5678b19b0a3a6` 已推送，后续 preflight 确认其为当前远端 PR head。
 
 2026-08-20 10:30Z：完整重新读取 ready PR conversation 后记录三个新的 unresolved inline review concerns。它们均属既定 baseline 的 ordinary remediation：将 JSON help/version guard 迁移到 Clap 的实际 parse result、使 shared conflict wording operation-neutral、并在 public direct `TagValue` 边界验证 normalized display。新增 regression 先失败后通过，required focused/full Rust gates 和 isolated actual debug-binary smoke 均成功；preliminary remediation commit `3514a78266eb258725c3ecfc67633bd5c4ec1f0b` 已推送并验证为 PR head。三个 inline threads 均已收到可追溯的 GitHub reply 并 resolved；本次 documentation commit 完成 durable Review Conversation Log。
+
+2026-08-20 11:07Z：收到明确 merge 授权后，完成 `review → completed` 前的只读 preflight；确认当前 PR head `4d55761009f58a54bde5483a4e271c3a5286ac19` 相对最后 runtime remediation 仅含 Plan 的 review-head-history 澄清，PR/Plan、依赖、scope、CI status checks 与全部 GitHub conversation 均一致。将 Plan 移入 `completed/`，本次 completion commit 推送后将以其稳定 SHA 复查 mutable gates 和 required checks，再使用 merge commit 合并。
