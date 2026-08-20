@@ -167,6 +167,8 @@ The `source migrate` unit of work may update only `library_entries`/tags/FTS, `t
 
 Use a global durable-database mutation lock plus a canonical-path workspace lock when relevant. Acquire locks in a single documented order: global/database first, then lexicographically sorted workspace/profile target locks. Bounded acquisition returns typed `busy` with lock domain and elapsed limit.
 
+持久 database lock 的 pathname 是所有 contenders 的稳定协调身份；一旦其他进程可能已经打开它，失败清理不得 unlink 或重建该路径。首次 import 在 COMMIT 前失败可以保留空的 restrictive `state/skilload/locks/database.lock`，但仍必须删除可证明属于本调用的 staging/data artifacts；这避免等待者落在旧 inode 而后续 importer 锁定新 inode。
+
 Network and Git acquisition may occur before the final lock to reduce contention. The stage records database revision, workspace config/lock digest, Trust revision, global source revision, and target ownership observations. After reacquiring locks, the command revalidates every baseline. Drift restarts safe resolution or returns a typed stale result; it never commits on stale assumptions.
 
 P2 的首次导入若在取得锁前按数据库不存在进行规划、但在取得全局持久数据库锁后发现另一位持锁者已经发布 `skilload.db`，MUST 在同一已持有锁内以原始已验证文档重读持久条目并重新生成既有数据库计划；它不得把这一正常串行化结果误报为 identity drift，也不得重入同一锁。
@@ -180,6 +182,8 @@ P2 将每个 SQLite connection 的 busy timeout 固定为与 global durable-data
 Library export is built from domain records, sorted by canonical source, and serialized as a versioned portable JSON document. It contains no database row IDs or local timestamps needed only for operations.
 
 `LibraryImportReader` 只能在 no-follow、nonblocking 打开的 descriptor 经 `fstat` 证明为 regular file，且与预检 path identity 一致后才读取 input；symlink、directory、FIFO、socket、device 或 identity drift 在 scanner 前返回 typed validation error。随后它执行一次没有 schema model 或 `ImportPlan` 的 streaming JSON event/token pass：计数至多 67,108,864 input bytes、10,000 entry objects、1,000,000 total values、八层 container、每个 string 1,048,576 UTF-8 bytes 和每个 number 128 bytes，同时拒绝 malformed JSON 与 duplicate object keys。它在第一个 exceeded dimension 停止并返回 measured/allowed values。只有成功 pass 才可反序列化 versioned schema，并将 `SKL-LIB-008` 的 alias/category/note/tag limits 验证为 `ImportPlan`；同一 batch 的 canonical source 重复作为 `internal_duplicate` conflict，而不是让 SQLite 主键或输入顺序选择 metadata。
+
+该 pass 直接从 held descriptor 的有界 buffered reader 增量推进；它只在 scanner 尚未报错时累积后续 `serde_json` 所需 bytes，并在任何失败时丢弃该缓冲。命中 string、number、depth、value、entry 或全文件 byte ceiling 时立即停止 scanner，不会先 materialize 完整输入。
 
 由于 `LibraryExportData` 是当前唯一传输文档，P2 在导入计划阶段把既有条目与拟新增条目组合为完整确定性文档，并以与导出完全相同的 domain checks/JSON encoder 验证至多 10,000 entries 与 67,108,864 bytes。超过任一上限时，在预演结果或 SQLite mutation 前返回 `validation_failed` / `library_portable_document_entries` 或 `library_portable_document_bytes`；导出也在创建暂存文件前使用同一上限，因此有效持久状态不会产生本二进制拒绝读取的输出。
 
@@ -195,6 +199,8 @@ number scanner 在每次推进 integer、fraction 或 exponent byte 时检查 12
 `linkat` 的 target-exists failure 仍保留 foreign database，但其 source 参数是 staging pathname 而非 held file descriptor；在 macOS/Linux 当前安全接口中，同账号若在最终 verify 后替换该 source，adapter 只能在 link 后检测 drift 并保留 foreign target，不能证明 publication source 一定是 held inode。这个 source-identity gap 是明确记录的 review/product decision，不能以“descriptor-relative”措辞掩盖。正常成功会按 held identity 删除原 staging link。
 
 Library export 在创建 staging 文件前比较 no-follow output target 与有效 Library database generation（database、WAL、SHM）及 database lock，拒绝任何碰撞。其他 target 使用同目录 staging、file sync 与 parent-directory sync；父目录以 no-follow descriptor 打开并绑定 device/inode。export 对既有 regular output 记录 identity，以 held publication link 和 `RenameFlags::EXCHANGE` 做可逆替换；对 absent output 不在 requested name 创建 zero-byte guard，而是在 hidden publication link 已验证为 held staging inode 后以 descriptor-relative `RenameFlags::NOREPLACE` 发布。该 no-clobber rename 使完整 document ready 前 requested path 保持 absent；target collision 保留 foreign entry。parent sync 后仍须比较 held staging FD 与 output entry。若检测到父目录、publication link 或 output identity drift，命令返回错误而不报告成功，且不删除未知 replacement。rename 前失败保留旧 target 或无 target并清理已证明所有权的 staging，rename 后 parent sync failure 不假称旧 target 尚在。
+
+有效 generation 的 protected members 同时包括 SQLite DELETE-mode 的 `skilload.db-journal`；export 在 staging 前以与 database/WAL/SHM/lock 相同的 identity guard 拒绝它，避免干预活动 writer 的 rollback recovery。
 
 任何 publish 前的导出失败都必须按持有暂存 inode 分别清理原暂存名称和随机 publication 名称。existing-target exchange 后 identity mismatch 必须先尝试反向交换；absent-target no-clobber publish 后的 identity mismatch 只保留未知 replacement 并返回 error。无法证明所有权的 publication 或 output replacement 一律保留。
 

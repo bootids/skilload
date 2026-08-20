@@ -19,6 +19,7 @@ const MAX_IMPORT_VALUES: u64 = 1_000_000;
 const MAX_IMPORT_DEPTH: u64 = 8;
 const MAX_IMPORT_STRING_BYTES: u64 = 1_048_576;
 const MAX_IMPORT_NUMBER_BYTES: u64 = 128;
+const INPUT_SCAN_BUFFER_BYTES: usize = 64 * 1024;
 
 pub struct PortableLibraryTransferStore {
     environment: Arc<dyn Environment>,
@@ -64,34 +65,8 @@ impl PortableLibraryTransferStore {
     }
 
     fn read_input(&self, input: &NativePath) -> Result<Vec<u8>, AppError> {
-        let mut file = open_regular_input(input, || {})?;
-        let mut bytes = Vec::with_capacity(64 * 1024);
-        let mut buffer = [0_u8; 64 * 1024];
-        loop {
-            let remaining =
-                (MAX_PORTABLE_LIBRARY_DOCUMENT_BYTES + 1).saturating_sub(bytes.len() as u64);
-            let chunk = remaining.min(buffer.len() as u64) as usize;
-            let read = file.read(&mut buffer[..chunk]).map_err(|error| {
-                AppError::validation(
-                    format!("library_import_read_failed: {error}"),
-                    Some(input.clone()),
-                )
-            })?;
-            if read == 0 {
-                break;
-            }
-            let next = bytes.len() as u64 + read as u64;
-            if next > MAX_PORTABLE_LIBRARY_DOCUMENT_BYTES {
-                return Err(AppError::library_input_limit(
-                    "library_import_bytes",
-                    next,
-                    MAX_PORTABLE_LIBRARY_DOCUMENT_BYTES,
-                    input.clone(),
-                ));
-            }
-            bytes.extend_from_slice(&buffer[..read]);
-        }
-        Ok(bytes)
+        let file = open_regular_input(input, || {})?;
+        JsonScanner::from_reader(file, input).scan()
     }
 
     fn write_document(
@@ -184,7 +159,6 @@ impl Default for PortableLibraryTransferStore {
 impl LibraryTransferStore for PortableLibraryTransferStore {
     fn read_import(&self, input: &NativePath) -> Result<PortableLibraryDocument, AppError> {
         let bytes = self.read_input(input)?;
-        JsonScanner::new(&bytes, input).scan()?;
         serde_json::from_slice(&bytes)
             .map_err(|_| AppError::validation("library_import_schema", Some(input.clone())))
     }
@@ -821,10 +795,11 @@ fn reject_protected_output(
     Ok(())
 }
 
-fn protected_paths(roots: &ResolvedRoots) -> [PathBuf; 4] {
+fn protected_paths(roots: &ResolvedRoots) -> [PathBuf; 5] {
     let database = roots.data.effective.join("skilload.db");
     [
         database.clone(),
+        database.with_file_name("skilload.db-journal"),
         database.with_file_name("skilload.db-wal"),
         database.with_file_name("skilload.db-shm"),
         roots.state.effective.join("locks/database.lock"),
@@ -879,18 +854,22 @@ fn export_io(output: &NativePath, action: &str, error: io::Error) -> AppError {
     )
 }
 
-struct JsonScanner<'a> {
-    bytes: &'a [u8],
+struct JsonScanner<'input, R> {
+    reader: io::BufReader<R>,
+    buffered: Option<u8>,
+    bytes: Vec<u8>,
     position: usize,
     values: u64,
     entries: u64,
-    input: &'a NativePath,
+    input: &'input NativePath,
 }
 
-impl<'a> JsonScanner<'a> {
-    fn new(bytes: &'a [u8], input: &'a NativePath) -> Self {
+impl<'input, R: Read> JsonScanner<'input, R> {
+    fn from_reader(reader: R, input: &'input NativePath) -> Self {
         Self {
-            bytes,
+            reader: io::BufReader::with_capacity(INPUT_SCAN_BUFFER_BYTES, reader),
+            buffered: None,
+            bytes: Vec::with_capacity(INPUT_SCAN_BUFFER_BYTES),
             position: 0,
             values: 0,
             entries: 0,
@@ -898,23 +877,23 @@ impl<'a> JsonScanner<'a> {
         }
     }
 
-    fn scan(mut self) -> Result<(), AppError> {
-        self.skip_whitespace();
-        if self.peek() == Some(b'{') {
+    fn scan(mut self) -> Result<Vec<u8>, AppError> {
+        self.skip_whitespace()?;
+        if self.peek()? == Some(b'{') {
             self.parse_object(1, true)?;
         } else {
             self.parse_value(0)?;
         }
-        self.skip_whitespace();
+        self.skip_whitespace()?;
         if self.position != self.bytes.len() {
             return Err(self.malformed());
         }
-        Ok(())
+        Ok(self.bytes)
     }
 
     fn parse_value(&mut self, parent_depth: u64) -> Result<(), AppError> {
-        self.skip_whitespace();
-        match self.peek() {
+        self.skip_whitespace()?;
+        match self.peek()? {
             Some(b'{') => self.parse_object(parent_depth + 1, false),
             Some(b'[') => self.parse_array(parent_depth + 1),
             Some(b'"') => {
@@ -945,14 +924,14 @@ impl<'a> JsonScanner<'a> {
         self.ensure_depth(depth)?;
         self.count_value()?;
         self.expect_byte(b'{')?;
-        self.skip_whitespace();
+        self.skip_whitespace()?;
         let mut keys = HashSet::new();
-        if self.consume_byte(b'}') {
+        if self.consume_byte(b'}')? {
             return Ok(());
         }
         loop {
-            self.skip_whitespace();
-            if self.peek() != Some(b'"') {
+            self.skip_whitespace()?;
+            if self.peek()? != Some(b'"') {
                 return Err(self.malformed());
             }
             self.count_value()?;
@@ -963,15 +942,15 @@ impl<'a> JsonScanner<'a> {
                     Some(self.input.clone()),
                 ));
             }
-            self.skip_whitespace();
+            self.skip_whitespace()?;
             self.expect_byte(b':')?;
             if root && key == "entries" {
                 self.parse_entries_array(depth + 1)?;
             } else {
                 self.parse_value(depth)?;
             }
-            self.skip_whitespace();
-            if self.consume_byte(b'}') {
+            self.skip_whitespace()?;
+            if self.consume_byte(b'}')? {
                 return Ok(());
             }
             self.expect_byte(b',')?;
@@ -982,14 +961,14 @@ impl<'a> JsonScanner<'a> {
         self.ensure_depth(depth)?;
         self.count_value()?;
         self.expect_byte(b'[')?;
-        self.skip_whitespace();
-        if self.consume_byte(b']') {
+        self.skip_whitespace()?;
+        if self.consume_byte(b']')? {
             return Ok(());
         }
         loop {
             self.parse_value(depth)?;
-            self.skip_whitespace();
-            if self.consume_byte(b']') {
+            self.skip_whitespace()?;
+            if self.consume_byte(b']')? {
                 return Ok(());
             }
             self.expect_byte(b',')?;
@@ -1000,13 +979,13 @@ impl<'a> JsonScanner<'a> {
         self.ensure_depth(depth)?;
         self.count_value()?;
         self.expect_byte(b'[')?;
-        self.skip_whitespace();
-        if self.consume_byte(b']') {
+        self.skip_whitespace()?;
+        if self.consume_byte(b']')? {
             return Ok(());
         }
         loop {
-            self.skip_whitespace();
-            if self.peek() == Some(b'{') {
+            self.skip_whitespace()?;
+            if self.peek()? == Some(b'{') {
                 self.entries += 1;
                 if self.entries > MAX_PORTABLE_LIBRARY_ENTRIES {
                     return Err(self.limit(
@@ -1019,8 +998,8 @@ impl<'a> JsonScanner<'a> {
             } else {
                 self.parse_value(depth)?;
             }
-            self.skip_whitespace();
-            if self.consume_byte(b']') {
+            self.skip_whitespace()?;
+            if self.consume_byte(b']')? {
                 return Ok(());
             }
             self.expect_byte(b',')?;
@@ -1031,17 +1010,19 @@ impl<'a> JsonScanner<'a> {
         self.expect_byte(b'"')?;
         let mut value = String::new();
         loop {
-            let Some(byte) = self.peek() else {
+            let Some(byte) = self.peek()? else {
                 return Err(self.malformed());
             };
             match byte {
                 b'"' => {
-                    self.position += 1;
+                    self.next_byte()?;
                     return Ok(value);
                 }
                 b'\\' => {
-                    self.position += 1;
-                    let escaped = self.next_byte().ok_or_else(|| self.malformed())?;
+                    self.next_byte()?;
+                    let Some(escaped) = self.next_byte()? else {
+                        return Err(self.malformed());
+                    };
                     match escaped {
                         b'"' => self.push_string_character(&mut value, '"')?,
                         b'\\' => self.push_string_character(&mut value, '\\')?,
@@ -1076,19 +1057,21 @@ impl<'a> JsonScanner<'a> {
                 }
                 0x00..=0x1f => return Err(self.malformed()),
                 0x20..=0x7f => {
-                    self.position += 1;
+                    self.next_byte()?;
                     self.push_string_character(&mut value, byte as char)?;
                 }
                 _ => {
                     let width = utf8_width(byte).ok_or_else(|| self.malformed())?;
-                    if self.position + width > self.bytes.len() {
-                        return Err(self.malformed());
+                    let mut encoded = [0_u8; 4];
+                    for byte in encoded.iter_mut().take(width) {
+                        let Some(next) = self.next_byte()? else {
+                            return Err(self.malformed());
+                        };
+                        *byte = next;
                     }
                     let decoded =
-                        std::str::from_utf8(&self.bytes[self.position..self.position + width])
-                            .map_err(|_| self.malformed())?;
+                        std::str::from_utf8(&encoded[..width]).map_err(|_| self.malformed())?;
                     let character = decoded.chars().next().ok_or_else(|| self.malformed())?;
-                    self.position += width;
                     self.push_string_character(&mut value, character)?;
                 }
             }
@@ -1098,7 +1081,9 @@ impl<'a> JsonScanner<'a> {
     fn parse_hex_escape(&mut self) -> Result<u32, AppError> {
         let mut value = 0_u32;
         for _ in 0..4 {
-            let byte = self.next_byte().ok_or_else(|| self.malformed())?;
+            let Some(byte) = self.next_byte()? else {
+                return Err(self.malformed());
+            };
             let digit = match byte {
                 b'0'..=b'9' => (byte - b'0') as u32,
                 b'a'..=b'f' => (byte - b'a' + 10) as u32,
@@ -1121,37 +1106,37 @@ impl<'a> JsonScanner<'a> {
 
     fn parse_number(&mut self) -> Result<(), AppError> {
         let start = self.position;
-        if self.peek() == Some(b'-') {
+        if self.peek()? == Some(b'-') {
             self.advance_number(start)?;
         }
-        match self.peek() {
+        match self.peek()? {
             Some(b'0') => self.advance_number(start)?,
             Some(b'1'..=b'9') => {
                 self.advance_number(start)?;
-                while matches!(self.peek(), Some(b'0'..=b'9')) {
+                while matches!(self.peek()?, Some(b'0'..=b'9')) {
                     self.advance_number(start)?;
                 }
             }
             _ => return Err(self.malformed()),
         }
-        if self.peek() == Some(b'.') {
+        if self.peek()? == Some(b'.') {
             self.advance_number(start)?;
-            if !matches!(self.peek(), Some(b'0'..=b'9')) {
+            if !matches!(self.peek()?, Some(b'0'..=b'9')) {
                 return Err(self.malformed());
             }
-            while matches!(self.peek(), Some(b'0'..=b'9')) {
+            while matches!(self.peek()?, Some(b'0'..=b'9')) {
                 self.advance_number(start)?;
             }
         }
-        if matches!(self.peek(), Some(b'e' | b'E')) {
+        if matches!(self.peek()?, Some(b'e' | b'E')) {
             self.advance_number(start)?;
-            if matches!(self.peek(), Some(b'+' | b'-')) {
+            if matches!(self.peek()?, Some(b'+' | b'-')) {
                 self.advance_number(start)?;
             }
-            if !matches!(self.peek(), Some(b'0'..=b'9')) {
+            if !matches!(self.peek()?, Some(b'0'..=b'9')) {
                 return Err(self.malformed());
             }
-            while matches!(self.peek(), Some(b'0'..=b'9')) {
+            while matches!(self.peek()?, Some(b'0'..=b'9')) {
                 self.advance_number(start)?;
             }
         }
@@ -1159,7 +1144,9 @@ impl<'a> JsonScanner<'a> {
     }
 
     fn advance_number(&mut self, start: usize) -> Result<(), AppError> {
-        self.position += 1;
+        if self.next_byte()?.is_none() {
+            return Err(self.malformed());
+        }
         let length = (self.position - start) as u64;
         if length > MAX_IMPORT_NUMBER_BYTES {
             return Err(self.limit(
@@ -1172,12 +1159,12 @@ impl<'a> JsonScanner<'a> {
     }
 
     fn expect_literal(&mut self, literal: &[u8]) -> Result<(), AppError> {
-        if self.bytes.get(self.position..self.position + literal.len()) == Some(literal) {
-            self.position += literal.len();
-            Ok(())
-        } else {
-            Err(self.malformed())
+        for expected in literal {
+            if self.next_byte()? != Some(*expected) {
+                return Err(self.malformed());
+            }
         }
+        Ok(())
     }
 
     fn count_value(&mut self) -> Result<(), AppError> {
@@ -1204,38 +1191,71 @@ impl<'a> JsonScanner<'a> {
         AppError::validation("library_import_json", Some(self.input.clone()))
     }
 
-    fn skip_whitespace(&mut self) {
-        while matches!(self.peek(), Some(b' ' | b'\n' | b'\r' | b'\t')) {
-            self.position += 1;
+    fn skip_whitespace(&mut self) -> Result<(), AppError> {
+        while matches!(self.peek()?, Some(b' ' | b'\n' | b'\r' | b'\t')) {
+            self.next_byte()?;
         }
+        Ok(())
     }
 
     fn expect_byte(&mut self, expected: u8) -> Result<(), AppError> {
-        self.skip_whitespace();
-        if self.consume_byte(expected) {
+        self.skip_whitespace()?;
+        if self.consume_byte(expected)? {
             Ok(())
         } else {
             Err(self.malformed())
         }
     }
 
-    fn consume_byte(&mut self, expected: u8) -> bool {
-        if self.peek() == Some(expected) {
-            self.position += 1;
-            true
+    fn consume_byte(&mut self, expected: u8) -> Result<bool, AppError> {
+        if self.peek()? == Some(expected) {
+            self.next_byte()?;
+            Ok(true)
         } else {
-            false
+            Ok(false)
         }
     }
 
-    fn next_byte(&mut self) -> Option<u8> {
-        let value = self.peek()?;
-        self.position += 1;
-        Some(value)
+    fn next_byte(&mut self) -> Result<Option<u8>, AppError> {
+        let byte = self.peek()?;
+        if byte.is_some() {
+            self.position += 1;
+            self.buffered = None;
+        }
+        Ok(byte)
     }
 
-    fn peek(&self) -> Option<u8> {
-        self.bytes.get(self.position).copied()
+    fn peek(&mut self) -> Result<Option<u8>, AppError> {
+        if self.buffered.is_none() {
+            let mut byte = [0_u8; 1];
+            let read = self.reader.read(&mut byte).map_err(|error| {
+                AppError::validation(
+                    format!("library_import_read_failed: {error}"),
+                    Some(self.input.clone()),
+                )
+            })?;
+            if read == 0 {
+                return Ok(None);
+            }
+            let measured = self.bytes.len() as u64 + 1;
+            if measured > MAX_PORTABLE_LIBRARY_DOCUMENT_BYTES {
+                return Err(self.limit(
+                    "library_import_bytes",
+                    measured,
+                    MAX_PORTABLE_LIBRARY_DOCUMENT_BYTES,
+                ));
+            }
+            self.bytes.push(byte[0]);
+            self.buffered = Some(byte[0]);
+        }
+        Ok(self.buffered)
+    }
+}
+
+#[cfg(test)]
+impl<'input> JsonScanner<'input, io::Cursor<&'input [u8]>> {
+    fn new(bytes: &'input [u8], input: &'input NativePath) -> Self {
+        Self::from_reader(io::Cursor::new(bytes), input)
     }
 }
 
@@ -1388,6 +1408,7 @@ mod tests {
         fs::create_dir_all(&locks).unwrap();
         let targets = [
             data.join("skilload.db"),
+            data.join("skilload.db-journal"),
             data.join("skilload.db-wal"),
             data.join("skilload.db-shm"),
             locks.join("database.lock"),
@@ -1405,6 +1426,43 @@ mod tests {
             assert_eq!(error.code(), "validation_failed");
             assert_eq!(fs::read(target).unwrap(), b"protected generation");
         }
+    }
+
+    #[test]
+    fn output_refuses_a_live_delete_mode_rollback_journal_before_staging() {
+        let temporary = tempdir().unwrap();
+        let data = temporary.path().join("data/skilload");
+        fs::create_dir_all(&data).unwrap();
+        let database = data.join("skilload.db");
+        let connection = rusqlite::Connection::open(&database).unwrap();
+        connection
+            .execute_batch(
+                "PRAGMA journal_mode = DELETE;
+                 CREATE TABLE entries (id INTEGER PRIMARY KEY);
+                 BEGIN IMMEDIATE;
+                 INSERT INTO entries DEFAULT VALUES;",
+            )
+            .unwrap();
+        let journal = data.join("skilload.db-journal");
+        assert!(journal.is_file());
+
+        let store = PortableLibraryTransferStore::with_environment(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(XdgRootResolver),
+        );
+        let error = store
+            .write_export(&NativePath::new(journal.clone()), &document())
+            .unwrap_err();
+        assert_eq!(error.code(), "validation_failed");
+        assert!(journal.is_file());
+        assert!(fs::read_dir(&data).unwrap().all(|entry| {
+            !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".skilload-library-")
+        }));
+        connection.execute_batch("ROLLBACK").unwrap();
     }
 
     fn scanner_error(bytes: &[u8]) -> AppError {
@@ -1487,8 +1545,11 @@ mod tests {
             r#"{{"x":{}}}"#,
             "1".repeat(MAX_IMPORT_NUMBER_BYTES as usize + 1)
         );
+        let prefix = r#"{"x":"#;
         let mut scanner = JsonScanner::new(number.as_bytes(), &input);
-        scanner.position = r#"{"x":"#.len();
+        for _ in 0..prefix.len() {
+            assert!(scanner.next_byte().unwrap().is_some());
+        }
 
         match scanner.parse_number().unwrap_err() {
             AppError::LibraryInputLimit {
@@ -1505,8 +1566,66 @@ mod tests {
         }
         assert_eq!(
             scanner.position,
-            r#"{"x":"#.len() + MAX_IMPORT_NUMBER_BYTES as usize + 1
+            prefix.len() + MAX_IMPORT_NUMBER_BYTES as usize + 1
         );
+    }
+
+    struct ChunkedReader {
+        bytes: Vec<u8>,
+        position: usize,
+        chunk_size: usize,
+    }
+
+    impl std::io::Read for ChunkedReader {
+        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+            if buffer.is_empty() {
+                return Ok(0);
+            }
+            let remaining = self.bytes.len().saturating_sub(self.position);
+            if remaining == 0 {
+                return Ok(0);
+            }
+            let read = remaining.min(buffer.len()).min(self.chunk_size);
+            let end = self.position + read;
+            buffer[..read].copy_from_slice(&self.bytes[self.position..end]);
+            self.position = end;
+            Ok(read)
+        }
+    }
+
+    #[test]
+    fn scanner_stops_reading_at_first_streamed_number_overage() {
+        let input = NativePath::new(PathBuf::from("/tmp/library-import.json"));
+        let prefix = format!(
+            r#"{{"x":{}"#,
+            "1".repeat(MAX_IMPORT_NUMBER_BYTES as usize + 1)
+        );
+        let mut bytes = prefix.into_bytes();
+        bytes.extend(std::iter::repeat_n(b' ', INPUT_SCAN_BUFFER_BYTES * 2));
+        let mut reader = ChunkedReader {
+            bytes,
+            position: 0,
+            chunk_size: INPUT_SCAN_BUFFER_BYTES,
+        };
+
+        match JsonScanner::from_reader(&mut reader, &input)
+            .scan()
+            .unwrap_err()
+        {
+            AppError::LibraryInputLimit {
+                limit_kind,
+                measured,
+                allowed,
+                ..
+            } => {
+                assert_eq!(limit_kind, "library_import_number_bytes");
+                assert_eq!(measured, MAX_IMPORT_NUMBER_BYTES + 1);
+                assert_eq!(allowed, MAX_IMPORT_NUMBER_BYTES);
+            }
+            error => panic!("expected number limit, got {error:?}"),
+        }
+        assert_eq!(reader.position, INPUT_SCAN_BUFFER_BYTES);
+        assert!(reader.position < reader.bytes.len());
     }
 
     #[test]
@@ -1556,11 +1675,9 @@ mod tests {
     fn reader_reports_the_first_byte_overage_exactly() {
         let temporary = tempdir().unwrap();
         let input = NativePath::new(temporary.path().join("oversized.json"));
-        fs::write(
-            input.as_path(),
-            vec![b' '; MAX_PORTABLE_LIBRARY_DOCUMENT_BYTES as usize],
-        )
-        .unwrap();
+        let mut bytes = b"{}".to_vec();
+        bytes.resize(MAX_PORTABLE_LIBRARY_DOCUMENT_BYTES as usize, b' ');
+        fs::write(input.as_path(), bytes).unwrap();
         let store = PortableLibraryTransferStore::new();
         assert_eq!(
             store.read_input(&input).unwrap().len(),

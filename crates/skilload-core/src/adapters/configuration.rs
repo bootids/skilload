@@ -254,39 +254,26 @@ pub(crate) fn acquire_restrictive_lock(
     lock_name: &str,
     lock_domain: &str,
 ) -> Result<File, AppError> {
-    acquire_restrictive_lock_with_identity(roots, lock_name, lock_domain).map(|(file, _)| file)
+    acquire_restrictive_lock_after_path_inspection(roots, lock_name, lock_domain, |_| {})
 }
 
-pub(crate) fn acquire_restrictive_lock_with_identity(
-    roots: &ResolvedRoots,
-    lock_name: &str,
-    lock_domain: &str,
-) -> Result<(File, Option<(u64, u64)>), AppError> {
-    acquire_restrictive_lock_with_identity_after_path_inspection(
-        roots,
-        lock_name,
-        lock_domain,
-        |_| {},
-    )
-}
-
-fn acquire_restrictive_lock_with_identity_after_path_inspection(
+fn acquire_restrictive_lock_after_path_inspection(
     roots: &ResolvedRoots,
     lock_name: &str,
     lock_domain: &str,
     mut after_path_inspection: impl FnMut(&Path),
-) -> Result<(File, Option<(u64, u64)>), AppError> {
+) -> Result<File, AppError> {
     let state_root = &roots.state.effective;
     ensure_restrictive_directory(state_root, "XDG_STATE_HOME")?;
     let locks = state_root.join("locks");
     ensure_restrictive_directory(&locks, "XDG_STATE_HOME")?;
     let lock_path = locks.join(lock_name);
-    let (file, created_lock, expected_identity) = match fs::symlink_metadata(&lock_path) {
+    let (file, expected_identity) = match fs::symlink_metadata(&lock_path) {
         Ok(metadata) => {
             ensure_regular_lock_file(&lock_path, &metadata, lock_domain)?;
             let identity = metadata_identity(&metadata);
             after_path_inspection(&lock_path);
-            (open_restrictive_lock(&lock_path)?, None, identity)
+            (open_restrictive_lock(&lock_path)?, identity)
         }
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             match create_restrictive_lock(&lock_path) {
@@ -299,8 +286,7 @@ fn acquire_restrictive_lock_with_identity_after_path_inspection(
                             error,
                         )
                     })?;
-                    let identity = metadata_identity(&metadata);
-                    (file, Some(identity), identity)
+                    (file, metadata_identity(&metadata))
                 }
                 Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
                     let metadata = fs::symlink_metadata(&lock_path).map_err(|error| {
@@ -314,7 +300,7 @@ fn acquire_restrictive_lock_with_identity_after_path_inspection(
                     ensure_regular_lock_file(&lock_path, &metadata, lock_domain)?;
                     let identity = metadata_identity(&metadata);
                     after_path_inspection(&lock_path);
-                    (open_restrictive_lock(&lock_path)?, None, identity)
+                    (open_restrictive_lock(&lock_path)?, identity)
                 }
                 Err(error) => {
                     return Err(environment_io(
@@ -371,16 +357,11 @@ fn acquire_restrictive_lock_with_identity_after_path_inspection(
         }
     })();
     if let Err(error) = lock_result {
-        if !matches!(&error, AppError::Busy { .. })
-            && let Some(identity) = created_lock
-        {
-            remove_created_lock(&lock_path, identity, &file);
-        }
         drop(file);
         return Err(error);
     }
 
-    Ok((file, created_lock))
+    Ok(file)
 }
 
 fn open_restrictive_lock(path: &Path) -> Result<File, AppError> {
@@ -447,21 +428,6 @@ fn ensure_opened_lock_identity(
         ));
     }
     Ok(())
-}
-
-pub(crate) fn remove_created_lock(path: &Path, created_identity: (u64, u64), handle: &File) {
-    if fs::symlink_metadata(path)
-        .ok()
-        .zip(handle.metadata().ok())
-        .is_some_and(|(metadata, handle_metadata)| {
-            metadata.file_type().is_file()
-                && !metadata.file_type().is_symlink()
-                && metadata_identity(&metadata) == created_identity
-                && metadata_identity(&handle_metadata) == created_identity
-        })
-    {
-        let _ = fs::remove_file(path);
-    }
 }
 
 fn metadata_identity(metadata: &fs::Metadata) -> (u64, u64) {
@@ -940,7 +906,7 @@ mod tests {
         fs::write(&lock, b"inspected lock").unwrap();
         fs::write(&replacement, b"replacement lock").unwrap();
 
-        let error = acquire_restrictive_lock_with_identity_after_path_inspection(
+        let error = acquire_restrictive_lock_after_path_inspection(
             &roots,
             "database.lock",
             "database",

@@ -1,7 +1,6 @@
 use crate::adapters::configuration::{
-    CreatedDirectory, LOCK_WAIT, acquire_restrictive_lock, acquire_restrictive_lock_with_identity,
-    ensure_restrictive_directory, environment_io, remove_created_lock,
-    sync_created_directory_entries,
+    CreatedDirectory, LOCK_WAIT, acquire_restrictive_lock, ensure_restrictive_directory,
+    environment_io, sync_created_directory_entries,
 };
 use crate::adapters::xdg::{SystemEnvironment, XdgRootResolver};
 use crate::domain::configuration::NativePath;
@@ -351,7 +350,7 @@ impl SqliteLibraryRepository {
         plan: ImportPlan,
     ) -> Result<LibraryImportOperation, AppError> {
         let lock_path = roots.state.effective.join("locks/database.lock");
-        let mut cleanup = FirstImportCleanup::new(lock_path.clone());
+        let mut cleanup = FirstImportCleanup::new();
         (|| {
             cleanup
                 .created_directories
@@ -366,31 +365,8 @@ impl SqliteLibraryRepository {
                     "XDG_STATE_HOME",
                 )?);
             self.hooks.before_first_lock()?;
-            let (lock, created_lock) =
-                acquire_restrictive_lock_with_identity(roots, "database.lock", "database")?;
-            if let Some(identity) = created_lock {
-                let retained_lock = match (|| {
-                    self.hooks.after_first_lock_created_before_clone()?;
-                    lock.try_clone().map_err(|error| {
-                        environment_io(
-                            "XDG_STATE_HOME",
-                            &lock_path,
-                            "retain created database.lock",
-                            error,
-                        )
-                    })
-                })() {
-                    Ok(handle) => handle,
-                    Err(error) => {
-                        remove_created_lock(&lock_path, identity, &lock);
-                        return Err(error);
-                    }
-                };
-                cleanup.created_lock = Some(CreatedLock {
-                    identity,
-                    handle: retained_lock,
-                });
-            }
+            let lock = acquire_restrictive_lock(roots, "database.lock", "database")?;
+            self.hooks.after_first_lock_acquired()?;
 
             let result = (|| {
                 let roots = self.root_resolver.revalidate(roots)?;
@@ -602,7 +578,7 @@ trait PersistenceHooks: Send + Sync {
         Ok(())
     }
 
-    fn after_first_lock_created_before_clone(&self) -> Result<(), AppError> {
+    fn after_first_lock_acquired(&self) -> Result<(), AppError> {
         Ok(())
     }
 
@@ -689,23 +665,14 @@ struct ImportPlan {
     result: LibraryImportResult,
 }
 
-struct CreatedLock {
-    identity: (u64, u64),
-    handle: File,
-}
-
 struct FirstImportCleanup {
-    lock_path: PathBuf,
-    created_lock: Option<CreatedLock>,
     created_directories: Vec<CreatedDirectory>,
     committed: bool,
 }
 
 impl FirstImportCleanup {
-    fn new(lock_path: PathBuf) -> Self {
+    fn new() -> Self {
         Self {
-            lock_path,
-            created_lock: None,
             created_directories: Vec::new(),
             committed: false,
         }
@@ -715,11 +682,7 @@ impl FirstImportCleanup {
 impl Drop for FirstImportCleanup {
     fn drop(&mut self) {
         if !self.committed {
-            cleanup_first_import(
-                &self.lock_path,
-                self.created_lock.as_ref(),
-                &self.created_directories,
-            );
+            cleanup_first_import(&self.created_directories);
         }
     }
 }
@@ -1469,23 +1432,7 @@ fn metadata_identity(metadata: &fs::Metadata) -> (u64, u64) {
     (metadata.dev(), metadata.ino())
 }
 
-fn cleanup_first_import(
-    lock_path: &Path,
-    created_lock: Option<&CreatedLock>,
-    created_directories: &[CreatedDirectory],
-) {
-    if let Some(created_lock) = created_lock
-        && current_entry_matches_created_identity(
-            lock_path,
-            created_lock.identity,
-            &created_lock.handle,
-        )
-        .is_some_and(|metadata| {
-            metadata.file_type().is_file() && !metadata.file_type().is_symlink()
-        })
-    {
-        let _ = fs::remove_file(lock_path);
-    }
+fn cleanup_first_import(created_directories: &[CreatedDirectory]) {
     for directory in created_directories.iter().rev() {
         if current_entry_matches_created_identity(
             &directory.path,
@@ -1770,7 +1717,7 @@ mod tests {
     }
 
     #[test]
-    fn first_import_precommit_failure_removes_only_created_state() {
+    fn first_import_precommit_failure_retains_the_durable_lock() {
         let temporary = tempdir().unwrap();
         let repository = SqliteLibraryRepository::with_hooks(
             Arc::new(TestEnvironment::with_roots(temporary.path())),
@@ -1782,7 +1729,21 @@ mod tests {
             .unwrap_err();
         assert_eq!(error.code(), "internal_invariant");
         assert!(!temporary.path().join("data/skilload").exists());
-        assert!(!temporary.path().join("state/skilload").exists());
+        let lock = temporary.path().join("state/skilload/locks/database.lock");
+        assert!(lock.is_file());
+        let lock_identity = metadata_identity(&fs::metadata(&lock).unwrap());
+
+        let repository = SqliteLibraryRepository::with_environment(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(XdgRootResolver),
+        );
+        repository
+            .import(&document(vec![entry("skills/review", None)]), false)
+            .unwrap();
+        assert_eq!(
+            metadata_identity(&fs::metadata(lock).unwrap()),
+            lock_identity
+        );
     }
 
     struct SidecarBeforeCommitFailure;
@@ -1825,7 +1786,12 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(sidecars.len(), 1);
         assert_eq!(fs::read(&sidecars[0]).unwrap(), b"staging sidecar");
-        assert!(!temporary.path().join("state/skilload").exists());
+        assert!(
+            temporary
+                .path()
+                .join("state/skilload/locks/database.lock")
+                .is_file()
+        );
     }
 
     #[test]
@@ -2027,23 +1993,23 @@ mod tests {
         assert!(!temporary.path().join("state/skilload").exists());
     }
 
-    struct FirstLockCloneFailure;
+    struct AfterFirstLockFailure;
 
-    impl PersistenceHooks for FirstLockCloneFailure {
-        fn after_first_lock_created_before_clone(&self) -> Result<(), AppError> {
+    impl PersistenceHooks for AfterFirstLockFailure {
+        fn after_first_lock_acquired(&self) -> Result<(), AppError> {
             Err(AppError::Internal {
-                incident_id: "before-created-lock-clone".to_owned(),
+                incident_id: "after-first-library-lock".to_owned(),
             })
         }
     }
 
     #[test]
-    fn first_import_created_lock_clone_failure_removes_created_state() {
+    fn first_import_post_lock_failure_retains_the_durable_lock() {
         let temporary = tempdir().unwrap();
         let repository = SqliteLibraryRepository::with_hooks(
             Arc::new(TestEnvironment::with_roots(temporary.path())),
             Arc::new(XdgRootResolver),
-            Arc::new(FirstLockCloneFailure),
+            Arc::new(AfterFirstLockFailure),
         );
 
         let error = repository
@@ -2052,7 +2018,12 @@ mod tests {
 
         assert_eq!(error.code(), "internal_invariant");
         assert!(!temporary.path().join("data/skilload").exists());
-        assert!(!temporary.path().join("state/skilload").exists());
+        assert!(
+            temporary
+                .path()
+                .join("state/skilload/locks/database.lock")
+                .is_file()
+        );
     }
 
     struct WinnerPublishesBeforeFirstLock {

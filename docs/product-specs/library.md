@@ -1,6 +1,6 @@
 # Library
 
-Status: 部分实现。`PLAN-0003` 实现了 Revision 3 的 `SKL-LIB-009` 与 Revision 4 的 `SKL-LIB-010`；其他 Library 行为仍为 skilload CLI MVP 的 planned 范围。
+Status: 部分实现。`PLAN-0003` 实现了 Revision 4 的 `SKL-LIB-009` 与 Revision 4 的 `SKL-LIB-010`；其他 Library 行为仍为 skilload CLI MVP 的 planned 范围。
 
 The **Library** is the user's durable, searchable collection of source metadata. It is not a content store, Trust store, workspace manifest, or deployment list.
 
@@ -52,15 +52,19 @@ The **Library** is the user's durable, searchable collection of source metadata.
 
 **Acceptance.** Adding ` Review ` and then `review` stores one tag displayed as `Review`; composed `caf\u00e9` and decomposed `cafe\u0301` likewise share one key and retain the first display spelling. Internal whitespace is not collapsed, Turkish case folding is locale-independent, and empty/control/oversized tags, a 65th distinct tag, a 257-scalar or 1,025-byte alias/category, and a 4,097-scalar or 16,385-byte note fail without mutation. Removing through any equivalent spelling removes the one stored value. Clearing an already empty note returns unchanged, and attempting a duplicate alias changes neither entry.
 
-## SKL-LIB-009 - Export boundary (Revision 3)
+## SKL-LIB-009 - Export boundary (Revision 4)
 
 **Behavior.** Library export MUST 生成确定性、版本化的 JSON，其中只含可移植的 Library 来源与元数据；它 MUST 排除 Trust、全局 desired state、manager records、已知 workspace paths、本机 profile IDs、凭据、cache content 和不可移植的操作时间。`library export --output <PATH>` MUST 向请求的原生路径原子写入且仅写入一个可移植的 `LibraryExportData` 文档；正常的人类输出或 `--json` 操作结果 MUST 保持在该文件之外。创建 staging 文件前，export MUST 通过不跟随 symlink 的检查和有效 XDG root identity 比较，拒绝指向活动 `data/skilload.db`、`skilload.db-wal`、`skilload.db-shm` 或 `state/locks/database.lock` 的 target；它不得替换这些 skilload-owned path 或在其处创建临时文件。对其余既有普通文件，export MUST 在其父目录创建临时文件、完整写入并 sync 文件、原子 rename，再 sync 父目录；rename 前的失败 MUST 保留旧 target 或无 target 并清理 staging。若 rename 后的父目录 sync 失败，命令 MUST 返回错误且不得声称旧 target 仍在；新文档 MAY 已可见，但不得报告成功。
+
+活跃 SQLite 在 DELETE rollback journal 模式下出现的 `data/skilload.db-journal` 也是同一 database generation 的成员；export MUST 在创建 staging 前以相同 no-follow、root identity 和 file-identity 规则拒绝该 target，绝不得移动、删除或以 JSON 替换该 journal。
 
 同一 `LibraryExportData` 是当前唯一的可移植传输文档；因此任何 P2 持久 Library 的确定性导出都 MUST 同时不超过 `SKL-LIB-010` 的 10,000-entry 与 67,108,864-byte 输入上限。导出在创建暂存文件前发现任一上限已超出时，MUST 以 `validation_failed` 的 `library_portable_document_entries` 或 `library_portable_document_bytes` 约束值失败且不写 output。实际导入与预演 MUST 在返回计划或写入持久状态前，对完整的导入后 Library 计数同一确定性文档；若它将超过任一上限，MUST 以相同错误拒绝，因此本二进制成功导出的文档始终可由本二进制导入。
 
 在最终 publish 前及 parent-directory sync 后，export MUST 证明 held staging descriptor 仍与已验证 parent descriptor 中的 output entry 相同；若发现 identity drift，MUST 返回错误且不得报告成功，不得删除未知 replacement。rename 前的 drift 保留旧 target 或无 target；rename 后的 drift 允许本调用文档已被外部移动，但请求 output 的未知 replacement 必须保留。
 
 **Acceptance.** 检查 export 找不到本机绝对路径或 authorization/deployment record。未改变 Library 状态的重复 export MUST 产生语义相同、排序稳定的数据，并以原子替换完成请求路径的输出；输出文件本身必须是 `LibraryExportData`，命令的人类或 API-v2 操作结果不得混入其中。针对活动 database、WAL、SHM 和 database lock 的 target fixture 必须在创建 staging 前失败且保持该路径不变。注入 rename 前失败时旧普通 target 或无 target 必须保留；注入 rename 后父目录 sync 失败时命令必须失败，fixture 可以观察到新 target，且不得把该情形断言为旧 target 保留。若 same-account process 在 rename 后、最终 parent sync 前替换 output entry，命令 MUST 以 identity-drift 错误退出、不得报告成功，并保留 replacement。
+
+活动 DELETE-mode rollback journal target fixture 也必须在创建 staging 前失败且 journal 保持不变。
 
 
 ## SKL-LIB-010 - Atomic import and conflicts (Revision 4)

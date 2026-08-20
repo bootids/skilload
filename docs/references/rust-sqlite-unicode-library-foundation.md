@@ -16,6 +16,7 @@
 * P2 直接依赖 `libc =0.2.189`，为 Unix `O_NOFOLLOW`/`O_NONBLOCK` 常量和 bundled SQLite file-control 的 `c_int` 提供固定来源；它不引入一般 native I/O abstraction。
 * P2 直接依赖 `rustix = { version = "=1.1.4", features = ["fs"] }`。`rustix::fs::renameat` 接收安全的 `AsFd` directory handle 与相对 path component，使 export 能在持有且已验证 identity 的父目录中发布 staging；`RenameFlags::NOREPLACE` 在 Linux 映射 `RENAME_NOREPLACE`、在 Apple 映射 `RENAME_EXCL`，可让 originally absent 的 export target 在完整文档 ready 前保持 absent。既有 target 继续使用 reversible `RenameFlags::EXCHANGE`。`linkat` 对不存在 target 的 no-clobber 语义可避免 zero-byte guard，但其 source 仍是 pathname；macOS 没有可移植的 `AT_EMPTY_PATH`，所以它不能单独证明 same-account rename race 下 source 是 held staging inode。
 * `rusqlite 0.40.2` 没有安全的 connection-main-file identity API；其 raw `Connection::handle` 可与 bundled `sqlite3_file_control(..., SQLITE_FCNTL_HAS_MOVED, ...)` 查询 SQLite 实际打开 inode 是否已被 pathname 替换。locked `libsqlite3-sys 0.38.2` 的 Unix VFS 只在非空 database 写 journal 前自动执行同一检查，zero-size first-import staging 会跳过该路径，read-only connection 也不会触发写时保护。因此 `skilload-core` 对 first-staging、existing import 与 export/dry-run 的每个 SQLite connection 都在任意 SQL 前以一个带安全论证的局部 FFI helper 执行该 check；其他 crate code 继续由 `deny(unsafe_code)` 约束。
+* P2 初始化 v1 schema 时固定 `PRAGMA journal_mode = DELETE`。活跃写 transaction 的 `skilload.db-journal` 与主 database 同属当前 generation；`library export --output` 必须在创建 staging 前像 database、WAL、SHM 与 database lock 一样拒绝它，不能借当前默认 journal mode 遗漏 rollback recovery 文件。`output_refuses_a_live_delete_mode_rollback_journal_before_staging` 以实际 open transaction 验证该规则。
 
 ## 注意事项
 
