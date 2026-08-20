@@ -2,7 +2,7 @@
 plan_id: PLAN-0003
 branch: codex/p2-library-portable-import-export
 pull_request: https://github.com/bootids/skilload/pull/3
-status: review
+status: active
 depends_on: [PLAN-0002]
 ---
 
@@ -23,20 +23,20 @@ depends_on: [PLAN-0002]
 ## Product Baseline
 
 
-本交付完整实现并验证以下两个原子行为：`SKL-LIB-009` 为 Revision 4，`SKL-LIB-010` 为 Revision 4。
+本交付完整实现并验证以下两个原子行为：`SKL-LIB-009` 为 Revision 4，`SKL-LIB-010` 为 Revision 5。
 
 * `docs/product-specs/library.md` 中 Revision 4 的 `SKL-LIB-009` 要求 `library export --output <PATH>` 将确定性、版本化且仅含 Library 来源/元数据的 `LibraryExportData` 原子写入请求路径；文件排除 Trust、全局/工作区状态、profile、绝对本机路径、凭据、缓存内容和操作时间，命令自身仍产生既定人类或 API-v2 结果。它在创建 staging 前拒绝活动 database、DELETE rollback journal、WAL、SHM 或 database lock target；rename 前失败保留旧 output 或无 output，rename 后父目录 sync 失败返回错误且不声称旧 output 仍在。
-* 同一文件中 Revision 4 的 `SKL-LIB-010` 要求 `library import --input <PATH> [--dry-run]` 在读取前以 no-follow、nonblocking descriptor 和 `fstat` 拒绝非常规或 identity-drift input，并在构建任何 model 或 `ImportPlan` 前执行流式非模型预验证。它分别限制 67,108,864 bytes、10,000 entry objects、1,000,000 JSON values、八层 object/array、1,048,576-byte string token 和 128-byte number token，拒绝 duplicate object key、invalid JSON、unknown field、wrong type 和 invalid metadata；整个 batch 要么提交、要么不改变 durable Library，alias 或同 batch canonical duplicate 均以规定的 `internal_duplicate` conflict rollback，dry-run 与未变基线上的实际 import 报告相同计划。
+* 同一文件中 Revision 5 的 `SKL-LIB-010` 要求 `library import --input <PATH> [--dry-run]` 在读取前以 no-follow、nonblocking descriptor 和 `fstat` 拒绝非常规或 identity-drift input，并在构建任何 model 或 `ImportPlan` 前执行流式非模型预验证。它分别限制 67,108,864 bytes、10,000 entry objects、1,000,000 JSON values、八层 object/array、1,048,576-byte string token 和 128-byte number token，拒绝 duplicate object key、invalid JSON、unknown field、wrong type 和 invalid metadata；整个 batch 要么提交、要么不改变 durable Library，alias 或同 batch canonical duplicate 均以规定的 `internal_duplicate` conflict rollback，dry-run 与未变基线上的实际 import 报告相同计划。
 
-  Revision 4 还要求六种 ceiling 以 API-v2 独立 code `library_input_limit_exceeded` 返回 `LimitDetails` 的 first exceeded dimension、无损 measured/allowed decimal 值和 input `PathValue`；该 code 不得重用 API-v1 仅适用于 Agent project-input 的 `agent_input_limit_exceeded`。首次 import 在 data-directory descriptor 内 no-clobber 发布 staging database；commit 前失败只清理本调用创建且 identity 未变的 state，commit 后 durability-sync failure 返回错误且不伪称 state 未改变。
+  Revision 5 还要求六种 ceiling 以 API-v2 独立 code `library_input_limit_exceeded` 返回 `LimitDetails` 的 first exceeded dimension、无损 measured/allowed decimal 值和 input `PathValue`；该 code 不得重用 API-v1 仅适用于 Agent project-input 的 `agent_input_limit_exceeded`。首次 import 在 data-directory descriptor 内 no-clobber 发布 staging database；`COMMIT` 前失败不报告成功，且只清理仍可由 held descriptor 证明的 staging entry/live link，无法证明 provenance 或 identity 的 database、sidecar、lock 与 directory 可以保留，失败不得声称 state absence；commit 后 durability-sync failure 同样返回错误且不伪称 state 未改变。
 
-两个 Revision 4 的“同一可移植文档”与严格 input ceiling 共同要求完整的 P2 durable Library 也能被当前 import 读取：import 与 dry-run 必须在 mutation/result 前同时检查 post-import deterministic document 的 10,000-entry 与 67,108,864-byte transfer 上限，export 也必须在 staging 前执行相同检查。它是既有单一 transfer format 的实现闭环与 defect 修复，不引入新命令、字段、API code。
+Revision 4 的 export 与 Revision 5 的 import 共同要求“同一可移植文档”与严格 input ceiling：完整的 P2 durable Library 必须能被当前 import 读取，import 与 dry-run 必须在 mutation/result 前同时检查 post-import deterministic document 的 10,000-entry 与 67,108,864-byte transfer 上限，export 也必须在 staging 前执行相同检查。它是既有单一 transfer format 的实现闭环与 defect 修复，不引入新命令、字段、API code。
 
 导入文件中的 `ResolvedSkill`、`SourceIdentity`、完整 SHA、完整性摘要、已验证名称、描述和计数必须满足 API-v2 的可移植表示。为防止损坏的本地记录，本交付会复用 `SKL-SRC-002`、`SKL-SRC-007` 与 `SKL-SRC-012` 的 canonical source、名称与摘要约束，并对 alias/category/tag/note 执行 `SKL-LIB-008` 的大小、Unicode 15.1.0、NFC、`White_Space` 裁剪和 C/F 完整默认大小写折叠规则。这些约束的局部复用不表示来源获取、直接元数据命令或完整 Source/Library 行为已经完成；`SKL-SRC-*`、`SKL-LIB-001`、`SKL-LIB-004`、`SKL-LIB-005`、`SKL-LIB-008` 和 `SKL-LIB-011` 仍保持 planned，直到各自完整 acceptance 被独立交付。
 
 Revision 2 的 `SKL-CLI-004`、`SKL-CLI-005` 与 `SKL-CLI-012` 以 API-v2 current-producer cutover 的最小必要范围加入本交付；它不增加命令、双版本协商或 API-v1 compatibility mode。其余 `SKL-CLI-*`、`SKL-OPS-*` 不在本次完成基线中。本交付遵守适用约束：JSON stdout 只写一个 API-v2 信封、常见成功结果正确区分 observed/changed/unchanged、路径用 `PathValue`、读和 dry-run 不联网且不创建 skilload 根、导入写入仅在完整验证之后发生；未知较高 schema 拒绝写入，已识别的数据库损坏绝不被静默替换且必须返回 `database_corrupt` 的 `DatabaseCorruptDetails`。P2 不创建备份或导出位置索引，因此该诊断如实返回空 `backups` 和 `recoverable_exports` 集合、数据库 `PathValue` 与 `database-corruption-v1`；但不会宣称这些跨全产品行为的全部 acceptance 已满足。
 
-完成时的可观测证明是：用户先对合法 regular-file 导入文件运行带 `--dry-run --json` 的命令，得到 `library.import` 的 `observed` 结果且 XDG data/state 根仍不存在；再运行实际导入，得到 `changed` 或 `unchanged`，只建立所需的 data SQLite 文件与写锁；运行 export 后得到确定性 `LibraryExportData` 文件。重复导入不重写数据库；混入无效条目、重复 JSON 键、超限输入、非常规 input、重复 canonical source 或 alias 冲突的批次不产生部分条目或持久写入。首次 import 的 commit 前注入失败后 data root 恢复为 absent；为避免等待者跨 inode 分裂，state root 可保留空的 durable `database.lock`，但不存在 live Library database 或本调用创建的 sidecar。commit 后 sync 失败不报告成功或 absence。export 拒绝 database generation、rollback journal 或 lock target；rename 前输出失败保留旧 target，而 rename 后父目录 sync 失败返回错误且新 target 可能已发布。对损坏数据库的 import/export 返回带路径、空 P2 已知恢复集合和 `database-corruption-v1` 的 `database_corrupt`，并保持原文件及持久状态不变。
+完成时的可观测证明是：用户先对合法 regular-file 导入文件运行带 `--dry-run --json` 的命令，得到 `library.import` 的 `observed` 结果且 XDG data/state 根仍不存在；再运行实际导入，得到 `changed` 或 `unchanged`，只建立所需的 data SQLite 文件与写锁；运行 export 后得到确定性 `LibraryExportData` 文件。重复导入不重写数据库；混入无效条目、重复 JSON 键、超限输入、非常规 input、重复 canonical source 或 alias 冲突的批次不产生部分条目或持久写入。首次 import 的 `COMMIT` 前注入失败返回错误且不报告 success；data/state root、durable lock、随机 staging sidecar 或 race replacement 可以保留，只有仍与 held descriptor 一致的 staging entry/live link 才可清理，测试不得断言 state absence。commit 后 sync 失败不报告成功或 absence。export 拒绝 database generation、rollback journal 或 lock target；rename 前输出失败保留旧 target，而 rename 后父目录 sync 失败返回错误且新 target 可能已发布。对损坏数据库的 import/export 返回带路径、空 P2 已知恢复集合和 `database-corruption-v1` 的 `database_corrupt`，并保持原文件及持久状态不变。
 
 任何 P2 已接受的完整 Library 都能导出为不超过 10,000 entries、67,108,864 bytes 的 deterministic `LibraryExportData`，随后由同一二进制重新 import；试图通过多次 individually valid import 累积超过任一 bound 的 batch 在 mutation/plan result 前以 `validation_failed` 的 `library_portable_document_entries` 或 `library_portable_document_bytes` constraint 失败。首次 import 在 lock 内发现另一 importer 已发布 database 时，以同一 document 重新规划 existing state 并正常序列化；staging basename 在 SQLite open 前后都必须绑定到 held file，export 最终 rename 失败清理原 staging 与 publication link 而不触碰未知 replacement。
 
@@ -109,7 +109,7 @@ Revision 2 的 `SKL-CLI-004`、`SKL-CLI-005` 与 `SKL-CLI-012` 以 API-v2 curren
 - [x] (2026-08-19 14:56Z) 已在 `list --all` 的最终会话读取中核对 8 条 top-level trigger、84 个 review body 和 66 个 inline thread：66 个 Plan source 全部覆盖、无 unlogged/missing source、无 unresolved thread；top-level 仍仅为 `@codex`，非空 review body 均为 generic automation。九个新 source 已逐一回复并在 reply 成功后关闭；本 Plan 已记录每个 reply URL（超时重叠调用留下的额外回复也完整保留），待提交/push 最终 ledger reconciliation。
 - [x] (2026-08-20) 完整读取当前 PR 会话的 9 条 top-level trigger、85 个 review body 与 71 个 inline thread；前两类没有独立问题，66 个既有 ledger source 仍 resolved，5 个新 source 已按 source、路径、文本与 thread state 登记。
 - [x] (2026-08-20) 在 `review` 状态完成四项 ordinary remediation：reversible export/database publication exchange、GitHub owner grammar、SQLite commit-failure sidecar ownership；新增 focused regressions，并通过 core 94 tests、fmt、Clippy、locked workspace tests（11、12、94）、build、CLI import/export smoke 与 diff check。
-- [ ] (2026-08-20) `PRRC_kwDOT7YN2s7jWsuw` 仍等待人类决定：需要可证明的跨 macOS/Linux create-and-hold directory primitive，或明确调整首次 import 在目录创建 race 下的 absent-root/foreign-path 保证；该 inline thread 必须保持 open。
+- [x] (2026-08-20T05:52Z) 人类选择修订恢复合约，而不授权跨 macOS/Linux native/FFI create-and-hold primitive；`SKL-LIB-010` 将升至 Revision 5，首次 import 的 pre-COMMIT failure 不再承诺 data/state roots absence，未知 provenance residual 必须保留。
 - [x] (2026-08-20) 四个 fixed source 已使用 `752c0f77b24a5300dffe7edcca952809688fdc1f` 的实现/验证证据逐一回复并在 reply 成功后关闭；`PRRC_kwDOT7YN2s7jWsuw` 已收到 exact decision question，保持 blocked/open。
 - [x] (2026-08-20) 四个 ordinary remediation 已由 `282fd97dcd04dea37d0ff30848ecd26be603937f` 推送并逐源回复、关闭；最终读取确认 10 条 top-level trigger 均为 `@codex`、96 个 review body 无独立问题、75 个 inline source 全部有 Plan heading，74 个已解决。唯一 `PRRC_kwDOT7YN2s7jWsuw` 因未决 create-and-hold 方向维持 pending/blocked/open。
 - [x] (2026-08-20) 已完整读取 PR #3 当前 11 条 top-level trigger、13 个非空自动 review body 与 80 个 inline thread；前两类没有独立问题，75 个既有 inline source 仍与 Plan log 对应。两个 ordinary export remediation 已由 `0892f3ea7b515f6bdd0f8e371516af71eb390c9a` 推送：focused portable tests 19/19、fmt、Clippy、locked workspace tests（11、12、100）与 build 通过，实际 CLI API-v2 export smoke 证明 symlink-parent `..` 写入 kernel 解析的路径。五个新 source 均已获得 GitHub reply；两个 fixed 与一个 no-fix thread 已关闭，两个 held-file/sidecar provenance source 与既有 directory identity source 均保持 pending/blocked/open，等待人类决定。
@@ -122,7 +122,9 @@ Revision 2 的 `SKL-CLI-004`、`SKL-CLI-005` 与 `SKL-CLI-012` 以 API-v2 curren
 
 
 
-- [ ] (2026-08-20) `PRRC_kwDOT7YN2s7jlNzR` 加入 `PRRC_kwDOT7YN2s7jWsuw`、`PRRC_kwDOT7YN2s7jiT5X` 和 `PRRC_kwDOT7YN2s7jiT5i` 的 pending/blocked 集合：四个 thread 必须保持 open，直至人类选择 portable ownership/lock primitive 或调整相应产品保证。
+- [x] (2026-08-20T05:52Z) `PRRC_kwDOT7YN2s7jWsuw`、`PRRC_kwDOT7YN2s7jiT5X`、`PRRC_kwDOT7YN2s7jiT5i` 与 `PRRC_kwDOT7YN2s7jlNzR` 的人类决策已统一为 Revision-5 recovery contract；PR 已恢复为 Draft，Plan 正在回到 `active`，四个 thread 保持 open，直至实现、验证、回复和 closure 完成。
+
+- [ ] (2026-08-20T05:52Z) 在 `active` 实现 Revision 5 的保守 pre-COMMIT cleanup：不再以 pathname/first-observed FD 推断 directory 或 SQLite sidecar ownership，更新产品/持久化设计/reference/测试并重新完成 ready/review transaction。
 
 - [ ] 收到明确人类合并授权后，完成预检、评审会话记录、completed 事务、必要检查、合并、默认分支更新和本地交付分支清理。
 
@@ -195,6 +197,9 @@ Revision 2 的 `SKL-CLI-004`、`SKL-CLI-005` 与 `SKL-CLI-012` 以 API-v2 curren
   Evidence: `docs/product-specs/library.md:80` 要求 data/state roots 恢复 absent；`docs/design-docs/application-and-persistence.md:170` 要求一旦 contender 可能打开 lock 就不得 unlink/recreate；`sqlite_library.rs` 持续保留 lock 以避免 inode split。
 - Observation: existing-output exchange 后的 publication pathname 不能安全地执行 check-then-unlink。
   Evidence: `OutputPublicationGuard::matches` 与 `unlinkat` 是独立 pathname syscall；同账号可在两者之间安装 foreign replacement。`export_preserves_a_replaced_publication_entry_after_exchange` 在该点植入 replacement 并验证它未被删除。
+- Observation: 四个 pending review source 揭示安全 Rust/macOS/Linux 接口不能同时证明首次创建 directory、staging source、SQLite sidecar 与 durable lock 的 provenance，并维持 Revision 4 的 pre-COMMIT absent-root assertion。
+  Evidence: 2026-08-20T05:52Z 的人类选择将 `SKL-LIB-010` 升至 Revision 5，接受保守保留未知 residual，而不授权 native/FFI primitive。
+
 
 ## Decision Log
 
@@ -338,6 +343,10 @@ Revision 2 的 `SKL-CLI-004`、`SKL-CLI-005` 与 `SKL-CLI-012` 以 API-v2 curren
 - Decision: `PRRC_kwDOT7YN2s7jlNzR` 保持 pending/blocked，不把 prior durable-lock implementation decision 视为对高优先级 `SKL-LIB-010` acceptance 的隐式修订。
   Rationale: 修改产品 revision/acceptance 是重大行为取舍，需人类决定；盲目 unlink/recreate lock 会违反 stable coordination identity，现有跨 macOS/Linux primitive 不能证明同时保留 foreign-path safety 与 absent-root recovery。
   Date/Author: 2026-08-20 / Codex
+- Decision: 人类选择将 `SKL-LIB-010` 修订为 Revision 5 的保守 recovery contract，不引入新的跨 macOS/Linux native/FFI create-and-hold primitive。
+  Rationale: 当前安全 API 无法证明 directory、staging source 或 sidecar 的 creation provenance。未知 residual 的保留和明确 error 比删除或宣称 absence 更符合 foreign-path safety；实现必须移除基于 pathname 或 first-observed FD 的 cleanup 推断。
+  Date/Author: 2026-08-20T05:52Z / 用户确认、Codex 记录
+
 
 ## Outcomes & Retrospective
 
@@ -403,6 +412,8 @@ P2 implementation 与完整验证已完成，PR #3 已于 2026-08-19 05:57Z 转�
 2026-08-20 的当前 local remediation 已完成六项 ordinary P2 review fix：transfer serializer 以完整 domain validation 保证 export/import closure；existing-output exchange 保留 publication replacement，避免 check-then-unlink 删除 foreign path；API-v2 error display 采用 Busy/schema 的实际 domain；scanner 将 valid JSON 的 wrong `entries` type 留给 schema；first-import created-directory sync 使用正确 XDG root。focused regressions、format、Clippy、locked workspace tests（11、12、107）、build、CLI round trip 和 diff check 均通过。`PRRC_kwDOT7YN2s7jlNzR` 揭示高优先级 absent-root acceptance 与 durable lock invariant 冲突，连同三个既有 provenance/directory source 保持 pending/blocked/open；本轮不伪造 product revision 或 filesystem primitive。下一步提交并推送 preliminary code/ledger evidence，随后回复并关闭六个 fixed thread，只回复并保留四个 blocked thread。
 
 2026-08-20 的 reply reconciliation 显示 14 条 top-level trigger 均为 `@codex`，117 个 review body 均为空或通用 automation；90 个 inline source 全部在 Review Conversation Log 中有 heading。六个本轮 fixed source 都有 `4ef1ba205eb323c702bceda830445f44feb4da46`、验证、GitHub reply URL 和 `thread resolved: true`；`PRRC_kwDOT7YN2s7jlNzR` 已得到精确 decision question，连同三个既有 provenance/directory source 维持 pending/blocked/open。下一步提交、推送本最终 reconciliation，然后再次读取会话确认没有漂移。
+2026-08-20T05:52Z 的 merge preflight 发现四个 `pending`/`blocked` inline thread，故未进入 `completed`。人类选择 Revision-5 recovery contract 后，`gh pr ready --undo` 已将 PR #3 恢复为 open Draft，且 branch/head/依赖重新核对一致。本 Plan 正在从 `review` 回到 `active`；下一步是移除不可证明 provenance 的 cleanup、更新受管文档与回归，再重新完成 ready/review 事务和会话 reconciliation。
+
 
 ## Review Conversation Log
 
@@ -1535,13 +1546,13 @@ Problem: `create_restrictive_directory_with_open` 在 successful `create_dir` �
 
 Disposition: pending
 
-Status: blocked
+Status: open
 
-Resolution: 需要在不引入未审计 unsafe code 且同时支持 macOS/Linux 的前提下，选择可证明 create-and-hold directory identity 的机制，或显式改变首次 import 对失败后 absent-root restoration 的保证。POSIX/Darwin/Linux `mkdir`/`mkdirat` 不返回 directory descriptor；当前 `create_dir` → pathname metadata → open 顺序无法辨别替换前的创建 inode。此问题不能以额外 pathname stat 解决。
+Resolution: 人类已于 2026-08-20T05:52Z 选择 Revision-5 recovery contract，而非 native create-and-hold primitive。active rework 将停止由 create 后 pathname metadata 推断 directory ownership，pre-COMMIT failure 可保留无法证明 provenance 的 directory；在代码、回归和产品/设计同步完成前保持 open。
 
-Evidence: `crates/skilload-core/src/adapters/configuration.rs:601-660` 已显示该 unbound creation gap；`ARCHITECTURE.md` invariant 5 禁止覆写或删除 foreign path，Product Baseline 第 31、39、1493 行同时要求仅清理本调用创建且 identity 未变的 directory。需要产品/architecture 决定以消除这两个约束在该内核接口上的冲突。
+Evidence: 当前 safe macOS/Linux API 仍无 create-and-hold directory descriptor；人类决策、PR Draft 逆向事务和 `PLAN-0003` active transition 已记录。待实现提交与 focused/full validation。
 
-GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_r3814847446，明确请求 create-and-hold directory 或 cleanup guarantee 决策；thread resolved: false，等待明确决策。
+GitHub outcome: 既有回复 https://github.com/bootids/skilload/pull/3#discussion_r3814847446 已提出并获得 recovery-contract 决策；thread resolved: false，待实现后回复并关闭。
 
 ### PRRC_kwDOT7YN2s7jcs0L — first-import 全路径 sidecar cleanup
 
@@ -1615,13 +1626,13 @@ Problem: `FirstImportStaging::link_to_absent_database` 在 `verify_entry` 后仍
 
 Disposition: pending
 
-Status: blocked
+Status: open
 
-Resolution: 需要可审计、同时适用于 macOS/Linux 的“从 held file descriptor 发布 hard link”原语，或明确调整 first-import 对 foreign database target/absence 的保证。锁定的 `rustix::fs::linkat` 接口只接受 directory descriptor 与 source pathname；Linux 的 `AT_EMPTY_PATH` 不是 macOS 接口，当前 `deny(unsafe_code)`/架构例外也不允许把未经决定的 native I/O FFI 加入此切片。额外 pathname revalidation 不能证明 link source 是 held inode；本次 preliminary commit 只记录该事实，不创建伪修复。
+Resolution: 人类已于 2026-08-20T05:52Z 选择 Revision-5 recovery contract，而非 held-file publication primitive。active rework 将保留 link source race 中无法证明 provenance 的 target，并使 pre-COMMIT/identity-drift error 不声称 absence；在文档、代码边界和回归完成前保持 open。
 
-Evidence: preliminary review ledger commit `0892f3ea7b515f6bdd0f8e371516af71eb390c9a` 已推送；无代码伪修复。`FirstImportStaging::link_to_absent_database` 与 locked `rustix 1.1.4` `linkat` interface 仍按 name 解析 source；`ARCHITECTURE.md` ownership invariant 禁止把 foreign path 变为本调用的 authoritative state。需要产品/architecture 决定。
+Evidence: locked `rustix 1.1.4` `linkat` 仍按 staging name 解析 source；人类决策、PR Draft 逆向事务和 `PLAN-0003` active transition 已记录。待实现提交与 focused/full validation。
 
-GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_r3817530466，明确请求 held-file publication primitive 或 first-import guarantee 决定；thread resolved: false，等待明确决定。
+GitHub outcome: 既有回复 https://github.com/bootids/skilload/pull/3#discussion_r3817530466 已提出并获得 recovery-contract 决策；thread resolved: false，待实现后回复并关闭。
 
 ### PRRC_kwDOT7YN2s7jiT5c — absent export target visibility
 
@@ -1647,13 +1658,13 @@ Problem: `record_owned_sidecars` 以 first observed matching FD/identity 将 `-j
 
 Disposition: pending
 
-Status: blocked
+Status: open
 
-Resolution: 需要可证明 SQLite 创建 sidecar 的 provenance，或明确调整 pre-commit failure 对新 data directory 的 absent-root cleanup 保证。当前 no-follow FD 只能证明“现在是该 inode”，不能证明是 SQLite/本调用创建；保守地永不清理则会留下 sidecar/目录，违背已记录的 P2 cleanup acceptance。不能以更频繁 pathname scan 伪装解决；本次 preliminary commit 只记录该事实，不创建伪修复。
+Resolution: 人类已于 2026-08-20T05:52Z 选择 Revision-5 recovery contract，而非 SQLite sidecar provenance primitive。active rework 将移除 first-observed FD 作为 deletion ownership evidence，pre-COMMIT failure 可以保留 matching-name sidecar 与目录；在代码、回归和文档同步完成前保持 open。
 
-Evidence: preliminary review ledger commit `0892f3ea7b515f6bdd0f8e371516af71eb390c9a` 已推送；无代码伪修复。`FirstImportStaging::record_owned_sidecars` 在观察后才记录 ownership，`first_import_precommit_failure_preserves_foreign_staging_sidecar` 只在 record 后创建 fixture；`ARCHITECTURE.md` 禁止删除 foreign state。需要产品/architecture 决定。
+Evidence: 当前 no-follow FD 仅证明 observation-time identity；人类决策、PR Draft 逆向事务和 `PLAN-0003` active transition 已记录。待实现提交与 focused/full validation。
 
-GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_r3817531868，明确请求 SQLite sidecar provenance primitive 或 pre-commit cleanup guarantee 决定；thread resolved: false，等待明确决定。
+GitHub outcome: 既有回复 https://github.com/bootids/skilload/pull/3#discussion_r3817531868 已提出并获得 recovery-contract 决策；thread resolved: false，待实现后回复并关闭。
 
 ### PRRC_kwDOT7YN2s7jiT5n — export I/O error category
 
@@ -1759,13 +1770,13 @@ Problem: `docs/product-specs/library.md` 的 `SKL-LIB-010` Revision 4 acceptance
 
 Disposition: pending
 
-Status: blocked
+Status: open
 
-Resolution: 不以错误的 unlink/recreate 破坏 stable lock identity，也不擅自改写高优先级行为。需要人类明确选择：允许修订 `SKL-LIB-010` 以保留 restrictive durable `database.lock`，或允许一个经审计、跨 macOS/Linux 可证明不分裂 lock inode 且能恢复 absent roots 的 primitive/protocol。
+Resolution: 人类已于 2026-08-20T05:52Z 选择 Revision-5 recovery contract，允许 pre-COMMIT failure 保留 durable `database.lock` 与其他无法证明 provenance 的 residual；active rework 将以产品规格替换 Revision 4 的 absent-root assertion，并在实现、回归和文档同步完成前保持 open。
 
-Evidence: `docs/product-specs/library.md:80` 明定 pre-COMMIT 失败根恢复 absent；`docs/design-docs/application-and-persistence.md:170` 与 `crates/skilload-core/src/adapters/sqlite_library.rs` 当前 lock handling 为保持同一 inode。尚无可同时满足两者且不违反 `ARCHITECTURE.md` invariant 5 的实现。
+Evidence: `database.lock` 的 stable-inode concurrency 规则与 Revision 4 acceptance 冲突；人类决策、PR Draft 逆向事务和 `PLAN-0003` active transition 已记录。待实现提交与 focused/full validation。
 
-GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_r3818397649；thread resolved: false（blocked/open）。
+GitHub outcome: 既有回复 https://github.com/bootids/skilload/pull/3#discussion_r3818397649 已提出并获得 recovery-contract 决策；thread resolved: false，待实现后回复并关闭。
 
 ### PRRC_kwDOT7YN2s7jlNzT — exchange 后 publication entry replacement
 
@@ -2141,3 +2152,5 @@ Library 是本机可搜索的来源元数据集合；在本交付中它只保存
 计划修订说明（2026-08-20）：三个 `0dc0b9b3f83ef256c4de19c23186ed9c3816f826` fixed source 已分别以验证证据回复并关闭；回复 URL、`thread resolved: true` 和三个仍待人类决定的 pending/blocked source 已与 `list --all` reconciliation 对齐。
 
 计划修订说明（2026-08-20）：本轮完整读取 PR #3 的 14 条 top-level、117 个 review body 与 90 个 inline source；六项 ordinary remediation 已由 `4ef1ba205eb323c702bceda830445f44feb4da46` 推送，并以具体回归、workspace gates、CLI smoke、GitHub reply URL 和 resolved thread state 写回 Review Conversation Log。`PRRC_kwDOT7YN2s7jlNzR` 因 `SKL-LIB-010` absent-root acceptance 与 durable lock identity 的未决产品/架构取舍保持 pending/blocked/open，与三个既有 provenance/directory source 一同等待人类选择；没有伪造修复或修改 Product Baseline。最终 Plan push 后必须再次完整读取 GitHub 会话和 PR head。
+
+计划修订说明（2026-08-20T05:52Z）：merge preflight 完整读取 14 条 top-level、117 个 review body 与 90 个 inline thread，发现四项 pending/blocked 议题，因而没有进入 `completed`。人类选择将 `SKL-LIB-010` 修订为 Revision 5 的保守 recovery contract，明确不授权跨 macOS/Linux native/FFI primitive；PR #3 已恢复 Draft，Plan 移回 `active`。本修订将四项 ledger source 改为 open/pending，并把下一步限定为移除不可证明 provenance 的 cleanup、同步规范/设计/reference/测试、重新 ready/review 及会话 reconciliation。
