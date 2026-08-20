@@ -437,46 +437,6 @@ fn metadata_identity(metadata: &fs::Metadata) -> (u64, u64) {
 #[derive(Debug)]
 pub(crate) struct CreatedDirectory {
     pub(crate) path: PathBuf,
-    pub(crate) identity: (u64, u64),
-    pub(crate) handle: File,
-}
-
-struct PendingCreatedDirectory {
-    path: PathBuf,
-    identity: (u64, u64),
-    armed: bool,
-}
-
-impl PendingCreatedDirectory {
-    fn new(path: &Path, identity: (u64, u64)) -> Self {
-        Self {
-            path: path.to_path_buf(),
-            identity,
-            armed: true,
-        }
-    }
-
-    fn disarm(mut self) {
-        self.armed = false;
-    }
-}
-
-impl Drop for PendingCreatedDirectory {
-    fn drop(&mut self) {
-        if self.armed {
-            cleanup_pending_created_directory(&self.path, self.identity);
-        }
-    }
-}
-
-fn cleanup_pending_created_directory(path: &Path, identity: (u64, u64)) {
-    if fs::symlink_metadata(path).ok().is_some_and(|metadata| {
-        metadata.file_type().is_dir()
-            && !metadata.file_type().is_symlink()
-            && metadata_identity(&metadata) == identity
-    }) {
-        let _ = fs::remove_dir(path);
-    }
 }
 
 pub(crate) fn ensure_restrictive_directory(
@@ -539,10 +499,7 @@ fn ensure_restrictive_directory_after_creation(
         restrict_directory_permissions(path, variable)?;
         Ok(())
     })();
-    if let Err(error) = result {
-        cleanup_created_directories(&created_directories);
-        return Err(error);
-    }
+    result?;
     Ok(created_directories)
 }
 
@@ -589,7 +546,6 @@ fn create_restrictive_directory_with_open(
         return Ok(None);
     }
 
-    let pending = PendingCreatedDirectory::new(directory, metadata_identity(&metadata));
     let handle = open_directory(directory)
         .map_err(|error| environment_io(variable, directory, "open created directory", error))?;
     let handle_metadata = handle.metadata().map_err(|error| {
@@ -619,28 +575,8 @@ fn create_restrictive_directory_with_open(
         })?;
     let created_directory = CreatedDirectory {
         path: directory.to_path_buf(),
-        identity: metadata_identity(&metadata),
-        handle,
     };
-    pending.disarm();
     Ok(Some(created_directory))
-}
-
-fn cleanup_created_directories(created_directories: &[CreatedDirectory]) {
-    for directory in created_directories.iter().rev() {
-        if fs::symlink_metadata(&directory.path)
-            .ok()
-            .zip(directory.handle.metadata().ok())
-            .is_some_and(|(metadata, handle_metadata)| {
-                metadata.file_type().is_dir()
-                    && !metadata.file_type().is_symlink()
-                    && metadata_identity(&metadata) == directory.identity
-                    && metadata_identity(&handle_metadata) == directory.identity
-            })
-        {
-            let _ = fs::remove_dir(&directory.path);
-        }
-    }
 }
 
 fn ensure_real_directory(
@@ -859,7 +795,7 @@ mod tests {
     }
 
     #[test]
-    fn created_directory_rolls_back_when_opening_it_fails() {
+    fn created_directory_is_retained_when_opening_it_fails() {
         let temporary = tempdir().unwrap();
         let directory = temporary.path().join("created");
 
@@ -869,11 +805,11 @@ mod tests {
         .unwrap_err();
 
         assert_eq!(error.code(), "invalid_environment_path");
-        assert!(!directory.exists());
+        assert!(directory.is_dir());
     }
 
     #[test]
-    fn restrictive_directory_rolls_back_partial_created_prefix() {
+    fn restrictive_directory_retains_partial_created_prefix() {
         let temporary = tempdir().unwrap();
         let directory = temporary.path().join("first/second");
 
@@ -890,7 +826,8 @@ mod tests {
             .unwrap_err();
 
         assert_eq!(error.code(), "internal_invariant");
-        assert!(!temporary.path().join("first").exists());
+        assert!(temporary.path().join("first").is_dir());
+        assert!(directory.is_dir());
     }
 
     #[test]

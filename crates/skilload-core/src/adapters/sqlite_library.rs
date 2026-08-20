@@ -16,7 +16,7 @@ use crate::ports::library::LibraryRepository;
 use rusqlite::{
     Connection, Error as SqlError, ErrorCode, OpenFlags, OptionalExtension, ffi, params,
 };
-use rustix::fs::{AtFlags, FileType, Mode, OFlags, fstat, linkat, openat, statat, unlinkat};
+use rustix::fs::{AtFlags, Mode, OFlags, fstat, linkat, openat, statat, unlinkat};
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::fs::{self, File, OpenOptions};
@@ -350,13 +350,13 @@ impl SqliteLibraryRepository {
         plan: ImportPlan,
     ) -> Result<LibraryImportOperation, AppError> {
         let lock_path = roots.state.effective.join("locks/database.lock");
-        let mut cleanup = FirstImportCleanup::new();
+        let mut created_directories = FirstImportDirectories::new();
         (|| {
-            cleanup.record_created_directories(
+            created_directories.record_created_directories(
                 ensure_restrictive_directory(&roots.state.effective, "XDG_STATE_HOME")?,
                 "XDG_STATE_HOME",
             );
-            cleanup.record_created_directories(
+            created_directories.record_created_directories(
                 ensure_restrictive_directory(
                     &roots.state.effective.join("locks"),
                     "XDG_STATE_HOME",
@@ -371,10 +371,9 @@ impl SqliteLibraryRepository {
                 let roots = self.root_resolver.revalidate(roots)?;
                 let database = Self::database_path(&roots);
                 if Self::database_exists(&database)? {
-                    cleanup.committed = true;
                     return self.import_existing_with_lock(&roots, document);
                 }
-                cleanup.record_created_directories(
+                created_directories.record_created_directories(
                     ensure_restrictive_directory(&roots.data.effective, "XDG_DATA_HOME")?,
                     "XDG_DATA_HOME",
                 );
@@ -420,33 +419,17 @@ impl SqliteLibraryRepository {
                     },
                 ) {
                     Ok(connection) => connection,
-                    Err(error) => {
-                        staging.record_owned_sidecars();
-                        return Err(error);
-                    }
+                    Err(error) => return Err(error),
                 };
-                if let Err(error) = initialize_schema(&connection, &staging_path) {
-                    staging.record_owned_sidecars();
-                    return Err(error);
-                }
-                let transaction = match connection.transaction() {
-                    Ok(transaction) => transaction,
-                    Err(error) => {
-                        staging.record_owned_sidecars();
-                        return Err(database_error(&staging_path, error));
-                    }
-                };
-                if let Err(error) = apply_additions(&transaction, &plan.additions, &staging_path) {
-                    staging.record_owned_sidecars();
-                    return Err(error);
-                }
-                staging.record_owned_sidecars();
+                initialize_schema(&connection, &staging_path)?;
+                let transaction = connection
+                    .transaction()
+                    .map_err(|error| database_error(&staging_path, error))?;
+                apply_additions(&transaction, &plan.additions, &staging_path)?;
                 self.hooks.before_commit(&staging_path)?;
-                if let Err(error) = transaction.commit() {
-                    staging.record_owned_sidecars();
-                    return Err(database_error(&staging_path, error));
-                }
-                cleanup.committed = true;
+                transaction
+                    .commit()
+                    .map_err(|error| database_error(&staging_path, error))?;
                 self.hooks.after_commit_before_sync()?;
                 drop(connection);
                 staging.file.as_file().sync_all().map_err(|error| {
@@ -491,7 +474,7 @@ impl SqliteLibraryRepository {
                     database_sync_error(&database, "sync published database directory", error)
                 })?;
                 data_directory.revalidate()?;
-                cleanup.sync_created_directories()?;
+                created_directories.sync_created_directories()?;
                 self.hooks
                     .after_first_publish_sync_before_success(&database)?;
                 data_directory.revalidate()?;
@@ -667,16 +650,14 @@ struct FirstImportCreatedDirectory {
     variable: &'static str,
 }
 
-struct FirstImportCleanup {
+struct FirstImportDirectories {
     created_directories: Vec<FirstImportCreatedDirectory>,
-    committed: bool,
 }
 
-impl FirstImportCleanup {
+impl FirstImportDirectories {
     fn new() -> Self {
         Self {
             created_directories: Vec::new(),
-            committed: false,
         }
     }
 
@@ -704,14 +685,6 @@ impl FirstImportCleanup {
             )?;
         }
         Ok(())
-    }
-}
-
-impl Drop for FirstImportCleanup {
-    fn drop(&mut self) {
-        if !self.committed {
-            cleanup_first_import(&self.created_directories);
-        }
     }
 }
 
@@ -775,31 +748,11 @@ impl ValidatedDataDirectory {
     }
 }
 
-struct OwnedStagingSidecar {
-    name: OsString,
-    identity: (u64, u64),
-    handle: File,
-}
-
-impl OwnedStagingSidecar {
-    fn is_held(&self, directory: &ValidatedDataDirectory) -> bool {
-        fstat(&self.handle)
-            .ok()
-            .zip(statat(&directory.handle, &self.name, AtFlags::SYMLINK_NOFOLLOW).ok())
-            .is_some_and(|(held, entry)| {
-                FileType::from_raw_mode(entry.st_mode) == FileType::RegularFile
-                    && stat_identity(held.st_dev, held.st_ino) == Some(self.identity)
-                    && stat_identity(entry.st_dev, entry.st_ino) == Some(self.identity)
-            })
-    }
-}
-
 struct FirstImportStaging<'directory> {
     file: NamedTempFile,
     directory: &'directory ValidatedDataDirectory,
     name: OsString,
     publication_name: Option<OsString>,
-    owned_sidecars: Vec<OwnedStagingSidecar>,
     published: bool,
 }
 
@@ -818,7 +771,6 @@ impl<'directory> FirstImportStaging<'directory> {
             directory,
             name,
             publication_name: None,
-            owned_sidecars: Vec::new(),
             published: false,
         })
     }
@@ -844,49 +796,6 @@ impl<'directory> FirstImportStaging<'directory> {
         self.verify_entry(&self.name)?;
         configure_connection(&connection, path)?;
         Ok(connection)
-    }
-
-    fn record_owned_sidecars(&mut self) {
-        for suffix in DATABASE_SIDECAR_SUFFIXES {
-            let mut name = self.name.clone();
-            name.push(suffix);
-            if self
-                .owned_sidecars
-                .iter()
-                .any(|sidecar| sidecar.name == name)
-            {
-                continue;
-            }
-            let handle = match openat(
-                &self.directory.handle,
-                &name,
-                OFlags::NOFOLLOW | OFlags::NONBLOCK,
-                Mode::empty(),
-            ) {
-                Ok(handle) => File::from(handle),
-                Err(_) => continue,
-            };
-            let held = match fstat(&handle) {
-                Ok(held) => held,
-                Err(_) => continue,
-            };
-            let entry = match statat(&self.directory.handle, &name, AtFlags::SYMLINK_NOFOLLOW) {
-                Ok(entry) => entry,
-                Err(_) => continue,
-            };
-            let Some(identity) = stat_identity(held.st_dev, held.st_ino) else {
-                continue;
-            };
-            if FileType::from_raw_mode(entry.st_mode) == FileType::RegularFile
-                && stat_identity(entry.st_dev, entry.st_ino) == Some(identity)
-            {
-                self.owned_sidecars.push(OwnedStagingSidecar {
-                    name,
-                    identity,
-                    handle,
-                });
-            }
-        }
     }
 
     fn mark_published(
@@ -961,11 +870,6 @@ impl Drop for FirstImportStaging<'_> {
     fn drop(&mut self) {
         if self.published {
             return;
-        }
-        for sidecar in &self.owned_sidecars {
-            if sidecar.is_held(self.directory) {
-                let _ = unlinkat(&self.directory.handle, &sidecar.name, AtFlags::empty());
-            }
         }
         if let Some(publication_name) = &self.publication_name {
             self.cleanup_entry_if_held(publication_name);
@@ -1469,32 +1373,6 @@ fn metadata_identity(metadata: &fs::Metadata) -> (u64, u64) {
     (metadata.dev(), metadata.ino())
 }
 
-fn cleanup_first_import(created_directories: &[FirstImportCreatedDirectory]) {
-    for created in created_directories.iter().rev() {
-        let directory = &created.directory;
-        if current_entry_matches_created_identity(
-            &directory.path,
-            directory.identity,
-            &directory.handle,
-        )
-        .is_some_and(|metadata| metadata.file_type().is_dir() && !metadata.file_type().is_symlink())
-        {
-            let _ = fs::remove_dir(&directory.path);
-        }
-    }
-}
-
-fn current_entry_matches_created_identity(
-    path: &Path,
-    identity: (u64, u64),
-    handle: &File,
-) -> Option<fs::Metadata> {
-    let metadata = fs::symlink_metadata(path).ok()?;
-    let handle_metadata = handle.metadata().ok()?;
-    (metadata_identity(&metadata) == identity && metadata_identity(&handle_metadata) == identity)
-        .then_some(metadata)
-}
-
 struct StoredEntry {
     canonical: String,
     owner: String,
@@ -1608,15 +1486,10 @@ mod tests {
         fs::create_dir_all(&state_locks).unwrap();
         fs::create_dir_all(&data_directory).unwrap();
 
-        let capture = |path: &Path| {
-            let handle = File::open(path).unwrap();
-            CreatedDirectory {
-                path: path.to_path_buf(),
-                identity: metadata_identity(&handle.metadata().unwrap()),
-                handle,
-            }
+        let capture = |path: &Path| CreatedDirectory {
+            path: path.to_path_buf(),
         };
-        let cleanup = FirstImportCleanup {
+        let created_directories = FirstImportDirectories {
             created_directories: vec![
                 FirstImportCreatedDirectory {
                     directory: capture(&state_locks),
@@ -1627,11 +1500,10 @@ mod tests {
                     variable: "XDG_DATA_HOME",
                 },
             ],
-            committed: true,
         };
         fs::rename(&state_root, temporary.path().join("state-displaced")).unwrap();
 
-        let error = cleanup.sync_created_directories().unwrap_err();
+        let error = created_directories.sync_created_directories().unwrap_err();
 
         assert!(matches!(
             error,
@@ -1795,7 +1667,7 @@ mod tests {
     }
 
     #[test]
-    fn first_import_precommit_failure_retains_the_durable_lock() {
+    fn first_import_precommit_failure_retains_unproven_state_and_data_directories() {
         let temporary = tempdir().unwrap();
         let repository = SqliteLibraryRepository::with_hooks(
             Arc::new(TestEnvironment::with_roots(temporary.path())),
@@ -1806,7 +1678,9 @@ mod tests {
             .import(&document(vec![entry("skills/review", None)]), false)
             .unwrap_err();
         assert_eq!(error.code(), "internal_invariant");
-        assert!(!temporary.path().join("data/skilload").exists());
+        let data_directory = temporary.path().join("data/skilload");
+        assert!(data_directory.is_dir());
+        assert!(!data_directory.join("skilload.db").exists());
         let lock = temporary.path().join("state/skilload/locks/database.lock");
         assert!(lock.is_file());
         let lock_identity = metadata_identity(&fs::metadata(&lock).unwrap());
@@ -1873,7 +1747,7 @@ mod tests {
     }
 
     #[test]
-    fn first_import_staging_removes_recorded_sqlite_sidecars() {
+    fn first_import_staging_preserves_unproven_sqlite_sidecars() {
         let temporary = tempdir().unwrap();
         let data_directory_path = temporary.path().join("data/skilload");
         fs::create_dir_all(&data_directory_path).unwrap();
@@ -1883,17 +1757,14 @@ mod tests {
             .suffix(".tmp")
             .tempfile_in(&data_directory_path)
             .unwrap();
-        let mut staging = FirstImportStaging::new(staging_file, &data_directory).unwrap();
+        let staging = FirstImportStaging::new(staging_file, &data_directory).unwrap();
         let mut sidecar_name = staging.name.clone();
         sidecar_name.push("-journal");
         let sidecar = data_directory_path.join(&sidecar_name);
         fs::write(&sidecar, b"SQLite journal").unwrap();
 
-        staging.record_owned_sidecars();
-
-        assert_eq!(staging.owned_sidecars.len(), 1);
         drop(staging);
-        assert!(!sidecar.exists());
+        assert!(sidecar.exists());
     }
 
     #[test]
@@ -2056,7 +1927,7 @@ mod tests {
     }
 
     #[test]
-    fn first_import_lock_failure_removes_created_state() {
+    fn first_import_lock_failure_retains_created_state_directories() {
         let temporary = tempdir().unwrap();
         let repository = SqliteLibraryRepository::with_hooks(
             Arc::new(TestEnvironment::with_roots(temporary.path())),
@@ -2067,8 +1938,8 @@ mod tests {
             .import(&document(vec![entry("skills/review", None)]), false)
             .unwrap_err();
         assert_eq!(error.code(), "internal_invariant");
+        assert!(temporary.path().join("state/skilload/locks").is_dir());
         assert!(!temporary.path().join("data/skilload").exists());
-        assert!(!temporary.path().join("state/skilload").exists());
     }
 
     struct AfterFirstLockFailure;

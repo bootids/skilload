@@ -124,7 +124,9 @@ Revision 2 的 `SKL-CLI-004`、`SKL-CLI-005` 与 `SKL-CLI-012` 以 API-v2 curren
 
 - [x] (2026-08-20T05:52Z) `PRRC_kwDOT7YN2s7jWsuw`、`PRRC_kwDOT7YN2s7jiT5X`、`PRRC_kwDOT7YN2s7jiT5i` 与 `PRRC_kwDOT7YN2s7jlNzR` 的人类决策已统一为 Revision-5 recovery contract；PR 已恢复为 Draft，Plan 正在回到 `active`，四个 thread 保持 open，直至实现、验证、回复和 closure 完成。
 
-- [ ] (2026-08-20T05:52Z) 在 `active` 实现 Revision 5 的保守 pre-COMMIT cleanup：不再以 pathname/first-observed FD 推断 directory 或 SQLite sidecar ownership，更新产品/持久化设计/reference/测试并重新完成 ready/review transaction。
+- [x] (2026-08-20T06:05Z) 已完成 Revision 5 的保守 pre-COMMIT cleanup：`configuration.rs` 不再在错误路径删除新建 directory，`sqlite_library.rs` 不再按 first-observed FD 删除 SQLite sidecar，首次 import 仅清理 held staging/live link。已同步产品、持久化设计与 Rust/SQLite reference；focused core（107）、fmt、Clippy、locked workspace tests（11、12、107）、build 和隔离 CLI dry-run/import/export byte-identical round trip 均通过。
+- [ ] 将 Revision 5 实现、回归、受管文档和 preliminary Review Conversation Log 推送；重新获取 GitHub 会话，逐一回复并关闭四个 resolved product-decision thread，再提交最终 ledger reconciliation 并重新进入 ready/review。
+
 
 - [ ] 收到明确人类合并授权后，完成预检、评审会话记录、completed 事务、必要检查、合并、默认分支更新和本地交付分支清理。
 
@@ -413,6 +415,8 @@ P2 implementation 与完整验证已完成，PR #3 已于 2026-08-19 05:57Z 转�
 
 2026-08-20 的 reply reconciliation 显示 14 条 top-level trigger 均为 `@codex`，117 个 review body 均为空或通用 automation；90 个 inline source 全部在 Review Conversation Log 中有 heading。六个本轮 fixed source 都有 `4ef1ba205eb323c702bceda830445f44feb4da46`、验证、GitHub reply URL 和 `thread resolved: true`；`PRRC_kwDOT7YN2s7jlNzR` 已得到精确 decision question，连同三个既有 provenance/directory source 维持 pending/blocked/open。下一步提交、推送本最终 reconciliation，然后再次读取会话确认没有漂移。
 2026-08-20T05:52Z 的 merge preflight 发现四个 `pending`/`blocked` inline thread，故未进入 `completed`。人类选择 Revision-5 recovery contract 后，`gh pr ready --undo` 已将 PR #3 恢复为 open Draft，且 branch/head/依赖重新核对一致。本 Plan 正在从 `review` 回到 `active`；下一步是移除不可证明 provenance 的 cleanup、更新受管文档与回归，再重新完成 ready/review 事务和会话 reconciliation。
+2026-08-20T06:05Z 的 Revision-5 active rework 已完成本地实现与验收：directory helper 的 error path 保留 partial directory，首次 import 不再用 first-observed FD 清理 SQLite sidecar，`FirstImportDirectories` 只在 successful publication 后同步。新增/修订回归覆盖 directory、sidecar、lock 与 held staging cleanup 边界；`cargo fmt --all --check`、workspace Clippy `-D warnings`、locked all-features tests（11、12、107）、workspace build 以及隔离 API-v2 CLI dry-run/import/export byte-identical round trip 均通过。四个 decision source 已更新为 fixed/open，待 preliminary commit/push 后回复并关闭。
+
 
 
 ## Review Conversation Log
@@ -1544,15 +1548,15 @@ Source: 内联评论 `PRRC_kwDOT7YN2s7jWsuw`，[GitHub](https://github.com/booti
 
 Problem: `create_restrictive_directory_with_open` 在 successful `create_dir` 后才以 pathname 读取 first metadata；同账号进程若在该间隙替换为空目录，代码会把 replacement 记为 call-owned、修改权限并可能在 rollback 删除。
 
-Disposition: pending
+Disposition: fixed
 
 Status: open
 
-Resolution: 人类已于 2026-08-20T05:52Z 选择 Revision-5 recovery contract，而非 native create-and-hold primitive。active rework 将停止由 create 后 pathname metadata 推断 directory ownership，pre-COMMIT failure 可保留无法证明 provenance 的 directory；在代码、回归和产品/设计同步完成前保持 open。
+Resolution: `crates/skilload-core/src/adapters/configuration.rs` 删除 error-path `PendingCreatedDirectory`/partial-prefix removal；首次 import 的 `FirstImportDirectories` 只在成功后 sync，不再在 pre-COMMIT error 删除 data/state directory。`created_directory_is_retained_when_opening_it_fails`、`restrictive_directory_retains_partial_created_prefix` 与 `first_import_precommit_failure_retains_unproven_state_and_data_directories` 覆盖保守 retention。
 
-Evidence: 当前 safe macOS/Linux API 仍无 create-and-hold directory descriptor；人类决策、PR Draft 逆向事务和 `PLAN-0003` active transition 已记录。待实现提交与 focused/full validation。
+Evidence: 2026-08-20T06:05Z 本地实现；focused core 107、fmt、Clippy、locked workspace tests（11、12、107）、build 和 CLI smoke 通过。待 preliminary commit/push 后写入 SHA。
 
-GitHub outcome: 既有回复 https://github.com/bootids/skilload/pull/3#discussion_r3814847446 已提出并获得 recovery-contract 决策；thread resolved: false，待实现后回复并关闭。
+GitHub outcome: 既有回复 https://github.com/bootids/skilload/pull/3#discussion_r3814847446 已提出并获得 recovery-contract 决策；thread resolved: false，待推送证据后回复并关闭。
 
 ### PRRC_kwDOT7YN2s7jcs0L — first-import 全路径 sidecar cleanup
 
@@ -1624,15 +1628,15 @@ Source: 内联评论 `PRRC_kwDOT7YN2s7jiT5X`，[GitHub](https://github.com/booti
 
 Problem: `FirstImportStaging::link_to_absent_database` 在 `verify_entry` 后仍将 staging basename 传给 pathname-based `linkat`。同账号进程若在该间隙替换 staging entry，live `skilload.db` 会暂时链接 replacement；后续 identity check 虽报错，但 Drop 不会删除该 foreign database。
 
-Disposition: pending
+Disposition: fixed
 
 Status: open
 
-Resolution: 人类已于 2026-08-20T05:52Z 选择 Revision-5 recovery contract，而非 held-file publication primitive。active rework 将保留 link source race 中无法证明 provenance 的 target，并使 pre-COMMIT/identity-drift error 不声称 absence；在文档、代码边界和回归完成前保持 open。
+Resolution: 人类选择的 Revision-5 contract 使 `linkat` source race 的可观察结果明确为 typed drift error、未知 target 保留且不报告 success/state absence；`FirstImportStaging::link_to_absent_database` 的 held-entry revalidation 与 `first_import_reports_staging_identity_drift_after_publish_race` 保持该边界。未引入虚假的 held-FD primitive。
 
-Evidence: locked `rustix 1.1.4` `linkat` 仍按 staging name 解析 source；人类决策、PR Draft 逆向事务和 `PLAN-0003` active transition 已记录。待实现提交与 focused/full validation。
+Evidence: 2026-08-20T06:05Z 产品、持久化设计与 Rust/SQLite reference 已同步；focused core 107、fmt、Clippy、locked workspace tests（11、12、107）、build 和 CLI smoke 通过。待 preliminary commit/push 后写入 SHA。
 
-GitHub outcome: 既有回复 https://github.com/bootids/skilload/pull/3#discussion_r3817530466 已提出并获得 recovery-contract 决策；thread resolved: false，待实现后回复并关闭。
+GitHub outcome: 既有回复 https://github.com/bootids/skilload/pull/3#discussion_r3817530466 已提出并获得 recovery-contract 决策；thread resolved: false，待推送证据后回复并关闭。
 
 ### PRRC_kwDOT7YN2s7jiT5c — absent export target visibility
 
@@ -1656,15 +1660,15 @@ Source: 内联评论 `PRRC_kwDOT7YN2s7jiT5i`，[GitHub](https://github.com/booti
 
 Problem: `record_owned_sidecars` 以 first observed matching FD/identity 将 `-journal`、`-wal`、`-shm` 记为 owned；若同账号进程恰在 scan 前创建同名 regular file，后续 rollback 会 unlink foreign sidecar。现有 regression 只覆盖 sidecar 在前一次 scan 后出现，不覆盖该 adoption window。
 
-Disposition: pending
+Disposition: fixed
 
 Status: open
 
-Resolution: 人类已于 2026-08-20T05:52Z 选择 Revision-5 recovery contract，而非 SQLite sidecar provenance primitive。active rework 将移除 first-observed FD 作为 deletion ownership evidence，pre-COMMIT failure 可以保留 matching-name sidecar 与目录；在代码、回归和文档同步完成前保持 open。
+Resolution: `FirstImportStaging` 不再保存或删除 first-observed matching FD sidecar；Drop 只清理 held staging/live-link entry。`first_import_staging_preserves_unproven_sqlite_sidecars` 证明 matching-name sidecar 保留，Revision 5 明确允许其残留。
 
-Evidence: 当前 no-follow FD 仅证明 observation-time identity；人类决策、PR Draft 逆向事务和 `PLAN-0003` active transition 已记录。待实现提交与 focused/full validation。
+Evidence: 2026-08-20T06:05Z 本地实现；focused core 107、fmt、Clippy、locked workspace tests（11、12、107）、build 和 CLI smoke 通过。待 preliminary commit/push 后写入 SHA。
 
-GitHub outcome: 既有回复 https://github.com/bootids/skilload/pull/3#discussion_r3817531868 已提出并获得 recovery-contract 决策；thread resolved: false，待实现后回复并关闭。
+GitHub outcome: 既有回复 https://github.com/bootids/skilload/pull/3#discussion_r3817531868 已提出并获得 recovery-contract 决策；thread resolved: false，待推送证据后回复并关闭。
 
 ### PRRC_kwDOT7YN2s7jiT5n — export I/O error category
 
@@ -1768,15 +1772,15 @@ Source: 内联评论 `PRRC_kwDOT7YN2s7jlNzR`，[GitHub](https://github.com/booti
 
 Problem: `docs/product-specs/library.md` 的 `SKL-LIB-010` Revision 4 acceptance 要求首次 import 在 `COMMIT` 前失败后 data/state roots 均恢复 absent，但当前 implementation/design 为避免 lock inode 分裂而保留 `database.lock`；低优先级 Plan 不能覆盖该规范冲突。
 
-Disposition: pending
+Disposition: fixed
 
 Status: open
 
-Resolution: 人类已于 2026-08-20T05:52Z 选择 Revision-5 recovery contract，允许 pre-COMMIT failure 保留 durable `database.lock` 与其他无法证明 provenance 的 residual；active rework 将以产品规格替换 Revision 4 的 absent-root assertion，并在实现、回归和文档同步完成前保持 open。
+Resolution: `SKL-LIB-010` 已升至 Revision 5：pre-COMMIT failure 返回 error，但不再承诺 data/state absence；durable `database.lock`、directory、sidecar 或 other unknown residual 保留，只有 held staging/live-link entry 可清理。`first_import_precommit_failure_retains_unproven_state_and_data_directories` 保留同一 lock inode 并验证后续 import 可继续。
 
-Evidence: `database.lock` 的 stable-inode concurrency 规则与 Revision 4 acceptance 冲突；人类决策、PR Draft 逆向事务和 `PLAN-0003` active transition 已记录。待实现提交与 focused/full validation。
+Evidence: 2026-08-20T06:05Z 产品、持久化设计与 Rust/SQLite reference 已同步；focused core 107、fmt、Clippy、locked workspace tests（11、12、107）、build 和 CLI smoke 通过。待 preliminary commit/push 后写入 SHA。
 
-GitHub outcome: 既有回复 https://github.com/bootids/skilload/pull/3#discussion_r3818397649 已提出并获得 recovery-contract 决策；thread resolved: false，待实现后回复并关闭。
+GitHub outcome: 既有回复 https://github.com/bootids/skilload/pull/3#discussion_r3818397649 已提出并获得 recovery-contract 决策；thread resolved: false，待推送证据后回复并关闭。
 
 ### PRRC_kwDOT7YN2s7jlNzT — exchange 后 publication entry replacement
 
@@ -1867,7 +1871,7 @@ Library 是本机可搜索的来源元数据集合；在本交付中它只保存
 
 可移植文档是恰好一个 JSON 对象：顶层 `format_version: 1` 和 `entries` 数组；每个元素是 API-v2 `PortableLibraryEntry`。export 按 canonical source 的二进制字节序排序 entries，按 tag 的 Unicode-15.1 comparison key 排序 tags，并使用稳定 JSON 序列化。导入 parser 先以 no-follow、nonblocking descriptor 和 `fstat` 确认 native input 是同一 regular file，随后才将其路径用于 `PathValue` 错误；每个 source identity 必须能重新渲染为与其 `canonical` 相同的字符串，`repository_display` 可保留当前显示拼写，但其 ASCII-lowercase identity 必须等于 canonical repository。每个 batch 的 canonical source 只允许一个 entry，后出现的相同 source 作为 null-name `internal_duplicate` conflict 使整个 batch 失败。
 
-“原子导入”表示在一次 SQLite 事务中写入全部新增 entries、tags 和递增的 `state_revision`，或一个也不写；对原本不存在的 database，它还表示只在 staging database commit 后经 held data-directory descriptor no-clobber 发布 live file，并在 commit 前失败时清理本调用创建的 database/sidecar/lock/空目录。commit 后 durability-sync failure 不承诺 absence。“预验证”表示 scanner 先在不建立 portable domain model 或 ImportPlan 的情况下、从已验证的 regular-file descriptor 验证 JSON 语法、键唯一性和每个资源限制，随后才以 `serde` 的 closed schema 解析同一已验证字节；ceiling error 使用 API-v2 `library_input_limit_exceeded` 的 measured/allowed `LimitDetails`。无数据库时 export 和 dry-run 的读取返回内存空库，绝不创建 XDG data/state/config/cache 根。
+“原子导入”表示在一次 SQLite 事务中写入全部新增 entries、tags 和递增的 `state_revision`，或一个也不写；对原本不存在的 database，它还表示只在 staging database commit 后经 held data-directory descriptor no-clobber 发布 live file。Revision 5 的 commit 前失败返回 error 且绝不报告 success 或 state absence：它只清理仍绑定到 held descriptor 的 staging entry 或尚未完成的 live link，directory、durable lock、sidecar 或 other residual 一旦无法证明 provenance/identity 就必须保留。commit 后 durability-sync failure 同样不承诺 absence。“预验证”表示 scanner 先在不建立 portable domain model 或 ImportPlan 的情况下、从已验证的 regular-file descriptor 验证 JSON 语法、键唯一性和每个资源限制，随后才以 `serde` 的 closed schema 解析同一已验证字节；ceiling error 使用 API-v2 `library_input_limit_exceeded` 的 measured/allowed `LimitDetails`。无数据库时 export 和 dry-run 的读取返回内存空库，绝不创建 XDG data/state/config/cache 根。
 
 
 ## Plan of Work
@@ -1889,7 +1893,7 @@ Library 是本机可搜索的来源元数据集合；在本交付中它只保存
 
 新增 `crates/skilload-core/src/adapters/portable_library.rs`。它必须先以 `OpenOptionsExt` 和 `libc::O_NOFOLLOW | libc::O_NONBLOCK` 打开 input，先后比对 no-follow path metadata 与 descriptor `fstat` 的 file identity，并在任何读取前拒绝 symlink、directory、FIFO、socket、device 或 identity drift；regular descriptor 保持有界读取且错误携带 input `PathValue`。随后以增量字节状态机完成第一个 JSON pass：检查 UTF-8/JSON 语法，统计对象、数组、字符串、数字、Boolean、null 的总值，检查嵌套深度、顶层 `entries` 的对象数、字符串解码后 UTF-8 字节数、数字 token 字节数，以及每一个对象中的重复键。它必须在第一个越界点返回 API-v2 `library_input_limit_exceeded` 的 `LimitDetails`，以 `limit_kind` 区分 `library_import_bytes`、`library_import_entries`、`library_import_values`、`library_import_depth`、`library_import_string_bytes` 和 `library_import_number_bytes`，并报告 measured、allowed 与 input `PathValue`。通过 scanner 后，用同一受限字节缓冲的严格 `#[serde(deny_unknown_fields)]` schema 反序列化。
 
-新增 `crates/skilload-core/src/adapters/sqlite_library.rs`。它必须从已有 `StateRootResolver` 取得 data/state roots：没有 `data/skilload.db` 且没有同目录 `-journal`、`-wal`、`-shm` 时 export 和 dry-run 返回空库且不建目录；任一 orphaned sidecar 都返回 `database_corrupt`。实际 import 仅在全部文件/schema/domain 验证与冲突规划完成后创建 data root 与 `state/locks/database.lock`，并沿用配置的两秒有界锁等待/typed busy 行为。该 lock pathname 是持久协调身份；一旦可能有其他 contender 打开它，失败路径不得 unlink 或重建它。若 live database 原先不存在，adapter 在同一 data directory 建立 restrictive、唯一 staging database，完整建立 schema、执行 transaction、记录已证明由 SQLite persistence error/rollback 产生的 held-FD sidecar、sync staged file、重验 roots 后才从 held staging entry 经 descriptor-relative `linkat` 直接创建 absent `data/skilload.db`，随后 sync 父目录；不得先以 live name 创建 empty guard。commit 前失败关闭并移除仅由本调用创建且 identity 仍匹配的 staging database/sidecar/空 data directory，但可保留空 durable lock；commit 后 file 或 parent sync failure 返回 typed error，不报告 success 或 state absence。数据库路径、锁和已有文件都必须拒绝 symlink/非预期文件类型，创建目录和数据库使用 restrictive current-user permissions，并在提交前重验根绑定。
+新增 `crates/skilload-core/src/adapters/sqlite_library.rs`。它必须从已有 `StateRootResolver` 取得 data/state roots：没有 `data/skilload.db` 且没有同目录 `-journal`、`-wal`、`-shm` 时 export 和 dry-run 返回空库且不建目录；任一 orphaned sidecar 都返回 `database_corrupt`。实际 import 仅在全部文件/schema/domain 验证与冲突规划完成后创建 data root 与 `state/locks/database.lock`，并沿用配置的两秒有界锁等待/typed busy 行为。该 lock pathname 是持久协调身份；一旦可能有其他 contender 打开它，失败路径不得 unlink 或重建它。若 live database 原先不存在，adapter 在同一 data directory 建立 restrictive、唯一 staging database，完整建立 schema、执行 transaction、sync staged file、重验 roots 后才从 held staging entry 经 descriptor-relative `linkat` 直接创建 absent `data/skilload.db`，随后 sync 父目录；不得先以 live name 创建 empty guard。Revision 5 的 commit 前 failure 只移除仍与 held descriptor 一致的 original staging entry 或未完成 live link；它不得以 create 后 pathname metadata、matching sidecar basename 或 first-observed FD 推断 directory/sidecar ownership，且可以保留 data/state directory、sidecar、lock 或 race replacement，不得报告 state absence。每次 pre/post publish identity drift 都返回 typed error 并保留 unknown target；正常成功才删除 held staging link。
 
 初始 schema 是一份明确的 v1 事务：`schema_info` 固定版本、`state_revision` 保存单调语义 revision、`library_entries` 以 canonical source 为主键并存储全部 portable resolved/metadata 标量、`library_tags` 以 `(canonical_source, comparison_key)` 唯一并通过外键关联 entry。开启 foreign keys，使用一个 SQLite transaction 计算并写入导入 plan；不创建 FTS 表、Trust 表或未来 ownership 表。现有 source 默认进入 kept；新 source 与现有/同批 alias 冲突必须在事务开始提交前返回 `conflict` 的 `ConflictDetails`，每个被拒绝 entry 使用 `internal_duplicate`、其 alias 为 `name`、其 source 为 `source`，且 `agent`/`path` 均为 null。对同一 batch 中后出现的相同 canonical source，同样在 transaction 前返回 `internal_duplicate`，但 `name` 为 null、`source` 为该后出现 entry 的 source；两类冲突都不修改任何行。实际新增时递增 revision。数据库已有更高 schema 返回 `schema_newer` 的 `SchemaDetails`；已识别的损坏返回 `database_corrupt` 的 `DatabaseCorruptDetails`，其中 database 是 `PathValue`、`backups`/`recoverable_exports` 因 P2 无恢复资产而为空且 `recovery_procedure` 为 `database-corruption-v1`；非普通文件返回 `invalid_state`，不能…
 
@@ -1907,13 +1911,13 @@ Library 是本机可搜索的来源元数据集合；在本交付中它只保存
 ### 里程碑 4：同步文档并完成可观察验收
 
 
-实施后更新 `docs/product-specs/README.md`、`docs/product-specs/library.md`、`api-v1.md` 历史契约和新的 `api-v2.md` current catalog，使状态 prose 准确列出 `SKL-LIB-009` Revision 4、`SKL-LIB-010` Revision 4 和 API-v2 的 `SKL-CLI-004`/`005`/`012` Revision 2；同步 `docs/product-specs/database-recovery.md` 的显式 export output 调用与 salvage heading；除新的明确产品决定外，不得再修改这些行为正文或 revision。同步 `ARCHITECTURE.md` 的当前实现模块/SQLite ownership 描述，以及 `docs/design-docs/application-and-persistence.md`、`docs/design-docs/cli-json-and-release.md` 的当前实现状态、P2 module names 和真实测试路径。若实现发现本计划中的文件传输语义或字段与 authoritative specification 冲突，先修正实现或在得到明确产品决定后更新产品规格和 Plan baseline；不得静默降低 acceptance。
+实施后更新 `docs/product-specs/README.md`、`docs/product-specs/library.md`、api-v1.md 历史契约和新的 api-v2.md current catalog，使状态 prose 准确列出 `SKL-LIB-009` Revision 4、`SKL-LIB-010` Revision 5 和 API-v2 的 `SKL-CLI-004`/`005`/`012` Revision 2；同步 `docs/product-specs/database-recovery.md` 的显式 export output 调用与 salvage heading；Revision 5 必须明确记录 conservative pre-COMMIT residual behavior。同步 `ARCHITECTURE.md` 的当前实现模块/SQLite ownership 描述，以及 `docs/design-docs/application-and-persistence.md`、`docs/design-docs/cli-json-and-release.md` 的当前实现状态、P2 module names 和真实测试路径。若实现发现本计划中的文件传输语义或字段与 authoritative specification 冲突，先修正实现或在得到明确产品决定后更新产品规格和 Plan baseline；不得静默降低 acceptance。
 
 在 active Plan 中记录每个完成里程碑、所有发现和实际验证。完成实现后，先提交并推送代码、测试、锁文件、文档和 active Plan，再按 `docs/PLANS.md` 的 ready/review 原子事务转换 Draft PR。不要在计划状态中实施任何代码。
 
 ## 评审实施补充
 
-2026-08-19 的 active review rework 扩展 Product Baseline，但不增加命令或双版本协商：人类选择 API-v2 current-producer cutover，`library_input_limit_exceeded` 以既有 `LimitDetails` 表示 P2 six-limit scanner。`rustix 1.1.4` 的 descriptor-relative `renameat_with(NOREPLACE)` 绑定首次 database publish，`fstat`/`statat(SYMLINK_NOFOLLOW)` 绑定 export staging FD；data/lock/staging replacement 只会返回 typed error，不能报告 success。`sqlite_library.rs` 还验证 schema_info 恰一 row 和持久 tag comparison key，`source.rs` 绑定 display/canonical repository identity，`configuration.rs` 回滚 partial directory 创建并在 lock acquisition 前后比较 inode，`portable_library.rs` 将 output I/O path 投影为 `ValidationDetails.path: PathValue`。所有修复保持现有命令面、SQLite schema v1 和 P2 离线边界。
+2026-08-19 的 active review rework 扩展 Product Baseline，但不增加命令或双版本协商：人类选择 API-v2 current-producer cutover，`library_input_limit_exceeded` 以既有 `LimitDetails` 表示 P2 six-limit scanner。`rustix 1.1.4` 的 descriptor-relative `renameat_with(NOREPLACE)` 绑定首次 database publish，`fstat`/`statat(SYMLINK_NOFOLLOW)` 绑定 export staging FD；data/lock/staging replacement 只会返回 typed error，不能报告 success。Revision 5 进一步规定 `configuration.rs` 保留 error-path partial directory，而 `sqlite_library.rs` 保留无法证明 provenance 的 sidecar/directory/lock；只有 held staging/live-link entry 可清理。所有修复保持现有命令面、SQLite schema v1 和 P2 离线边界。
 
 ## Concrete Steps
 
@@ -1935,7 +1939,7 @@ Library 是本机可搜索的来源元数据集合；在本交付中它只保存
     mise exec -- cargo test -p skilload-core --locked portable_library
     mise exec -- cargo test -p skilload-core --locked sqlite_library
 
-   预期每组都覆盖 source/metadata validator、Unicode 等价、所有六种 input 限制与重复键、FIFO/device/identity-drift input 拒绝、dry-run 无状态、首次 database staging cleanup、SQLite 全量原子写入、commit 后 sync-error 不伪称 absence、output 原子写入、database/WAL/SHM/lock target 拒绝、rename 前/后 failure 语义、既有 source kept、带规定 `ConflictDetails` 的 alias/canonical-source conflict rollback、带 `DatabaseCorruptDetails` 的损坏数据库只读失败和 FTS5 编译能力检查。
+   预期每组都覆盖 source/metadata validator、Unicode 等价、所有六种 input 限制与重复键、FIFO/device/identity-drift input 拒绝、dry-run 无状态、首次 database staging 的保守 residual、SQLite 全量原子写入、commit 后 sync-error 不伪称 absence、output 原子写入、database/WAL/SHM/lock target 拒绝、rename 前/后 failure 语义、既有 source kept、带规定 `ConflictDetails` 的 alias/canonical-source conflict rollback、带 `DatabaseCorruptDetails` 的损坏数据库只读失败和 FTS5 编译能力检查。
 
 4. 接入 CLI 后在 `crates/skilload-cli/tests/cli_contract.rs` 扩展隔离 XDG 场景并运行：
 
@@ -1964,7 +1968,7 @@ Library 是本机可搜索的来源元数据集合；在本交付中它只保存
 
 第二组 parser tests 对每个上界生成精确输入和超一输入。它们检查不建立 `PortableLibraryDocument` 或 `ImportPlan` 的错误路径、重复键不被“最后键覆盖”、JSON string escape 的解码后 UTF-8 计数正确、每一对象层级的重复 key 都被发现，且 API-v2 `library_input_limit_exceeded` 的 `LimitDetails` 同时有 `limit_kind`、decimal measured/allowed 与 input `PathValue`。同组以 FIFO、directory、symlink、device（可用时）和 lstat/open identity swap 证明 input descriptor 在 scanner 前被拒绝，且测试不依赖 writer/EOF 才完成。
 
-第三组 repository tests 从无数据库开始：空 export/dry-run 返回空集合且不创建根；合法 commit import 创建 schema 和 entries/tags；第二次相同 import 返回 unchanged 且数据库内容和文件 identity 不变化；一批中一个 invalid record、alias conflict 或 canonical source duplicate rollback 全部，分别以规定的 `internal_duplicate` alias/name/source 或 null-name/source `ConflictDetails` 失败；首次 import 的 schema/write/commit 前 fault injection 后 data/state 根恢复为 absent，而 commit 后 sync fault 返回错误且不声称 absence。output 目录中的临时写失败不会改数据库或留下最终半文件；database/WAL/SHM/database-lock target 在 staging 前被拒绝；rename 前失败保留旧 output，rename 后 parent sync failure 返回错误且允许新 output 已存在。外部创建的 symlink/非普通 database、lock 或 output 不能被接受。损坏 SQLite fixture 必须保留原文件且返回 `database_corrupt`：database `PathValue`、空 `backups`/`recoverable_exports` 和 `database-corruption-v1` 都与 API catalog 一致。测试还要以 bundled connection 创建临时 FTS5 virtual table 或等价 compile-option probe，证明架构要求的嵌入式能力，而不是把宿主 SQLite 当作依据。
+第三组 repository tests 从无数据库开始：空 export/dry-run 返回空集合且不创建根；合法 commit import 创建 schema 和 entries/tags；第二次相同 import 返回 unchanged 且数据库内容和文件 identity 不变化；一批中一个 invalid record、alias conflict 或 canonical source duplicate rollback 全部，分别以规定的 `internal_duplicate` alias/name/source 或 null-name/source `ConflictDetails` 失败；首次 import 的 schema/write/commit 前 fault injection 返回 error、不报告 success 或 absence，并保留无法证明 provenance 的 data/state directory、sidecar、lock 或 race replacement，只有 held staging/live link 可以清理；commit 后 sync fault 返回错误且不声称 absence。output 目录中的临时写失败不会改数据库或留下最终半文件；database/WAL/SHM/database-lock target 在 staging 前被拒绝；rename 前失败保留旧 output，rename 后 parent sync failure 返回错误且允许新 output 已存在。外部创建的 symlink/非普通 database、lock 或 output 不能被接受。损坏 SQLite fixture 必须保留原文件且返回 `database_corrupt`：database `PathValue`、空 `backups`/`recoverable_exports` 和 `database-corruption-v1` 都与 API catalog 一致。
 
 最后执行实际 CLI smoke，所有 XDG 根使用临时绝对路径、网络被禁止：
 
@@ -1979,9 +1983,9 @@ Library 是本机可搜索的来源元数据集合；在本交付中它只保存
 ## Idempotence and Recovery
 
 
-`mise install`、Cargo 格式/测试/构建、同一合法 export、dry-run 和对未变数据库的同一 import 都可以安全重复。实际 import 的 SQLite transaction 要么全部提交 entries/tags/state revision，要么 rollback；所有输入验证、alias/canonical-source 冲突和 commit 前 persistence failure 必须发生在或恢复到无持久 partial state，且首次 import 只能删除该调用创建且 identity 仍匹配的 database/sidecar/lock/空目录。commit 后 durability-sync failure 返回错误但可能已有新 state，不能执行盲目 cleanup。export 只能在目标父目录中临时写入、sync、rename 和 sync 父目录；rename 前失败保留旧普通目标内容或无目标并清理 staging，rename 后 parent sync failure 返回错误且新 target 可能已存在。
+`mise install`、Cargo 格式/测试/构建、同一合法 export、dry-run 和对未变数据库的同一 import 都可以安全重复。实际 import 的 SQLite transaction 要么全部提交 entries/tags/state revision，要么 rollback；所有输入验证、alias/canonical-source 冲突和 commit 前 persistence failure 必须返回 error 而不报告 success 或 state absence。首次 import cleanup 只限仍与本调用 held descriptor 一致的 staging/live link；directory、lock、sidecar 或其他 provenance/identity 不可证明的 state 必须保留。commit 后 durability-sync failure 返回错误但可能已有新 state，不能执行盲目 cleanup。export 只能在目标父目录中临时写入、sync、rename 和 sync 父目录；rename 前失败保留旧普通目标内容或无目标并清理 staging，rename 后 parent sync failure 返回错误且新 target 可能已存在。
 
-实现期间不得删除现有用户根、数据库或 output；首次-import cleanup 仅限本调用创建、仍为空或 identity 匹配的 staging/state 痕迹。测试仅使用临时目录；任何有歧义的 SQLite 文件、锁、symlink、非常规 input 或 output 类型都要失败而非“修复”。export target 若与 live database generation 或 database lock 碰撞也必须失败。此 P2 不实现数据库迁移、备份、导出索引或 reset；发现 version 大于 v1 时拒绝写入，发现数据库损坏时保留原文件、返回带空 P2 已知恢复集合和 `database-corruption-v1` 的 `database_corrupt`，并把完整 recovery 行为留给后续产品交付。
+实现期间不得删除现有用户根、数据库或 output；首次-import cleanup 不得把 pathname、basename、create 后 metadata 或 first-observed FD 作为 ownership proof。测试仅使用临时目录；任何有歧义的 SQLite 文件、锁、symlink、非常规 input 或 output 类型都要失败而非“修复”。export target 若与 live database generation 或 database lock 碰撞也必须失败。此 P2 不实现数据库迁移、备份、导出索引或 reset；发现 version 大于 v1 时拒绝写入，发现数据库损坏时保留原文件、返回带空 P2 已知恢复集合和 `database-corruption-v1` 的 `database_corrupt`，并把完整 recovery 行为留给后续产品交付。
 
 计划生命周期恢复同样必须安全：若 `gh pr ready` 或 review-state push 失败，执行 `gh pr ready <PR-URL> --undo`、确认 PR 回到 Draft，并将/保持计划在 `active` 后重试；若 review 发现 material scope 缺失，先把 PR 退回 Draft，再把 Plan 从 review 移回 active 并记录原因。若 completion 后但 GitHub 报告 `MERGED` 前的检查、队列或 merge 失败，按 `docs/PLANS.md` 把 Plan 恢复为 review 并推送，不能把未合并工作归档为 completed。
 
@@ -2154,3 +2158,5 @@ Library 是本机可搜索的来源元数据集合；在本交付中它只保存
 计划修订说明（2026-08-20）：本轮完整读取 PR #3 的 14 条 top-level、117 个 review body 与 90 个 inline source；六项 ordinary remediation 已由 `4ef1ba205eb323c702bceda830445f44feb4da46` 推送，并以具体回归、workspace gates、CLI smoke、GitHub reply URL 和 resolved thread state 写回 Review Conversation Log。`PRRC_kwDOT7YN2s7jlNzR` 因 `SKL-LIB-010` absent-root acceptance 与 durable lock identity 的未决产品/架构取舍保持 pending/blocked/open，与三个既有 provenance/directory source 一同等待人类选择；没有伪造修复或修改 Product Baseline。最终 Plan push 后必须再次完整读取 GitHub 会话和 PR head。
 
 计划修订说明（2026-08-20T05:52Z）：merge preflight 完整读取 14 条 top-level、117 个 review body 与 90 个 inline thread，发现四项 pending/blocked 议题，因而没有进入 `completed`。人类选择将 `SKL-LIB-010` 修订为 Revision 5 的保守 recovery contract，明确不授权跨 macOS/Linux native/FFI primitive；PR #3 已恢复 Draft，Plan 移回 `active`。本修订将四项 ledger source 改为 open/pending，并把下一步限定为移除不可证明 provenance 的 cleanup、同步规范/设计/reference/测试、重新 ready/review 及会话 reconciliation。
+
+计划修订说明（2026-08-20T06:05Z）：人类选择的 `SKL-LIB-010` Revision 5 recovery contract 已在代码、产品规格、持久化设计与 Rust/SQLite reference 落地。`configuration.rs` 保留错误路径的 partial directory，`sqlite_library.rs` 不再以 first-observed FD 清理 sidecar，并仅清理 held staging/live-link entry；四个原 decision thread 均改为 fixed/open，待 preliminary commit/push、GitHub reply/closure 和最终 conversation reconciliation。完整 fmt、Clippy、locked all-features tests、build 与隔离 CLI round trip 已通过。
