@@ -127,7 +127,7 @@ Revision 2 的 `SKL-CLI-004`、`SKL-CLI-005` 与 `SKL-CLI-012` 以 API-v2 curren
 - [x] (2026-08-20T06:05Z) 已完成 Revision 5 的保守 pre-COMMIT cleanup：`configuration.rs` 不再在错误路径删除新建 directory，`sqlite_library.rs` 不再按 first-observed FD 删除 SQLite sidecar，首次 import 仅清理 held staging/live link。已同步产品、持久化设计与 Rust/SQLite reference；focused core（107）、fmt、Clippy、locked workspace tests（11、12、107）、build 和隔离 CLI dry-run/import/export byte-identical round trip 均通过。
 - [x] (2026-08-20T06:10Z) Revision 5 实现、回归、受管文档和 preliminary ledger 已由 `420897683b3bafb3012cb0bd6cd4955778385064` 推送；重新读取完整 GitHub 会话后，四个 product-decision thread 均有回复且 `isResolved: true`，无 unresolved thread。
 - [x] (2026-08-20T06:13Z) 已运行 `gh pr ready https://github.com/bootids/skilload/pull/3`；GitHub 返回 `isDraft: false`、`state: OPEN`、`headRefOid: 842b3d3b32d4c09fe40f4f61b0de68a048f59fa8`，等于已推送的 active Plan/implementation head。此 review-state commit 将 Plan 移入 `review/`。
-- [ ] review-state commit 推送后重新完整读取 PR 会话和 head，确认 Review Conversation Log、GitHub reply/thread state 与唯一 review Plan 一致。
+- [x] (2026-08-20T06:14Z) review-state commit `d5d78e44b144fdae61b38f298a13d491c603dcf5` 推送后重新完整读取 PR：`isDraft: false`、local/upstream/PR head 一致，14 条 top-level trigger、121 个 review body、90 个 inline thread 与 90 个 Plan source 一致；无 missing/unresolved/non-resolved source 或独立 top-level/review-body 问题。
 
 
 
@@ -422,6 +422,8 @@ P2 implementation 与完整验证已完成，PR #3 已于 2026-08-19 05:57Z 转�
 2026-08-20T06:05Z 的 Revision-5 active rework 已完成本地实现与验收：directory helper 的 error path 保留 partial directory，首次 import 不再用 first-observed FD 清理 SQLite sidecar，`FirstImportDirectories` 只在 successful publication 后同步。新增/修订回归覆盖 directory、sidecar、lock 与 held staging cleanup 边界；`cargo fmt --all --check`、workspace Clippy `-D warnings`、locked all-features tests（11、12、107）、workspace build 以及隔离 API-v2 CLI dry-run/import/export byte-identical round trip 均通过。四个 decision source 已更新为 fixed/open，待 preliminary commit/push 后回复并关闭。
 2026-08-20T06:10Z 的 review remediation reconciliation 已完成：`420897683b3bafb3012cb0bd6cd4955778385064` 已推送，四个 Revision-5 source 均收到具体 commit/validation GitHub reply，随后线程均报告 `isResolved: true`。完整会话的 14 条 top-level trigger 与 117 个 review body 没有独立问题，90 个 Plan source 全覆盖；下一步提交此 final ledger reconciliation，并执行 ready/review transaction。
 2026-08-20T06:13Z 已完成 active-to-ready 的 GitHub 事务：PR #3 为 open、ready，`headRefOid` 等于已推送的 active implementation/ledger commit `842b3d3b32d4c09fe40f4f61b0de68a048f59fa8`。本 review-state commit 仅记录该 ready evidence 并移动 Plan；推送后必须重新读取完整会话与 PR head，确认没有新问题或状态漂移。
+2026-08-20T06:14Z 的 review-state post-push reconciliation 确认 PR #3 仍为 open/ready，`d5d78e44b144fdae61b38f298a13d491c603dcf5` 同时是 local、upstream 与 GitHub head。14 条 top-level trigger、121 个 review body 没有独立问题；90 个 inline thread 均已 resolved，90 个 Review Conversation Log source 全覆盖且均为 resolved。Plan 现处于唯一的 `review/` 副本；合并前仍须执行 `docs/PLANS.md` completion preflight 和 required-check gate。
+
 
 
 
@@ -2172,3 +2174,5 @@ Library 是本机可搜索的来源元数据集合；在本交付中它只保存
 计划修订说明（2026-08-20T06:10Z）：`420897683b3bafb3012cb0bd6cd4955778385064` 的 Revision-5 recovery implementation 已推送。四个原 pending product-decision source 现有具体回复 URL、commit 和验证 evidence，全部 thread resolved；完整会话没有新增问题。下一步提交此 final ledger reconciliation，完成 Draft PR 的 ready/review 原子事务并重新读取会话。
 
 计划修订说明（2026-08-20T06:13Z）：`gh pr ready` 已返回 PR #3 的 `isDraft: false` 与等于 active implementation/ledger head `842b3d3b32d4c09fe40f4f61b0de68a048f59fa8` 的 `headRefOid`。本次 review-state commit 将 Plan 移入 `review/`、设置 `status: review` 并记录 ready evidence；推送后必须再次完整读取 GitHub conversation 和 PR head。
+
+计划修订说明（2026-08-20T06:14Z）：review-state commit `d5d78e44b144fdae61b38f298a13d491c603dcf5` 推送后，PR/head/工作树与唯一 `review/` Plan 已重新核对。完整 conversation reconciliation 覆盖 14 条 top-level、121 个 review body 与 90 个 inline thread；无未记录问题或未解决 thread。Plan 已满足 ready-for-review 状态，下一步按已收到的合并授权执行 completion preflight。
