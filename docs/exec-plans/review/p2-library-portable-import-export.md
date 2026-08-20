@@ -113,7 +113,7 @@ Revision 2 的 `SKL-CLI-004`、`SKL-CLI-005` 与 `SKL-CLI-012` 以 API-v2 curren
 - [x] (2026-08-20) 四个 fixed source 已使用 `752c0f77b24a5300dffe7edcca952809688fdc1f` 的实现/验证证据逐一回复并在 reply 成功后关闭；`PRRC_kwDOT7YN2s7jWsuw` 已收到 exact decision question，保持 blocked/open。
 - [x] (2026-08-20) 四个 ordinary remediation 已由 `282fd97dcd04dea37d0ff30848ecd26be603937f` 推送并逐源回复、关闭；最终读取确认 10 条 top-level trigger 均为 `@codex`、96 个 review body 无独立问题、75 个 inline source 全部有 Plan heading，74 个已解决。唯一 `PRRC_kwDOT7YN2s7jWsuw` 因未决 create-and-hold 方向维持 pending/blocked/open。
 - [x] (2026-08-20) 已完整读取 PR #3 当前 11 条 top-level trigger、13 个非空自动 review body 与 80 个 inline thread；前两类没有独立问题，75 个既有 inline source 仍与 Plan log 对应。两个 ordinary export remediation 已由 `0892f3ea7b515f6bdd0f8e371516af71eb390c9a` 推送：focused portable tests 19/19、fmt、Clippy、locked workspace tests（11、12、100）与 build 通过，实际 CLI API-v2 export smoke 证明 symlink-parent `..` 写入 kernel 解析的路径。五个新 source 均已获得 GitHub reply；两个 fixed 与一个 no-fix thread 已关闭，两个 held-file/sidecar provenance source 与既有 directory identity source 均保持 pending/blocked/open，等待人类决定。
-- [x] (2026-08-20) 本轮完整会话读取发现 `PRRC_kwDOT7YN2s7jjnNR`、`PRRC_kwDOT7YN2s7jjnNS` 与 `PRRC_kwDOT7YN2s7jjnNU` 三个新的 open inline source；均在当前 P2 export/import boundary 内。ordinary remediation、产品/设计/Plan 同步与 focused/core regression 已由 `0dc0b9b3f83ef256c4de19c23186ed9c3816f826` 推送；该提交通过 portable 21、SQLite 39、core 102、`cargo fmt --all --check`、workspace Clippy、locked workspace tests（11、12、102）、workspace build 与隔离 CLI export → dry-run import smoke。三个 ledger entry 保持 fixed/open，待 GitHub reply 与 closure。
+- [x] (2026-08-20) 本轮完整会话读取发现 `PRRC_kwDOT7YN2s7jjnNR`、`PRRC_kwDOT7YN2s7jjnNS` 与 `PRRC_kwDOT7YN2s7jjnNU` 三个新的 inline source；均在当前 P2 export/import boundary 内。ordinary remediation、产品/设计/Plan 同步与 focused/core regression 已由 `0dc0b9b3f83ef256c4de19c23186ed9c3816f826` 推送；该提交通过 portable 21、SQLite 39、core 102、`cargo fmt --all --check`、workspace Clippy、locked workspace tests（11、12、102）、workspace build 与隔离 CLI export → dry-run import smoke。三个 fixed source 已逐一回复并在 reply 成功后关闭；三个既有 provenance/directory 决策 source 保持 pending/blocked/open。
 - [ ] 收到明确人类合并授权后，完成预检、评审会话记录、completed 事务、必要检查、合并、默认分支更新和本地交付分支清理。
 
 ## Surprises & Discoveries
@@ -370,7 +370,7 @@ P2 implementation 与完整验证已完成，PR #3 已于 2026-08-19 05:57Z 转�
 
 2026-08-20 的 reply reconciliation 已确认五个本轮 source 都有 GitHub 回复：absent-target 与 native-path fixed thread、error-category no-fix thread 均在 reply 成功后 `isResolved: true`；first-import publication source identity 与 sidecar provenance 分别收到明确的 primitive-or-guarantee 决策问题，并与先前 directory identity source 一同保持 `pending`/`blocked`/open。最终 Plan ledger commit 推送后必须重新读取全量会话与 PR head，确认 80 个 source 的记录、回复与 thread state 一致。
 
-2026-08-20 的本轮 remediation/preliminary ledger commit `0dc0b9b3f83ef256c4de19c23186ed9c3816f826` 已推送，local、upstream 与 open/ready PR #3 head 已核对一致。它让首次 import failure 不再 unlink durable database lock，export 在 staging 前拒绝活跃 DELETE rollback journal，并让 non-model JSON scanner 从 held regular-file buffered reader 增量运行，在第 129 个 number byte 停止而不请求后续 chunk。`SKL-LIB-009` 因新增可观察的 journal rejection 升至 Revision 4。focused portable（21）、SQLite（39）、core（102）、format、Clippy、locked workspace tests（11、12、102）、workspace build 与隔离 CLI export → dry-run import smoke 均通过。三个 ledger entry 保持 fixed/open，下一步重新读取会话后逐源回复并关闭对应线程。
+2026-08-20 的本轮 remediation/preliminary ledger commit `0dc0b9b3f83ef256c4de19c23186ed9c3816f826` 已推送，local、upstream 与 open/ready PR #3 head 已核对一致。它让首次 import failure 不再 unlink durable database lock，export 在 staging 前拒绝活跃 DELETE rollback journal，并让 non-model JSON scanner 从 held regular-file buffered reader 增量运行，在第 129 个 number byte 停止而不请求后续 chunk。`SKL-LIB-009` 因新增可观察的 journal rejection 升至 Revision 4。focused portable（21）、SQLite（39）、core（102）、format、Clippy、locked workspace tests（11、12、102）、workspace build 与隔离 CLI export → dry-run import smoke 均通过。三个 fixed source 已获 GitHub reply 并确认 `thread resolved: true`；三个既有 provenance/directory source 保持 pending/blocked/open，待最终 Plan reconciliation commit 推送后再完整读取会话与 PR head。
 
 ## Review Conversation Log
 
@@ -1663,13 +1663,13 @@ Problem: 首次 import 在 COMMIT 前失败时先显式解锁、随后 cleanup u
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: `crates/skilload-core/src/adapters/configuration.rs` 现让 restrictive lock helper 始终保留创建的 durable pathname；`crates/skilload-core/src/adapters/sqlite_library.rs` 移除 first-import cleanup 对 `database.lock` 的 ownership/unlink 路径，并只清理可证明由本调用创建的 data artifacts。`first_import_precommit_failure_retains_the_durable_lock` 证明后续 import 重用同一 inode，`first_import_post_lock_failure_retains_the_durable_lock` 覆盖锁取得后失败。
 
 Evidence: 修复提交 `0dc0b9b3f83ef256c4de19c23186ed9c3816f826` 已推送且 PR #3 head 已核对为同一 SHA；`mise exec -- cargo test -p skilload-core --lib sqlite_library` 通过 39 tests，`mise exec -- cargo test -p skilload-core --lib` 通过 102 tests；`cargo fmt --all --check`、workspace Clippy、locked workspace tests（11、12、102）与 workspace build 均通过。
 
-GitHub outcome: 待回复；thread resolved: false。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_r3818118890；thread resolved: true。
 
 ### PRRC_kwDOT7YN2s7jjnNS — DELETE rollback journal 导出保护
 
@@ -1679,13 +1679,13 @@ Problem: `library export --output` 的 protected target 清单漏掉活跃 DELET
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: `crates/skilload-core/src/adapters/portable_library.rs` 将 `skilload.db-journal` 纳入 protected paths，并新增 live DELETE transaction journal fixture `output_refuses_a_live_delete_mode_rollback_journal_before_staging`；`docs/product-specs/library.md` 将 `SKL-LIB-009` 提升至 Revision 4，`docs/product-specs/README.md`、持久化设计、SQLite 参考与本 Plan 同步该 active-generation boundary。
 
 Evidence: 修复提交 `0dc0b9b3f83ef256c4de19c23186ed9c3816f826` 已推送且 PR #3 head 已核对为同一 SHA；`mise exec -- cargo test -p skilload-core --lib portable_library` 通过 21 tests，`mise exec -- cargo test -p skilload-core --lib` 通过 102 tests；`cargo fmt --all --check`、workspace Clippy、locked workspace tests（11、12、102）与 workspace build 均通过。
 
-GitHub outcome: 待回复；thread resolved: false。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_r3818119966；thread resolved: true。
 
 ### PRRC_kwDOT7YN2s7jjnNU — 流式输入上限扫描
 
@@ -1695,13 +1695,13 @@ Problem: `read_input` 先缓冲完整文件再调用 `JsonScanner`；开头已�
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: `crates/skilload-core/src/adapters/portable_library.rs` 的 `JsonScanner` 现直接消费 held regular-file 的 buffered reader，在 scanner pass 中累积成功反序列化所需 bytes；`read_import` 复用该 pass 的 bytes，不再先完整缓冲再扫描。新增 `scanner_stops_reading_at_first_streamed_number_overage`，证明第 129 个 number byte 失败后 scanner 不会请求后续 input chunk。
 
 Evidence: 修复提交 `0dc0b9b3f83ef256c4de19c23186ed9c3816f826` 已推送且 PR #3 head 已核对为同一 SHA；`mise exec -- cargo test -p skilload-core --lib portable_library` 通过 21 tests，`mise exec -- cargo test -p skilload-core --lib` 通过 102 tests；`cargo fmt --all --check`、workspace Clippy、locked workspace tests（11、12、102）与 workspace build 均通过；隔离 CLI export → `--dry-run` import smoke 返回 API-v2 `observed` 且 state root absent。
 
-GitHub outcome: 待回复；thread resolved: false。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_r3818121108；thread resolved: true。
 
 ## Context and Orientation
 
@@ -1993,3 +1993,5 @@ Library 是本机可搜索的来源元数据集合；在本交付中它只保存
 计划修订说明（2026-08-20）：修复提交 `282fd97dcd04dea37d0ff30848ecd26be603937f` 推送后，四个 fixed thread 均获得具体 commit/validation reply 并确认 `isResolved: true`；tag source 的 timeout-induced duplicate reply URL 已如实保留。最终 reconciliation 覆盖全部 10 条 top-level trigger、96 个 review body 与 75 个 inline source；没有未记录或未回答的非 blocked 问题。唯一 directory identity source 保持 pending/blocked/open，等待明确的人类产品/architecture 决定。
 
 计划修订说明（2026-08-20）：`0dc0b9b3f83ef256c4de19c23186ed9c3816f826` 已推送，处理 database lock inode 分裂、活跃 DELETE rollback journal export target 与流式 non-model input scan；产品、设计、SQLite 参考、验证证据和三个 fixed/open Review Conversation Log 条目已同步，待 GitHub 回复、线程 closure 和最终 reconciliation。
+
+计划修订说明（2026-08-20）：三个 `0dc0b9b3f83ef256c4de19c23186ed9c3816f826` fixed source 已分别以验证证据回复并关闭；回复 URL、`thread resolved: true` 和三个仍待人类决定的 pending/blocked source 已与 `list --all` reconciliation 对齐。
