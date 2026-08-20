@@ -447,6 +447,8 @@ Evidence: `tampered_or_symlinked_backups_are_never_validated` 继续断言等长
 
 GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/5#discussion_r3823325270；thread resolved: true。
 
+2026-08-21 最终完整会话读取：PR #5 当前有 4 个 top-level comments、17 个 submitted reviews 与 14 个 review threads；14 个 threads 均 resolved。新增 submitted review bodies `PRR_kwDOT7YN2s8AAAABKSBnIQ`（https://github.com/bootids/skilload/pull/5#pullrequestreview-4984956705）、`PRR_kwDOT7YN2s8AAAABKSBt-Q`（https://github.com/bootids/skilload/pull/5#pullrequestreview-4984958457）、`PRR_kwDOT7YN2s8AAAABKSB0Ww`（https://github.com/bootids/skilload/pull/5#pullrequestreview-4984960091）和 `PRR_kwDOT7YN2s8AAAABKSB7IA`（https://github.com/bootids/skilload/pull/5#pullrequestreview-4984961824）均为 `@bootids` 的空 `COMMENTED` body，未提出独立问题；它们对应本轮 inline reply/resolve 容器，不需额外 disposition。
+
 ## Context and Orientation
 
 
@@ -779,3 +781,5 @@ Backup manifest是private versioned serde record，不进入API-v2或portable ex
 2026-08-21：第三轮 final-review remediation。四个新 inline 问题均为 Product Baseline 内的普通修复：以 held `/dev/fd` descriptor 消除 read gate/open race、取消无法 identity-bound 的 backup prune、把 post-validation MATCH corruption归为 `library_fts_invalid`、以 held directory-relative `openat(..., O_NOFOLLOW)`验证 backup pair。实现、回归测试、`docs/design-docs/application-and-persistence.md` 与 preliminary Review Conversation Log 以 `7e5a7bda7ce2dc3804a687a4e7249944a7908980` 提交并推送；focused tests、fmt、clippy、workspace test（11+17+142）、locked build与`git diff --check`均通过。Plan 保持 `review`、PR 保持 ready；等待本 workflow 写入 GitHub replies/closures 与最终 Review Conversation Log reconciliation。
 
 2026-08-21：第三轮 review conversation 已完成 reconciliation。PRRT_kwDOT7YN2s6a3XAK、PRRT_kwDOT7YN2s6a3XAV、PRRT_kwDOT7YN2s6a3XAd 与 PRRT_kwDOT7YN2s6a3XAk 均回复了 `7e5a7bda7ce2dc3804a687a4e7249944a7908980` 的实现与验证证据，reply URLs 和 `thread resolved: true` 已逐项写入 Review Conversation Log。此 final log commit 待推送后按完整 conversation read 再次核验，无 pending/blocked source。
+
+2026-08-21：final reconciliation 后的完整会话读取发现四个新增、空 body 的 `@bootids` submitted review containers；已在 Review Conversation Log 记录其 stable IDs/URLs 和 no-problem assessment。四个修复 thread 已回复并 resolved，未发现未记录、未回答或 blocked 的实际问题；本记录随最终文档提交推送后再做一次状态核验。
