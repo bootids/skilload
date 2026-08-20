@@ -17,7 +17,8 @@ skilload 的 `SKL-LIB-004` 要求使用 bundled SQLite FTS5 搜索本地 Library
 * FTS5 的 `integrity-check` special command 会验证索引内部一致性；对于 ordinary content-bearing table，它也比较索引和该 FTS table 自己保存的内容。命令形式是向 table 同名 hidden column 执行 `INSERT ... VALUES('integrity-check')`，所以 read-only SQLite connection 会拒绝它，即使成功检查不改变产品数据。默认 doctor 可以从 read-only live connection 使用 SQLite online backup 复制到内存 destination，再在该副本上运行 `integrity-check`，从而保持 live filesystem 和 database bytes 不变。
 * FTS5 的 `rebuild` special command会删除并按当前 FTS content 重新生成全文索引。若 FTS content rows 自身与 Library base rows 不一致，doctor 不能只调用 `rebuild`；它必须在 live repair transaction 中丢弃并按已验证 base rows 重新创建、填充整个派生 table。
 * `rusqlite 0.40.2` 的 `backup` module 要求 source 与 destination 是两个不同的 `Connection`。`Backup::new` 创建 handle；`run_to_completion(pages_per_step, pause_between_pages, progress)` 重复 step，并允许 source 在分块之间处理并发操作；`Backup` 的 `Drop` 调用 `sqlite3_backup_finish`。该 API 由 crate 的 `backup` feature 提供，适合从 live source generation 生成 standalone migration backup，也适合只读 doctor 的 in-memory snapshot。
-* crates.io 在 2026-08-20 将未撤回的 `sha2 0.11.0` 列为当前稳定版；它声明 `rust-version = 1.85`，低于仓库固定的 Rust 1.97.1，许可证为 MIT OR Apache-2.0。P4 可用 `Sha256` 对 backup file 做流式摘要，不需要把完整 database 读入内存或引入第二个编码依赖。
+* `PRAGMA integrity_check(<table>)`（table-name 形式，SQLite ≥ 3.33.0；bundled 3.53.4）只检查指定 table 及其 indexes，也可指定 `sqlite_master`。2026-08-20 实验证实：仅损坏 FTS5 shadow b-tree（翻转 `library_fts_data` root page 尾部 cell 字节）时，整库 `PRAGMA integrity_check` 报告 `Tree N page N cell N: Extends off end of page`，而对 `sqlite_master` 与四个 base table 的逐表检查全部返回 `ok`。base/derived 两层分类因此应使用逐表检查，不要用整库结果。
+* 物理 damaged 的 FTS5 shadow b-tree 无法用任何 SQL 语句清除：`DROP TABLE library_fts`、`DROP TABLE library_fts_data`、`DELETE FROM library_fts_data` 都以 `SQLITE_CORRUPT` 失败（2026-08-20 实验）。可行的重建路径是 SQLite 文档记载的 `writable_schema` 修复：同一 transaction 内 `PRAGMA writable_schema = ON` → `DELETE FROM sqlite_master WHERE name IN (vtab + 5 个 shadow 表名)` → `PRAGMA writable_schema = OFF` → 读 `PRAGMA schema_version` 并 +1 强制 schema 重解析 → 重新 `CREATE VIRTUAL TABLE` 并按 base rows 填充。旧 shadow pages 成为 orphan pages（整库 integrity_check 之后会报 never used），不影响逐表 base 验证与 FTS5 special `integrity-check`。
 
 ## 对 `PLAN-0005` 的约束
 
@@ -29,7 +30,7 @@ skilload 的 `SKL-LIB-004` 要求使用 bundled SQLite FTS5 搜索本地 Library
 
 ## 注意事项
 
-* `PRAGMA integrity_check` 与 `PRAGMA foreign_key_check` 仍分别负责 SQLite/base-table 与 foreign-key 证据；FTS5 special `integrity-check` 不是二者的替代品。
+* 整库 `PRAGMA integrity_check` 会把 FTS5 shadow 表的损坏一并报告；若产品需要区分 base corruption 与可重建的 derived 损坏，必须逐表检查（见上）而不是解析整库输出的消息文本——SQLite 的错误消息格式不是稳定契约。
 * FTS table 保存的是可重建的 metadata 副本。Library durable truth仍是 `library_entries` 与 `library_tags`；搜索、doctor 或 migration 不得通过 FTS row反向修改 base metadata。
 * Query 语义、tokenizer 配置或 Unicode query-normalization 数据一旦对外发布就属于兼容契约。后续改变它们必须更新产品 behavior revision并提供显式索引重建或 schema migration，不能静默改变同一 revision 的结果。
 

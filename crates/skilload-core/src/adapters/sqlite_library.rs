@@ -57,6 +57,20 @@ tokenize = 'unicode61 remove_diacritics 0')";
 const FTS_ROW_COLUMNS: usize = 9;
 const BACKUP_MANIFEST_FORMAT_VERSION: u64 = 1;
 const RETAINED_COMPLETE_BACKUPS: usize = 3;
+const BASE_INTEGRITY_TABLES: [&str; 5] = [
+    "sqlite_master",
+    "schema_info",
+    "state_revision",
+    "library_entries",
+    "library_tags",
+];
+const LIBRARY_FTS_SHADOW_TABLES: [&str; 5] = [
+    "library_fts_data",
+    "library_fts_idx",
+    "library_fts_content",
+    "library_fts_docsize",
+    "library_fts_config",
+];
 
 pub struct SqliteLibraryRepository {
     environment: Arc<dyn Environment>,
@@ -726,9 +740,8 @@ impl SqliteLibraryRepository {
 
     fn known_validated_backups(roots: &ResolvedRoots) -> Vec<NativePath> {
         let backups_root = roots.data.effective.join("backups");
-        let directory = match fs::read_dir(&backups_root) {
-            Ok(directory) => directory,
-            Err(_) => return Vec::new(),
+        let Ok(directory) = fs::read_dir(&backups_root) else {
+            return Vec::new();
         };
         let mut stems = directory
             .flatten()
@@ -739,22 +752,8 @@ impl SqliteLibraryRepository {
         stems.sort();
         let mut validated = Vec::new();
         for stem in stems {
-            let database = backups_root.join(format!("{stem}.db"));
-            let manifest = backups_root.join(format!("{stem}.manifest.json"));
-            let Ok(metadata) = fs::symlink_metadata(&database) else {
-                continue;
-            };
-            if !metadata.file_type().is_file() {
-                continue;
-            }
-            let Ok(bytes) = fs::read(&manifest) else {
-                continue;
-            };
-            let Ok(record) = serde_json::from_slice::<BackupManifestRecord>(&bytes) else {
-                continue;
-            };
-            if record.complete && record.database_bytes == metadata.len() {
-                validated.push(NativePath::new(database));
+            if backup_pair_is_valid(&backups_root, &stem) {
+                validated.push(NativePath::new(backups_root.join(format!("{stem}.db"))));
             }
         }
         validated
@@ -883,7 +882,7 @@ impl SqliteLibraryRepository {
         if !Self::database_exists(&database)? {
             return Ok((Diagnosis::Absent, Vec::new()));
         }
-        let (mut connection, _identity) =
+        let (mut connection, identity) =
             self.open_existing_database(&database, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
         let transaction = connection
             .transaction()
@@ -935,6 +934,14 @@ impl SqliteLibraryRepository {
                 }
             }
         };
+        // The diagnosis is evidence for recovery: like the read paths, prove
+        // the live pathname still names the inode that was diagnosed both
+        // before and after closing the snapshot.
+        Self::revalidate_database_identity(&database, identity)?;
+        transaction
+            .commit()
+            .map_err(|error| database_error(&database, error))?;
+        Self::revalidate_database_identity(&database, identity)?;
         match finding {
             Some(finding) => Ok((classification, vec![finding])),
             None => Ok((classification, Vec::new())),
@@ -960,11 +967,18 @@ impl SqliteLibraryRepository {
             .run_to_completion(512, Duration::ZERO, None)
             .map_err(|error| database_error(database, error))?;
         drop(backup);
-        copy.execute(
-            "INSERT INTO library_fts(library_fts) VALUES('integrity-check')",
-            [],
-        )
-        .map_err(|error| database_error(database, error))?;
+        // The copy is an in-memory scratch database: any failure of the
+        // special command there is derived-index invalidity (a doctor-fixable
+        // finding), not a reason to abort the diagnosis.
+        if copy
+            .execute(
+                "INSERT INTO library_fts(library_fts) VALUES('integrity-check')",
+                [],
+            )
+            .is_err()
+        {
+            return Ok(false);
+        }
         Ok(true)
     }
 
@@ -1033,7 +1047,7 @@ impl SqliteLibraryRepository {
             load_validated_entries(&transaction, &database)?
         };
 
-        self.publish_validated_backup(
+        let protected_stem = self.publish_validated_backup(
             &roots,
             &connection,
             &database,
@@ -1103,7 +1117,7 @@ impl SqliteLibraryRepository {
         )?;
         Self::revalidate_database_identity(&database, identity)?;
         let backups_root = roots.data.effective.join("backups");
-        Self::prune_old_backups(&backups_root);
+        Self::prune_old_backups(&backups_root, &protected_stem);
         Ok(DoctorAction {
             kind: DoctorActionKind::Migrate,
             target: NativePath::new(database),
@@ -1112,7 +1126,7 @@ impl SqliteLibraryRepository {
         })
     }
 
-    fn repair_fts(&self, roots: &ResolvedRoots) -> Result<DoctorAction, AppError> {
+    fn repair_fts(&self, roots: &ResolvedRoots) -> Result<Option<DoctorAction>, AppError> {
         let lock_path = roots.state.effective.join("locks/database.lock");
         let lock = acquire_restrictive_lock(roots, "database.lock", "database")?;
         let result = self.repair_fts_locked(roots);
@@ -1128,7 +1142,7 @@ impl SqliteLibraryRepository {
         result
     }
 
-    fn repair_fts_locked(&self, roots: &ResolvedRoots) -> Result<DoctorAction, AppError> {
+    fn repair_fts_locked(&self, roots: &ResolvedRoots) -> Result<Option<DoctorAction>, AppError> {
         let roots = self.root_resolver.revalidate(roots)?;
         let database = Self::database_path(&roots);
         if !Self::database_exists(&database)? {
@@ -1144,18 +1158,33 @@ impl SqliteLibraryRepository {
             self.open_existing_database(&database, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
         data_directory.revalidate()?;
         Self::revalidate_database_identity(&database, identity)?;
+        {
+            let transaction = connection
+                .transaction()
+                .map_err(|error| database_error(&database, error))?;
+            let generation = read_schema_generation(&transaction, &database)?;
+            validate_base_database(&transaction, &database)?;
+            if generation != SchemaGeneration::V2 {
+                return Err(AppError::invalid_state(
+                    "library_database",
+                    "fts_repair_requires_schema_2",
+                    ["a schema 2 database with intact base rows"],
+                ));
+            }
+            transaction
+                .commit()
+                .map_err(|error| database_error(&database, error))?;
+        }
+        // Re-diagnose under the durable lock: a concurrent `doctor --fix`
+        // may have rebuilt the index after this process observed drift.
+        // Rebuilding a healthy index would report a false `changed` result.
+        if self.derived_index_is_consistent(&connection, &database)? {
+            Self::revalidate_database_identity(&database, identity)?;
+            return Ok(None);
+        }
         let transaction = connection
             .transaction()
             .map_err(|error| database_error(&database, error))?;
-        let generation = read_schema_generation(&transaction, &database)?;
-        validate_base_database(&transaction, &database)?;
-        if generation != SchemaGeneration::V2 {
-            return Err(AppError::invalid_state(
-                "library_database",
-                "fts_repair_requires_schema_2",
-                ["a schema 2 database with intact base rows"],
-            ));
-        }
         rebuild_derived_index(&transaction, &database)?;
         validate_derived_database(&transaction, &database)?;
         transaction
@@ -1177,12 +1206,12 @@ impl SqliteLibraryRepository {
             || Ok(()),
         )?;
         Self::revalidate_database_identity(&database, identity)?;
-        Ok(DoctorAction {
+        Ok(Some(DoctorAction {
             kind: DoctorActionKind::Repair,
             target: NativePath::new(database),
             before: Some("fts_invalid".to_owned()),
             after: Some("fts_valid".to_owned()),
-        })
+        }))
     }
 
     /// Create, validate, and publish one standalone backup pair for the v1
@@ -1195,11 +1224,16 @@ impl SqliteLibraryRepository {
         database: &Path,
         source_identity: (u64, u64),
         state_revision_baseline: i64,
-    ) -> Result<(), AppError> {
+    ) -> Result<String, AppError> {
         let backups_root = roots.data.effective.join("backups");
-        ensure_restrictive_directory(&backups_root, "XDG_DATA_HOME")?;
+        let created_directories = ensure_restrictive_directory(&backups_root, "XDG_DATA_HOME")?;
         let backups_directory = ValidatedDataDirectory::open(&backups_root)?;
         backups_directory.revalidate()?;
+        // On the first migration `data/backups` does not exist yet: syncing
+        // the backups directory only persists its contents, so the new entry
+        // in its parent data directory must be made crash-durable before any
+        // live schema write can depend on the pair published here.
+        sync_created_directory_entries(&created_directories, "XDG_DATA_HOME")?;
 
         let mut staging_db = Builder::new()
             .prefix(".skilload-backup-db-")
@@ -1385,7 +1419,7 @@ impl SqliteLibraryRepository {
         })?;
         self.hooks
             .after_backup_publish(&backups_root.join(final_db_name))?;
-        Ok(())
+        Ok(stem)
     }
 
     fn open_staging_backup(staging_path: &Path) -> Result<Connection, AppError> {
@@ -1400,56 +1434,74 @@ impl SqliteLibraryRepository {
     }
 
     /// Conservatively keep only the newest complete validated backup pairs.
-    /// Invalid, unpaired, symlinked, digest-drifted, or foreign entries are
-    /// never touched.
-    fn prune_old_backups(backups_root: &Path) {
+    /// Every pair is validated before it can enter the retention ranking, so
+    /// invalid, unpaired, symlinked, digest-drifted, or foreign entries
+    /// neither get deleted nor push valid backups into the deletion slice.
+    /// The backup published by the current migration is never deleted, even
+    /// when foreign future-dated manifests or a backwards clock make it sort
+    /// as the oldest entry.
+    fn prune_old_backups(backups_root: &Path, protected_stem: &str) {
         let directory = match fs::read_dir(backups_root) {
             Ok(directory) => directory,
             Err(_) => return,
         };
-        let mut stems = directory
+        let mut validated = directory
             .flatten()
             .filter_map(|entry| entry.file_name().into_string().ok())
             .filter(|name| name.starts_with("skilload-db-v1-to-v2-"))
             .filter(|name| name.ends_with(".manifest.json"))
             .map(|name| name.trim_end_matches(".manifest.json").to_owned())
+            .filter(|stem| backup_pair_is_valid(backups_root, stem))
             .collect::<Vec<_>>();
-        stems.sort();
-        stems.reverse();
-        if stems.len() <= RETAINED_COMPLETE_BACKUPS {
-            return;
-        }
-        for stem in &stems[RETAINED_COMPLETE_BACKUPS..] {
-            let database = backups_root.join(format!("{stem}.db"));
-            let manifest = backups_root.join(format!("{stem}.manifest.json"));
-            let Ok(record_bytes) = fs::read(&manifest) else {
-                continue;
-            };
-            let Ok(record) = serde_json::from_slice::<BackupManifestRecord>(&record_bytes) else {
-                continue;
-            };
-            let Ok(metadata) = fs::symlink_metadata(&database) else {
-                continue;
-            };
-            if !metadata.file_type().is_file()
-                || !record.complete
-                || record.database_bytes != metadata.len()
-            {
-                continue;
-            }
-            let Ok(file) = File::open(&database) else {
-                continue;
-            };
-            let Ok(digest) = sha256_of_file(&file) else {
-                continue;
-            };
-            if format!("sha256:{digest}") != record.sha256 {
-                continue;
-            }
-            let _ = fs::remove_file(&database);
-            let _ = fs::remove_file(&manifest);
+        validated.sort();
+        validated.reverse();
+        for stem in validated
+            .into_iter()
+            .skip(RETAINED_COMPLETE_BACKUPS)
+            .filter(|stem| stem != protected_stem)
+        {
+            let _ = fs::remove_file(backups_root.join(format!("{stem}.db")));
+            let _ = fs::remove_file(backups_root.join(format!("{stem}.manifest.json")));
         }
     }
+}
+
+/// A backup pair counts as validated only when the manifest is a real regular
+/// file (never a symlink), records a complete backup, the database is a real
+/// regular file of the recorded length, and its streamed SHA-256 matches the
+/// manifest digest. This is the single predicate behind corruption-response
+/// backup listing and retention pruning.
+fn backup_pair_is_valid(backups_root: &Path, stem: &str) -> bool {
+    let database = backups_root.join(format!("{stem}.db"));
+    let manifest = backups_root.join(format!("{stem}.manifest.json"));
+    let Ok(manifest_metadata) = fs::symlink_metadata(&manifest) else {
+        return false;
+    };
+    if !manifest_metadata.file_type().is_file() {
+        return false;
+    }
+    let Ok(record_bytes) = fs::read(&manifest) else {
+        return false;
+    };
+    let Ok(record) = serde_json::from_slice::<BackupManifestRecord>(&record_bytes) else {
+        return false;
+    };
+    let Ok(metadata) = fs::symlink_metadata(&database) else {
+        return false;
+    };
+    if !metadata.file_type().is_file()
+        || !record.complete
+        || record.database_bytes != metadata.len()
+    {
+        return false;
+    }
+    let Ok(file) = File::open(&database) else {
+        return false;
+    };
+    let Ok(digest) = sha256_of_file(&file) else {
+        return false;
+    };
+    format!("sha256:{digest}") == record.sha256
 }
 
 impl Default for SqliteLibraryRepository {
@@ -1529,7 +1581,8 @@ impl LibraryRepository for SqliteLibraryRepository {
         let database = Self::database_path(&roots);
         if dry_run {
             let existing = if Self::database_exists(&database)? {
-                self.read_existing(&database)?
+                self.read_existing(&database)
+                    .map_err(|error| self.enrich_database_corruption(error))?
             } else {
                 Vec::new()
             };
@@ -1541,6 +1594,7 @@ impl LibraryRepository for SqliteLibraryRepository {
         }
         if Self::database_exists(&database)? {
             self.import_existing(&roots, &document)
+                .map_err(|error| self.enrich_database_corruption(error))
         } else if document.entries.is_empty() {
             Ok(LibraryImportOperation {
                 outcome: LibraryImportOutcome::Unchanged,
@@ -1549,6 +1603,7 @@ impl LibraryRepository for SqliteLibraryRepository {
         } else {
             let plan = Self::plan(&document, &[], false)?;
             self.import_first(&roots, &document, plan)
+                .map_err(|error| self.enrich_database_corruption(error))
         }
     }
 
@@ -1563,6 +1618,7 @@ impl LibraryRepository for SqliteLibraryRepository {
             return Err(AppError::not_found("library", mutation.selector.clone()));
         }
         self.mutate_existing(&roots, mutation)
+            .map_err(|error| self.enrich_database_corruption(error))
     }
 }
 
@@ -1587,7 +1643,6 @@ impl DatabaseMaintenance for SqliteLibraryRepository {
             database_writable,
         })
     }
-
     fn fix(&self) -> Result<DoctorOperation, AppError> {
         let roots = self.resolve_roots()?;
         let (classification, mut findings) = self
@@ -1595,8 +1650,13 @@ impl DatabaseMaintenance for SqliteLibraryRepository {
             .map_err(|error| self.enrich_database_corruption(error))?;
         let action = match classification {
             Diagnosis::Absent | Diagnosis::Healthy | Diagnosis::SchemaNewer => None,
-            Diagnosis::RequiresMigration => Some(self.migrate_v1(&roots)?),
-            Diagnosis::FtsInvalid => Some(self.repair_fts(&roots)?),
+            Diagnosis::RequiresMigration => Some(
+                self.migrate_v1(&roots)
+                    .map_err(|error| self.enrich_database_corruption(error))?,
+            ),
+            Diagnosis::FtsInvalid => self
+                .repair_fts(&roots)
+                .map_err(|error| self.enrich_database_corruption(error))?,
         };
         match action {
             Some(action) => {
@@ -1614,6 +1674,17 @@ impl DatabaseMaintenance for SqliteLibraryRepository {
                 })
             }
             None => {
+                let (classification, findings) = if matches!(classification, Diagnosis::FtsInvalid)
+                {
+                    // The drift was repaired by a concurrent `doctor --fix`
+                    // between this diagnosis and acquiring the lock; report
+                    // the state observed after the action instead of the
+                    // stale finding.
+                    self.diagnosis_classification()
+                        .map_err(|error| self.enrich_database_corruption(error))?
+                } else {
+                    (classification, findings)
+                };
                 let database_writable =
                     matches!(classification, Diagnosis::Absent | Diagnosis::Healthy);
                 Ok(DoctorOperation {
@@ -2168,7 +2239,10 @@ fn read_schema_generation(
 
 /// Base validation covers the v1 Library tables, foreign keys, and domain
 /// rows. It applies identically to every generation so v1 databases stay
-/// readable for `library list`, `library get`, and portable export.
+/// readable for `library list`, `library get`, and portable export. The
+/// integrity pass checks the schema table and the four base tables
+/// individually: FTS5 shadow-table damage must stay in the derived layer,
+/// where it is a doctor-fixable finding instead of base corruption.
 fn validate_base_database(connection: &Connection, path: &Path) -> Result<(), AppError> {
     let state_revision = singleton_i64(connection, "SELECT revision FROM state_revision", path)?;
     if state_revision < 0 {
@@ -2177,13 +2251,18 @@ fn validate_base_database(connection: &Connection, path: &Path) -> Result<(), Ap
         )));
     }
     validate_library_tags_schema(connection, path)?;
-    let integrity: String = connection
-        .query_row("PRAGMA integrity_check", [], |row| row.get(0))
-        .map_err(|error| database_error(path, error))?;
-    if integrity != "ok" {
-        return Err(AppError::database_corrupt(NativePath::new(
-            path.to_path_buf(),
-        )));
+    for table in BASE_INTEGRITY_TABLES {
+        let integrity: Option<String> = connection
+            .query_row(&format!("PRAGMA integrity_check('{table}')"), [], |row| {
+                row.get(0)
+            })
+            .optional()
+            .map_err(|error| database_error(path, error))?;
+        if integrity.as_deref() != Some("ok") {
+            return Err(AppError::database_corrupt(NativePath::new(
+                path.to_path_buf(),
+            )));
+        }
     }
     let foreign_key_issue: Option<String> = connection
         .query_row("PRAGMA foreign_key_check", [], |row| row.get(0))
@@ -2559,12 +2638,81 @@ fn replace_fts_row(
     insert_fts_row(connection, entry, path)
 }
 
+/// True when the FTS5 shadow b-trees are physically damaged (or partially
+/// missing) so that no SQL statement — drop, delete, or vacuum — can clear
+/// them without traversing the malformed cells.
+fn fts_shadow_btree_is_damaged(connection: &Connection) -> bool {
+    let virtual_table_present = matches!(
+        connection.query_row(
+            "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'library_fts'",
+            [],
+            |row| row.get::<_, i64>(0),
+        ),
+        Ok(1)
+    );
+    if !virtual_table_present {
+        return false;
+    }
+    for shadow in LIBRARY_FTS_SHADOW_TABLES {
+        let present = matches!(
+            connection.query_row(
+                "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+                params![shadow],
+                |row| row.get::<_, i64>(0),
+            ),
+            Ok(1)
+        );
+        if !present {
+            return true;
+        }
+        let integrity =
+            connection.query_row(&format!("PRAGMA integrity_check('{shadow}')"), [], |row| {
+                row.get::<_, String>(0)
+            });
+        if integrity.as_deref() != Ok("ok") {
+            return true;
+        }
+    }
+    false
+}
+
+/// Physically damaged FTS5 shadow b-trees cannot be dropped or cleared
+/// through SQL: any traversal fails with `SQLITE_CORRUPT`. Remove the six
+/// schema rows directly instead — the `writable_schema` mechanism SQLite
+/// documents for schema-level recovery — inside the caller's transaction.
+/// The orphaned shadow pages stay unreferenced and base rows are untouched.
+fn detach_damaged_fts_schema(connection: &Connection, path: &Path) -> Result<(), AppError> {
+    connection
+        .execute_batch("PRAGMA writable_schema = ON;")
+        .map_err(|error| database_error(path, error))?;
+    let removal = connection.execute(
+        "DELETE FROM sqlite_master WHERE name IN ('library_fts', 'library_fts_data', \
+         'library_fts_idx', 'library_fts_content', 'library_fts_docsize', 'library_fts_config')",
+        [],
+    );
+    connection
+        .execute_batch("PRAGMA writable_schema = OFF;")
+        .map_err(|error| database_error(path, error))?;
+    removal.map_err(|error| database_error(path, error))?;
+    let schema_version: i64 = connection
+        .query_row("PRAGMA schema_version", [], |row| row.get(0))
+        .map_err(|error| database_error(path, error))?;
+    connection
+        .pragma_update(None, "schema_version", schema_version + 1)
+        .map_err(|error| database_error(path, error))?;
+    Ok(())
+}
+
 /// Drop and recreate the derived index from verified base rows. Base rows
 /// are never rewritten and `state_revision` never advances.
 fn rebuild_derived_index(connection: &Connection, path: &Path) -> Result<(), AppError> {
-    connection
-        .execute("DROP TABLE IF EXISTS library_fts", [])
-        .map_err(|error| database_error(path, error))?;
+    if fts_shadow_btree_is_damaged(connection) {
+        detach_damaged_fts_schema(connection, path)?;
+    } else {
+        connection
+            .execute("DROP TABLE IF EXISTS library_fts", [])
+            .map_err(|error| database_error(path, error))?;
+    }
     connection
         .execute_batch(LIBRARY_FTS_CREATE_SQL)
         .map_err(|error| database_error(path, error))?;
@@ -2574,7 +2722,6 @@ fn rebuild_derived_index(connection: &Connection, path: &Path) -> Result<(), App
     }
     Ok(())
 }
-
 /// Encode a validated query as a fully quoted FTS5 expression: each term's
 /// raw/folded alternatives form one parenthesised OR group and distinct
 /// groups are joined with explicit `AND`. The user string is never mixed
@@ -5478,6 +5625,277 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn fts_shadow_corruption_stays_doctor_fixable() {
+        let temporary = tempdir().unwrap();
+        let database = temporary.path().join("data/skilload/skilload.db");
+        imported_repository(
+            &temporary,
+            vec![
+                searchable_entry("skills/review"),
+                entry("skills/other", None),
+            ],
+        );
+        // Damage only the FTS inverted-index shadow b-tree: flip cell bytes
+        // at the tail of `library_fts_data`'s root page. Base rows, the FTS
+        // content table, and the schema stay intact.
+        let connection = Connection::open(&database).unwrap();
+        let page_size: i64 = connection
+            .query_row("PRAGMA page_size", [], |row| row.get(0))
+            .unwrap();
+        let data_page: i64 = connection
+            .query_row(
+                "SELECT rootpage FROM sqlite_master WHERE name = 'library_fts_data'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        drop(connection);
+        let mut bytes = fs::read(&database).unwrap();
+        let page_start = ((data_page - 1) * page_size) as usize;
+        bytes[page_start + page_size as usize - 24..page_start + page_size as usize - 16]
+            .fill(0xa5);
+        fs::write(&database, &bytes).unwrap();
+        // Premise: the general integrity check does report the damaged
+        // shadow tree, so whole-database base validation would have
+        // classified this as base corruption before the fix.
+        let whole: String = Connection::open(&database)
+            .unwrap()
+            .query_row("PRAGMA integrity_check", [], |row| row.get(0))
+            .unwrap();
+        assert_ne!(
+            whole, "ok",
+            "fixture must damage a shadow tree the general check reports"
+        );
+
+        let repository = SqliteLibraryRepository::with_environment(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(XdgRootResolver),
+        );
+        let diagnosis = repository.inspect().unwrap();
+        assert_eq!(diagnosis.findings.len(), 1);
+        assert_eq!(diagnosis.findings[0].code, "library_fts_invalid");
+        assert!(diagnosis.findings[0].fixable_offline);
+        assert!(!diagnosis.database_writable);
+
+        let operation = repository.fix().unwrap();
+        assert_eq!(operation.outcome.as_str(), "changed");
+        assert_eq!(operation.data.actions.len(), 1);
+        assert_eq!(operation.data.actions[0].kind.as_str(), "repair");
+        assert_eq!(search(&repository, "code review").len(), 1);
+        assert!(repository.inspect().unwrap().findings.is_empty());
+    }
+
+    #[test]
+    fn tampered_or_symlinked_backups_are_never_validated() {
+        // Digest drift at equal length must be rejected.
+        let temporary = tempdir().unwrap();
+        let database = initialize_v1_database(&temporary);
+        let repository = SqliteLibraryRepository::with_environment(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(XdgRootResolver),
+        );
+        repository.fix().unwrap();
+        let backups_root = temporary.path().join("data/skilload/backups");
+        let backup = fs::read_dir(&backups_root)
+            .unwrap()
+            .flatten()
+            .find(|entry| entry.path().extension().is_some_and(|e| e == "db"))
+            .unwrap()
+            .path();
+        let mut backup_bytes = fs::read(&backup).unwrap();
+        let last = backup_bytes.len() - 1;
+        backup_bytes[last] ^= 0xff;
+        assert_eq!(
+            backup_bytes.len(),
+            fs::metadata(&backup).unwrap().len() as usize
+        );
+        fs::write(&backup, &backup_bytes).unwrap();
+        let mut bytes = fs::read(&database).unwrap();
+        bytes[100..132].fill(0xa5);
+        fs::write(&database, &bytes).unwrap();
+        assert!(matches!(
+            repository.inspect().unwrap_err(),
+            AppError::DatabaseCorrupt { backups, .. } if backups.is_empty()
+        ));
+
+        // A symlinked manifest must be rejected even when it parses and the
+        // database side still matches its record.
+        let temporary = tempdir().unwrap();
+        let database = initialize_v1_database(&temporary);
+        let repository = SqliteLibraryRepository::with_environment(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(XdgRootResolver),
+        );
+        repository.fix().unwrap();
+        let backups_root = temporary.path().join("data/skilload/backups");
+        let manifest = fs::read_dir(&backups_root)
+            .unwrap()
+            .flatten()
+            .find(|entry| entry.path().extension().is_some_and(|e| e == "json"))
+            .unwrap()
+            .path();
+        let target = backups_root.join("foreign-target.json");
+        fs::rename(&manifest, &target).unwrap();
+        symlink(&target, &manifest).unwrap();
+        let mut bytes = fs::read(&database).unwrap();
+        bytes[100..132].fill(0xa5);
+        fs::write(&database, &bytes).unwrap();
+        assert!(matches!(
+            repository.inspect().unwrap_err(),
+            AppError::DatabaseCorrupt { backups, .. } if backups.is_empty()
+        ));
+    }
+
+    fn seed_foreign_valid_pair(backups_root: &Path, stem: &str, source: &Path) {
+        let database = backups_root.join(format!("{stem}.db"));
+        fs::copy(source, &database).unwrap();
+        let bytes = fs::read(&database).unwrap();
+        let digest = Sha256::digest(&bytes);
+        let mut hex = String::new();
+        for byte in digest {
+            use std::fmt::Write as _;
+            let _ = write!(hex, "{byte:02x}");
+        }
+        let record = BackupManifestRecord {
+            format_version: BACKUP_MANIFEST_FORMAT_VERSION,
+            source_schema: 1,
+            target_schema: SCHEMA_VERSION,
+            created_at_epoch_ns: 9_999_999_999_999_999_999,
+            database_bytes: bytes.len() as u64,
+            sha256: format!("sha256:{hex}"),
+            source_device: 0,
+            source_inode: 0,
+            complete: true,
+        };
+        fs::write(
+            backups_root.join(format!("{stem}.manifest.json")),
+            serde_json::to_vec(&record).unwrap(),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn prune_keeps_the_backup_of_the_current_migration() {
+        let temporary = tempdir().unwrap();
+        let database = initialize_v1_database(&temporary);
+        let backups_root = temporary.path().join("data/skilload/backups");
+        fs::create_dir_all(&backups_root).unwrap();
+        // Three foreign future-dated but fully valid pairs: after the
+        // migration the just-published backup sorts as the oldest validated
+        // entry and would fall into the deletion slice without protection.
+        for index in 0..3 {
+            seed_foreign_valid_pair(
+                &backups_root,
+                &format!("skilload-db-v1-to-v2-999999999999999999{index}"),
+                &database,
+            );
+        }
+        let repository = SqliteLibraryRepository::with_environment(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(XdgRootResolver),
+        );
+        let operation = repository.fix().unwrap();
+        assert_eq!(operation.outcome.as_str(), "changed");
+        assert_eq!(read_schema_version(&database), 2);
+        let pairs = fs::read_dir(&backups_root)
+            .unwrap()
+            .flatten()
+            .filter(|entry| entry.path().extension().is_some_and(|e| e == "db"))
+            .count();
+        assert_eq!(
+            pairs, 4,
+            "the current migration backup must survive pruning"
+        );
+        assert!(repository.inspect().unwrap().findings.is_empty());
+    }
+
+    #[test]
+    fn fts_repair_rechecks_drift_under_the_lock() {
+        let temporary = tempdir().unwrap();
+        let database = temporary.path().join("data/skilload/skilload.db");
+        let repository = imported_repository(&temporary, vec![searchable_entry("skills/review")]);
+        let bytes_before = fs::read(&database).unwrap();
+        let roots = repository.resolve_roots().unwrap();
+        let action = repository.repair_fts(&roots).unwrap();
+        assert!(
+            action.is_none(),
+            "a healthy index must not be rebuilt under the lock"
+        );
+        assert_eq!(fs::read(&database).unwrap(), bytes_before);
+        assert_eq!(search(&repository, "review").len(), 1);
+
+        Connection::open(&database)
+            .unwrap()
+            .execute("DELETE FROM library_fts", [])
+            .unwrap();
+        let action = repository.repair_fts(&roots).unwrap();
+        assert_eq!(
+            action.expect("drift must still be repaired").kind.as_str(),
+            "repair"
+        );
+        assert_eq!(search(&repository, "review").len(), 1);
+    }
+
+    struct ReplaceDatabaseOnOpen;
+
+    impl PersistenceHooks for ReplaceDatabaseOnOpen {
+        fn after_existing_database_open(&self, database: &Path) -> Result<(), AppError> {
+            let replacement = database.with_extension("replacement");
+            fs::copy(database, &replacement).unwrap();
+            fs::rename(&replacement, database).unwrap();
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn doctor_never_reports_a_replaced_database() {
+        let temporary = tempdir().unwrap();
+        imported_repository(&temporary, vec![searchable_entry("skills/review")]);
+        let repository = SqliteLibraryRepository::with_hooks(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(XdgRootResolver),
+            Arc::new(ReplaceDatabaseOnOpen),
+        );
+        assert!(matches!(
+            repository.inspect(),
+            Err(AppError::InvalidState { state, .. }) if state == "database_identity_drift"
+        ));
+        assert!(matches!(
+            repository.fix(),
+            Err(AppError::InvalidState { state, .. }) if state == "database_identity_drift"
+        ));
+    }
+
+    #[test]
+    fn mutation_paths_list_known_backups_on_base_corruption() {
+        let temporary = tempdir().unwrap();
+        let database = initialize_v1_database(&temporary);
+        let repository = SqliteLibraryRepository::with_environment(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(XdgRootResolver),
+        );
+        repository.fix().unwrap();
+        let mut bytes = fs::read(&database).unwrap();
+        bytes[100..132].fill(0xa5);
+        fs::write(&database, &bytes).unwrap();
+        for error in [
+            repository
+                .mutate_metadata(&metadata_mutation(
+                    "github:owner/repository#skills/review@refs/heads/main",
+                    LibraryMetadataChange::NoteSet("changed".to_owned()),
+                ))
+                .unwrap_err(),
+            repository
+                .import(&document(vec![entry("skills/new", None)]), false)
+                .unwrap_err(),
+        ] {
+            assert!(
+                matches!(&error, AppError::DatabaseCorrupt { backups, .. } if backups.len() == 1),
+                "corruption refusals must list the validated backup"
+            );
+        }
+    }
     #[test]
     fn newer_schema_is_diagnosed_but_never_written() {
         let temporary = tempdir().unwrap();
