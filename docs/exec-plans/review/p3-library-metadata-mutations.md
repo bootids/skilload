@@ -2,7 +2,7 @@
 plan_id: PLAN-0004
 branch: codex/p3-library-metadata-mutations
 pull_request: https://github.com/bootids/skilload/pull/4
-status: active
+status: review
 depends_on: [PLAN-0003]
 ---
 
@@ -79,7 +79,7 @@ depends_on: [PLAN-0003]
 - [x] (2026-08-20 09:21Z) 已实现 SQLite 原子 mutation、幂等路径、完整 portable closure、10,000-entry 语义、portable ceiling、alias conflict、missing target 与两秒 process-lock 回归。
 - [x] (2026-08-20 09:21Z) 已注册八个真实 CLI 叶子，完成 API-v2、人类输出、usage/not-found/conflict projection 与使用 `./target/debug/skilload` 的实际 CLI smoke。
 - [x] (2026-08-20 09:24Z) 已同步产品状态、架构和设计文档；focused、workspace、10,000-entry、portable ceiling、round-trip、actual CLI smoke 与 release timing 均通过并记录证据。
-- [ ] 实现、验收、文档和 retrospective 全部提交推送后，运行 `gh pr ready`，核对 ready PR head 等于已推送实现 HEAD，再自动进入 `review` 并推送状态提交。
+- [x] (2026-08-20 09:26Z) 已推送实现提交 `9077b84747edf586ec803d7dfc318a10cd1a617c`，运行 `gh pr ready` 并观察 PR #4 `isDraft: false`、`headRefOid` 等于该实现 SHA；本 Plan 已移入 `review`，review-state commit 待推送。
 - [ ] 后续收到明确 merge 提示后完成 preflight、进入 `completed`、通过 required checks、合并、更新 `main` 并删除本地交付分支。
 
 ## Surprises & Discoveries
@@ -140,6 +140,8 @@ depends_on: [PLAN-0003]
 
 
 规划基线已完成并关联 Draft PR https://github.com/bootids/skilload/pull/4；首个规划提交已推送，本 metadata 更新提交将 URL、Progress 和 publication evidence 写回。2026-08-20 08:06Z 至 08:42Z 已处理两项 planning review：`SKL-CLI-010` 改为未完成的跨命令约束，实际 CLI smoke 改为显式仓库二进制与临时 XDG roots；修订已作为 `f2dd223d38666c015bc00f7c597372067da601d0` 推送，两个 inline threads 都已回复并 resolved。2026-08-20 09:24Z 已完成运行时代码与文档同步：八个 canonical metadata leaves 经 domain/application/SQLite port 实现，changed/unchanged、`not_found`、conflict、Unicode、portable closure、process lock、10,000-entry 语义和 API-v2/human projection 均有 focused evidence；实际仓库 debug binary smoke 已完成 import → mutation → export → isolated re-import，release 10,000-entry changed/unchanged/equivalent-tag 操作均低于 10 秒。`cargo fmt --check`、Clippy `-D warnings`、locked all-features workspace tests（115 core、11 CLI unit、13 CLI integration）和 workspace build 均通过。范围内没有遗留功能缺口；search、Trust、add、refresh 和其他 Library 命令仍明确缺席。下一步是检查完整 diff、提交推送实现与 active Plan，然后执行 ready/review transaction。
+
+2026-08-20 09:26Z review transition：PR #4 已由 Draft 转为 ready，GitHub 返回 `isDraft: false` 与 implementation SHA `9077b84747edf586ec803d7dfc318a10cd1a617c` 一致。本 review Plan 记录该证据、Product Baseline 的 Revision 1 完成范围和全部验收结果；后续 review conversation 依照 `address-pr-threads` 处理，只有收到明确 merge 授权才可进入 `completed`。
 
 ## Review Conversation Log
 
@@ -400,6 +402,14 @@ ready/review transaction 的恢复必须精确遵守 `docs/PLANS.md`。若 `gh p
     mise exec -- cargo build --workspace --all-features --locked
     success
 
+ready/review transaction（2026-08-20 09:26Z）：
+
+    gh pr ready https://github.com/bootids/skilload/pull/4
+    Pull request bootids/skilload#4 is marked as ready for review
+
+    gh pr view https://github.com/bootids/skilload/pull/4 --json isDraft,headRefOid,state,url
+    {"headRefOid":"9077b84747edf586ec803d7dfc318a10cd1a617c","isDraft":false,"state":"OPEN","url":"https://github.com/bootids/skilload/pull/4"}
+
 ## Interfaces and Dependencies
 
 
@@ -506,3 +516,5 @@ changed 时数组恰有对应一个字段，unchanged 时为空。Library adapte
 2026-08-20 09:21Z：实现 P3 的 domain/application/port/SQLite/CLI/API-v2/human 路径并增加 focused domain、adapter、CLI contract regression。changed mutation 在一个原地排序的完整 candidate 上执行 portable-size validation，确保 deterministic tag response 与 export/import closure；unchanged 保持数据库 bytes、`state_revision` 和 durability state。已记录 10,000-entry release timing 与 isolated real-binary smoke；后续执行完整 gate、文档最终核对和 review transaction。
 
 2026-08-20 09:24Z：同步 `docs/product-specs/README.md`、`library.md`、`cli-contract.md`、`ARCHITECTURE.md` 与两份设计文档的实现状态；所有 required focused/full validation、实际 CLI smoke 和 release-scale timing 已通过。实现可进入最终 diff、commit/push 与 ready/review transaction。
+
+2026-08-20 09:26Z：实现提交 `9077b84747edf586ec803d7dfc318a10cd1a617c` 已推送后，PR #4 已成功转为 ready；已观察 GitHub ready state 与 implementation SHA 一致。按 transaction 将 Plan 移入 `review/` 并设置 `status: review`，记录 ready evidence，待本 review-state commit 推送后复核 GitHub 和 repository state。
