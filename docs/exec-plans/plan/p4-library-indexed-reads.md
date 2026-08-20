@@ -144,7 +144,7 @@ Read兼容性是显式边界。完整 v1 base rows可供 list/get/export只读�
 ## Review Conversation Log
 
 
-2026-08-20 12:03Z 首轮规划评审（Codex bot review，commit `375e2e85c7ce085b562044808a0c792c79b0ce9d`）：top-level 评论 `IC_kwDOT7YN2s8AAAABPzQF5Q`（`@codex` bot 触发）与 review body `PRR_kwDOT7YN2s8AAAABKPf_-A`（自动化包装文本）未提出独立问题。三个 inline thread 的问题均已按 planning 边界处置，详见以下条目。
+2026-08-20 12:03Z 首轮规划评审（Codex bot review，commit `375e2e85c7ce085b562044808a0c792c79b0ce9d`）：top-level 评论 `IC_kwDOT7YN2s8AAAABPzQF5Q`（`@codex` bot 触发）与 review body `PRR_kwDOT7YN2s8AAAABKPf_-A`（自动化包装文本）未提出独立问题，无 resolvable thread 需要回复。三个 inline thread 的问题均已按 planning 边界处置并全部 resolved，详见以下条目。
 
 ### PRRT_kwDOT7YN2s6ay0q9 - FTS group 间需要显式 AND
 
@@ -155,13 +155,13 @@ Problem: Plan 第164行原规定不同词项“仅以空格连接形成 implicit
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
-Resolution: 本 Plan 第54/56/164行、`docs/design-docs/application-and-persistence.md`（Durable SQLite Model 段）与 `docs/references/sqlite-fts5-library-search.md` 已改为：同词项 alternatives以括号内 OR组合成一个 group，不同词项的 group之间以显式 `AND` 连接；reference 文档补充了实验证据。产品语义（纯文本词项 AND）不变，属技术组合规则修正，无需提升 behavior revision。
+Resolution: 本 Plan 的 Design Inputs 与词项定义段（评审时行号54/56/164）、`docs/design-docs/application-and-persistence.md`（Durable SQLite Model 段）与 `docs/references/sqlite-fts5-library-search.md` 已改为：同词项 alternatives以括号内 OR组合成一个 group，不同词项的 group之间以显式 `AND` 连接；reference 文档补充了实验证据。产品语义（纯文本词项 AND）不变，属技术组合规则修正，无需提升 behavior revision。
 
-Evidence: isolated SQLite 实验证实 `("Review" OR "review") "code"` 返回 `fts5: syntax error near ""code""` 而 `("Review" OR "review") AND "code"` 正常命中；修订随本轮 planning commit 推送（SHA 见本条目 GitHub outcome 前的最终 Evidence 更新）。
+Evidence: isolated SQLite 实验证实 `("Review" OR "review") "code"` 返回 `fts5: syntax error near ""code""` 而 `("Review" OR "review") AND "code"` 正常命中；修订以 `24eb239a2fa056516a003b3439ec52155ab0a733` 推送到 PR head，`git diff --check` 无输出。
 
-GitHub outcome: 待推送后回复并 resolve（thread 当前 isResolved: false）。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/5#discussion_r3821390563；thread resolved: true。
 
 ### PRRT_kwDOT7YN2s6ay0rD - base corruption 必须保留 database_corrupt
 
@@ -172,13 +172,13 @@ Problem: Milestone 3 原文让 schema/base validation发现的 base corruption�
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: 本 Plan Milestone 3 已改为：base corruption（schema/base validation 任何失败）不进入 DoctorData，而是按既有 error mapping返回 typed `database_corrupt` 错误，`DatabaseCorruptDetails` 含 database `PathValue`、已验证 backup manifests、仍可读 portable exports 与 `recovery_procedure: "database-corruption-v1"`；`fix` 在同一 diagnosis 阶段即返回该错误，绝不进入 action/`unchanged` 路径。newer schema 保持 unfixable `library_schema_newer` finding + `unchanged`。Validation 段补充 corrupt fixture 的 typed error 与 filesystem 不变性断言。
 
-Evidence: `SKL-OPS-004`、`docs/product-specs/api-v2.md`（`database_corrupt` → `DatabaseCorruptDetails`）、`docs/product-specs/database-recovery.md` 第1步与本 Plan 第41行 baseline 一致；修订随本轮 planning commit 推送。
+Evidence: `SKL-OPS-004`、`docs/product-specs/api-v2.md`（`database_corrupt` → `DatabaseCorruptDetails`）、`docs/product-specs/database-recovery.md` 第1步与本 Plan 第41行 baseline 一致；修订以 `24eb239a2fa056516a003b3439ec52155ab0a733` 推送到 PR head，`git diff --check` 无输出。
 
-GitHub outcome: 待推送后回复并 resolve（thread 当前 isResolved: false）。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/5#discussion_r3821392730；thread resolved: true。
 
 ### PRRT_kwDOT7YN2s6ay0rJ - 只读 doctor 不得创建 WAL sidecars
 
@@ -189,13 +189,13 @@ Problem: live database 为 WAL-mode（或带 `-wal`/`-shm` sibling）时，普�
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: 本 Plan 固化 pre-open generation gate：所有已存在 live database的 read-only opens（list/get/search/export/doctor inspect）先用既有 no-follow held descriptor直接读取 main file 100-byte header并盘点 `-wal`/`-shm` sibling；journal-mode bytes 非 (1,1) 或存在任一 WAL sibling的 generation不经 SQLite 打开，直接按 base corruption返回 `database_corrupt`（skilload 只发布 DELETE-journal database，该状态只能来自外部，且与 P2 “sidecar 统一报告 database_corrupt” 先例一致）。Design Inputs、Milestone 2/3、Validation 与 Product Baseline 可观察路径均已同步；实验事实固化到 `docs/references/sqlite-backup-and-corruption-recovery.md`。
 
-Evidence: 2026-08-20 planning 实验：WAL+`-wal` fixture 以 `mode=ro` 打开后出现并保留 `skilload.db-shm`；WAL header 无 sidecar fixture 打开后出现 `-shm`+`-wal`；`immutable=1` 无 sidecar但 `no such table`（WAL 内容被忽略）。修订随本轮 planning commit 推送。
+Evidence: 2026-08-20 planning 实验：WAL+`-wal` fixture 以 `mode=ro` 打开后出现并保留 `skilload.db-shm`；WAL header 无 sidecar fixture 打开后出现 `-shm`+`-wal`；`immutable=1` 无 sidecar但 `no such table`（WAL 内容被忽略）。修订以 `24eb239a2fa056516a003b3439ec52155ab0a733` 推送到 PR head，`git diff --check` 无输出。
 
-GitHub outcome: 待推送后回复并 resolve（thread 当前 isResolved: false）。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/5#discussion_r3821395106；thread resolved: true。
 
 ## Context and Orientation
 
