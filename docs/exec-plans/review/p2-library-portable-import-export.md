@@ -118,6 +118,8 @@ Revision 2 的 `SKL-CLI-004`、`SKL-CLI-005` 与 `SKL-CLI-012` 以 API-v2 curren
 - [x] (2026-08-20) 已在本地完成六项 `review` 内 ordinary remediation：export serializer 完整 validation、existing-output exchange 后保留 publication replacement、Busy/schema display domain、non-array `entries` schema 分类、以及 per-root created-directory sync attribution；focused regressions 已通过，待完整 gates、preliminary commit/push、GitHub reply/closure。
 - [x] (2026-08-20) 六项 local remediation 的 focused regressions、`cargo fmt --all --check`、workspace Clippy `-D warnings`、locked workspace tests（11、12、107）、workspace build 与隔离 XDG CLI dry-run/import/export byte-identical round trip 均通过；`entries: null` CLI JSON error 为 `library_import_schema`。已审阅完整 diff 且 `git diff --check` 通过，待 preliminary commit/push。
 - [x] (2026-08-20) code/preliminary ledger commit `4ef1ba205eb323c702bceda830445f44feb4da46` 已推送；local、origin 与 ready PR #3 `headRefOid` 均为该 SHA。六项 fixed source 现有 commit/validation evidence，待重新获取会话、逐源回复并关闭。
+- [x] (2026-08-20) 六个 fixed thread 已以 `4ef1ba205eb323c702bceda830445f44feb4da46`、focused/full validation evidence 回复并在 reply 成功后确认 `isResolved: true`；`PRRC_kwDOT7YN2s7jlNzR` 已收到精确产品/架构决策问题并保持 blocked/open。此次 final ledger commit 后必须再次全量读取会话和 PR head。
+
 
 
 - [ ] (2026-08-20) `PRRC_kwDOT7YN2s7jlNzR` 加入 `PRRC_kwDOT7YN2s7jWsuw`、`PRRC_kwDOT7YN2s7jiT5X` 和 `PRRC_kwDOT7YN2s7jiT5i` 的 pending/blocked 集合：四个 thread 必须保持 open，直至人类选择 portable ownership/lock primitive 或调整相应产品保证。
@@ -399,6 +401,8 @@ P2 implementation 与完整验证已完成，PR #3 已于 2026-08-19 05:57Z 转�
 2026-08-20 的本轮 remediation/preliminary ledger commit `0dc0b9b3f83ef256c4de19c23186ed9c3816f826` 已推送，local、upstream 与 open/ready PR #3 head 已核对一致。它让首次 import failure 不再 unlink durable database lock，export 在 staging 前拒绝活跃 DELETE rollback journal，并让 non-model JSON scanner 从 held regular-file buffered reader 增量运行，在第 129 个 number byte 停止而不请求后续 chunk。`SKL-LIB-009` 因新增可观察的 journal rejection 升至 Revision 4。focused portable（21）、SQLite（39）、core（102）、format、Clippy、locked workspace tests（11、12、102）、workspace build 与隔离 CLI export → dry-run import smoke 均通过。三个 fixed source 已获 GitHub reply 并确认 `thread resolved: true`；三个既有 provenance/directory source 保持 pending/blocked/open，待最终 Plan reconciliation commit 推送后再完整读取会话与 PR head。
 
 2026-08-20 的当前 local remediation 已完成六项 ordinary P2 review fix：transfer serializer 以完整 domain validation 保证 export/import closure；existing-output exchange 保留 publication replacement，避免 check-then-unlink 删除 foreign path；API-v2 error display 采用 Busy/schema 的实际 domain；scanner 将 valid JSON 的 wrong `entries` type 留给 schema；first-import created-directory sync 使用正确 XDG root。focused regressions、format、Clippy、locked workspace tests（11、12、107）、build、CLI round trip 和 diff check 均通过。`PRRC_kwDOT7YN2s7jlNzR` 揭示高优先级 absent-root acceptance 与 durable lock invariant 冲突，连同三个既有 provenance/directory source 保持 pending/blocked/open；本轮不伪造 product revision 或 filesystem primitive。下一步提交并推送 preliminary code/ledger evidence，随后回复并关闭六个 fixed thread，只回复并保留四个 blocked thread。
+
+2026-08-20 的 reply reconciliation 显示 14 条 top-level trigger 均为 `@codex`，117 个 review body 均为空或通用 automation；90 个 inline source 全部在 Review Conversation Log 中有 heading。六个本轮 fixed source 都有 `4ef1ba205eb323c702bceda830445f44feb4da46`、验证、GitHub reply URL 和 `thread resolved: true`；`PRRC_kwDOT7YN2s7jlNzR` 已得到精确 decision question，连同三个既有 provenance/directory source 维持 pending/blocked/open。下一步提交、推送本最终 reconciliation，然后再次读取会话确认没有漂移。
 
 ## Review Conversation Log
 
@@ -1733,19 +1737,19 @@ GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_
 
 ### PRRC_kwDOT7YN2s7jlNzO — export 前完整 portable document 验证
 
-Source: 内联评论 `PRRC_kwDOT7YN2s7jlNzO`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3818183886)；线程 `PRRT_kwDOT7YN2s6aq-WJ`，当前未解决。
+Source: 内联评论 `PRRC_kwDOT7YN2s7jlNzO`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3818183886)；线程 `PRRT_kwDOT7YN2s6aq-WJ`，当前已解决。
 
 Problem: `PortableLibraryDocument::serialize_for_transfer` 只检查 entry 数、tag 排序与编码大小；公开字段可让错误 format version、重复 canonical source 或非法 metadata 成功 export，而同一 binary 的 import 会拒绝。
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: `crates/skilload-core/src/domain/library.rs` 的 transfer serializer 先对 clone 调用完整 `validate()`，再排序/编码；`transfer_serialization_rejects_documents_import_would_reject` 覆盖错误 format version 与重复 canonical source。该修改已由 `4ef1ba205eb323c702bceda830445f44feb4da46` 推送。
 
 Evidence: pushed remediation commit `4ef1ba205eb323c702bceda830445f44feb4da46`；focused `transfer_serialization_rejects_documents_import_would_reject`、`cargo fmt --all --check`、workspace Clippy、locked workspace tests（11、12、107）、workspace build、隔离 CLI smoke 与 `git diff --check` 均通过。
 
-GitHub outcome: 尚未回复；本线程在 pushed evidence 后回复并关闭。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_r3818396111；thread resolved: true。
 
 ### PRRC_kwDOT7YN2s7jlNzR — durable lock 与 pre-COMMIT absent-root 合约
 
@@ -1761,87 +1765,87 @@ Resolution: 不以错误的 unlink/recreate 破坏 stable lock identity，也不
 
 Evidence: `docs/product-specs/library.md:80` 明定 pre-COMMIT 失败根恢复 absent；`docs/design-docs/application-and-persistence.md:170` 与 `crates/skilload-core/src/adapters/sqlite_library.rs` 当前 lock handling 为保持同一 inode。尚无可同时满足两者且不违反 `ARCHITECTURE.md` invariant 5 的实现。
 
-GitHub outcome: 尚未回复；将发送上述精确决策问题，并保持 thread unresolved。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_r3818397649；thread resolved: false（blocked/open）。
 
 ### PRRC_kwDOT7YN2s7jlNzT — exchange 后 publication entry replacement
 
-Source: 内联评论 `PRRC_kwDOT7YN2s7jlNzT`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3818183891)；线程 `PRRT_kwDOT7YN2s6aq-WM`，当前未解决。
+Source: 内联评论 `PRRC_kwDOT7YN2s7jlNzT`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3818183891)；线程 `PRRT_kwDOT7YN2s6aq-WM`，当前已解决。
 
 Problem: existing-output `RenameFlags::EXCHANGE` 后，旧 output 在 hidden publication pathname；先 `matches()` 再 `unlinkat` 存在同账号替换窗口，可能删除未知 replacement。
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: `crates/skilload-core/src/adapters/portable_library.rs` 的 successful exchange 路径不再 pathname-based unlink publication entry，保留该 entry；`export_preserves_a_replaced_publication_entry_after_exchange` 在 exchange 后植入 foreign replacement，证明请求 output 仍写入新 document 且 replacement 保留。`docs/design-docs/application-and-persistence.md` 同步该跨平台 inode-bound unlink 限制；修改已由 `4ef1ba205eb323c702bceda830445f44feb4da46` 推送。
 
 Evidence: pushed remediation commit `4ef1ba205eb323c702bceda830445f44feb4da46`；focused `export_preserves_a_replaced_publication_entry_after_exchange`、`cargo fmt --all --check`、workspace Clippy、locked workspace tests（11、12、107）、workspace build、隔离 CLI smoke 与 `git diff --check` 均通过。
 
-GitHub outcome: 尚未回复；本线程在 pushed evidence 后回复并关闭。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_r3818398371；thread resolved: true。
 
 ### PRRC_kwDOT7YN2s7jlNzX — SQLite busy display domain
 
-Source: 内联评论 `PRRC_kwDOT7YN2s7jlNzX`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3818183895)；线程 `PRRT_kwDOT7YN2s6aq-WQ`，当前未解决。
+Source: 内联评论 `PRRC_kwDOT7YN2s7jlNzX`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3818183895)；线程 `PRRT_kwDOT7YN2s6aq-WQ`，当前已解决。
 
 Problem: SQLite contention 已携带 `lock_domain: "database"`，但 `AppError::Busy` display text 固定为 configuration lock；API-v2 JSON 使用该 display text，误导操作员。
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: `crates/skilload-core/src/error.rs` 的 Busy display 改为插值 `lock_domain`；`display_uses_the_recorded_lock_and_schema_domains` 覆盖 database busy text。修改已由 `4ef1ba205eb323c702bceda830445f44feb4da46` 推送。
 
 Evidence: pushed remediation commit `4ef1ba205eb323c702bceda830445f44feb4da46`；focused `display_uses_the_recorded_lock_and_schema_domains`、`cargo fmt --all --check`、workspace Clippy、locked workspace tests（11、12、107）、workspace build、隔离 CLI smoke 与 `git diff --check` 均通过。
 
-GitHub outcome: 尚未回复；本线程在 pushed evidence 后回复并关闭。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_r3818399165；thread resolved: true。
 
 ### PRRC_kwDOT7YN2s7jlmpv — Library schema display domain
 
-Source: 内联评论 `PRRC_kwDOT7YN2s7jlmpv`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3818285679)；线程 `PRRT_kwDOT7YN2s6arO78`，当前未解决。
+Source: 内联评论 `PRRC_kwDOT7YN2s7jlmpv`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3818285679)；线程 `PRRT_kwDOT7YN2s6arO78`，当前已解决。
 
 Problem: Library SQLite schema errors 已携带 `domain: "library"`，但 SchemaNewer/MigrationRequired display text 固定为 configuration schema；API-v2 JSON 因而误报 domain。
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: `crates/skilload-core/src/error.rs` 的 SchemaNewer/MigrationRequired display 属性改为插值 `domain`；`display_uses_the_recorded_lock_and_schema_domains` 同时覆盖 newer 与 migration 文本。修改已由 `4ef1ba205eb323c702bceda830445f44feb4da46` 推送。
 
 Evidence: pushed remediation commit `4ef1ba205eb323c702bceda830445f44feb4da46`；focused `display_uses_the_recorded_lock_and_schema_domains`、`cargo fmt --all --check`、workspace Clippy、locked workspace tests（11、12、107）、workspace build、隔离 CLI smoke 与 `git diff --check` 均通过。
 
-GitHub outcome: 尚未回复；本线程在 pushed evidence 后回复并关闭。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_r3818399972；thread resolved: true。
 
 ### PRRC_kwDOT7YN2s7jlmpz — 非 array entries 的 schema 分类
 
-Source: 内联评论 `PRRC_kwDOT7YN2s7jlmpz`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3818285683)；线程 `PRRT_kwDOT7YN2s6arO7-`，当前未解决。
+Source: 内联评论 `PRRC_kwDOT7YN2s7jlmpz`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3818285683)；线程 `PRRT_kwDOT7YN2s6arO7-`，当前已解决。
 
 Problem: syntactically valid 的 `entries: null` 被 non-model scanner 强制按 array 解析并错误归类为 `library_import_json`；wrong field type 应交给 schema deserialization，返回 `library_import_schema`。
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: `crates/skilload-core/src/adapters/portable_library.rs` 仅在 root `entries` value 真为 `[` 时启用 array entry ceiling scanner，否则使用 generic JSON value scanner；`scanner_defers_non_array_entries_to_schema_validation` 覆盖 `entries: null`。修改已由 `4ef1ba205eb323c702bceda830445f44feb4da46` 推送。
 
 Evidence: pushed remediation commit `4ef1ba205eb323c702bceda830445f44feb4da46`；focused `scanner_defers_non_array_entries_to_schema_validation`、隔离 CLI `entries: null` error smoke、`cargo fmt --all --check`、workspace Clippy、locked workspace tests（11、12、107）、workspace build 与 `git diff --check` 均通过。
 
-GitHub outcome: 尚未回复；本线程在 pushed evidence 后回复并关闭。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_r3818401004 和 https://github.com/bootids/skilload/pull/3#discussion_r3818402209；首次 reply 后的 resolve timeout 造成第二个等价回复，均保留为审计记录；thread resolved: true。
 
 ### PRRC_kwDOT7YN2s7jlmp1 — state directory sync root attribution
 
-Source: 内联评论 `PRRC_kwDOT7YN2s7jlmp1`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3818285685)；线程 `PRRT_kwDOT7YN2s6arO8A`，当前未解决。
+Source: 内联评论 `PRRC_kwDOT7YN2s7jlmp1`，[GitHub](https://github.com/bootids/skilload/pull/3#discussion_r3818285685)；线程 `PRRT_kwDOT7YN2s6arO8A`，当前已解决。
 
 Problem: first import 的 created directory 集合混合 XDG state 与 data roots，却始终以 `XDG_DATA_HOME` 报告 parent sync failure；state/locks failure 的 structured environment error 因而指向错误 root。
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: `crates/skilload-core/src/adapters/sqlite_library.rs` 将每个 `CreatedDirectory` 与 owning XDG variable 一起记录，并按原 reverse creation order 分别 sync；`first_import_sync_attributes_state_directory_failure_to_state_root` 覆盖 state-root failure attribution。修改已由 `4ef1ba205eb323c702bceda830445f44feb4da46` 推送。
 
 Evidence: pushed remediation commit `4ef1ba205eb323c702bceda830445f44feb4da46`；focused `first_import_sync_attributes_state_directory_failure_to_state_root`、`cargo fmt --all --check`、workspace Clippy、locked workspace tests（11、12、107）、workspace build、隔离 CLI smoke 与 `git diff --check` 均通过。
 
-GitHub outcome: 尚未回复；本线程在 pushed evidence 后回复并关闭。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_r3818401871 和 https://github.com/bootids/skilload/pull/3#discussion_r3818403580；首次 reply 后的 resolve timeout 造成第二个等价回复，均保留为审计记录；thread resolved: true。
 
 ## Context and Orientation
 
