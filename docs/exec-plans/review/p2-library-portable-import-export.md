@@ -2139,3 +2139,5 @@ Library 是本机可搜索的来源元数据集合；在本交付中它只保存
 计划修订说明（2026-08-20）：`0dc0b9b3f83ef256c4de19c23186ed9c3816f826` 已推送，处理 database lock inode 分裂、活跃 DELETE rollback journal export target 与流式 non-model input scan；产品、设计、SQLite 参考、验证证据和三个 fixed/open Review Conversation Log 条目已同步，待 GitHub 回复、线程 closure 和最终 reconciliation。
 
 计划修订说明（2026-08-20）：三个 `0dc0b9b3f83ef256c4de19c23186ed9c3816f826` fixed source 已分别以验证证据回复并关闭；回复 URL、`thread resolved: true` 和三个仍待人类决定的 pending/blocked source 已与 `list --all` reconciliation 对齐。
+
+计划修订说明（2026-08-20）：本轮完整读取 PR #3 的 14 条 top-level、117 个 review body 与 90 个 inline source；六项 ordinary remediation 已由 `4ef1ba205eb323c702bceda830445f44feb4da46` 推送，并以具体回归、workspace gates、CLI smoke、GitHub reply URL 和 resolved thread state 写回 Review Conversation Log。`PRRC_kwDOT7YN2s7jlNzR` 因 `SKL-LIB-010` absent-root acceptance 与 durable lock identity 的未决产品/架构取舍保持 pending/blocked/open，与三个既有 provenance/directory source 一同等待人类选择；没有伪造修复或修改 Product Baseline。最终 Plan push 后必须再次完整读取 GitHub 会话和 PR head。
