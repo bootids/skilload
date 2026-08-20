@@ -1,6 +1,6 @@
 # CLI, JSON, Testing, and Release Design
 
-Status: 部分实现的 0.1 CLI MVP design。`PLAN-0002` 实现 `0.0.1` configuration slice 的 `SKL-CLI-002`、`SKL-CLI-003` 与 `SKL-CLI-011`；`PLAN-0003` 实现 `library import`/`library export` 的可移植传输表面与其适用的 API-v2 projection，其他 CLI、release 与 compatibility design 仍为 planned。
+Status: 部分实现的 0.1 CLI MVP design。`PLAN-0002` 实现 `0.0.1` configuration slice 的 `SKL-CLI-002`、`SKL-CLI-003` 与 `SKL-CLI-011`；`PLAN-0003` 实现 `library import`/`library export` 的可移植传输表面与其适用的 API-v2 projection；`PLAN-0004` 实现八个显式 Library metadata leaves 与其离线 API-v2/human projection，其他 CLI、release 与 compatibility design 仍为 planned。
 
 ## Behavior Traceability
 
@@ -13,7 +13,7 @@ Status: 部分实现的 0.1 CLI MVP design。`PLAN-0002` 实现 `0.0.1` configur
 
 Use `clap` derive definitions in `crates/skilload-cli` as the single command schema. Help, parser tests, manager asset contract tests, and operation identifiers derive from or are checked against that schema so command lists cannot drift.
 
-当前 `0.0.1` schema 只注册具有真实实现的 `config get|set|unset|list`、`library import --input <PATH> [--dry-run]` 与 `library export --output <PATH>`，以及文本 help/version。它以同一 `clap` schema 驱动 parsing 与 help，不注册 aliases 或 generated help subcommand；未知 future domain/Library names 必须为 usage error，未实现 canonical leaves 不得被 scaffold。
+当前 `0.0.1` schema 只注册具有真实实现的 `config get|set|unset|list`、`library import --input <PATH> [--dry-run]`、`library export --output <PATH>`、`library alias set|clear`、`library category set|clear`、`library tag add|remove`、`library note set|clear`，以及文本 help/version。它以同一 `clap` schema 驱动 parsing 与 help，不注册 aliases 或 generated help subcommand；未知 future domain/Library names 必须为 usage error，未实现 canonical leaves 不得被 scaffold。
 
 The canonical tree is:
 
@@ -42,6 +42,8 @@ Each leaf converts validated syntax into one application request with a stable d
 The version-1 configuration key registry is exactly `cache_limit_bytes`, `agents.claude.executable`, and `agents.codex.executable`. The two Agent setters consume one absolute path argument and unset restores basename lookup rather than storing a default string. Source-bearing operations accept a fully qualified `--ref refs/heads/...`, `--ref refs/tags/...`, or full SHA when URL/shorthand input needs disambiguation. `workspace sync` alone accepts `--rebind-from <OLD-WORKSPACE>` and still requires explicit Agents including every Agent recorded by the old local manifest. `library list` and `library search` alone accept `--limit` and `--offset` with the exact `SKL-LIB-005` ranges/defaults. These are options on existing leaves, not additional commands or aliases.
 
 可移植 Library 传输叶子使用原生路径选项，而不是隐式标准输入协议：`library import --input <PATH> [--dry-run]` 读取一个受限的可移植 `LibraryExportData` 文档，`library export --output <PATH>` 以原子方式写入该文档。命令正常的人类结果或 API-v2 JSON 信封与输出文件保持分离，因此调用方无需剥离信封即可在随后导入前检查操作结果。这些选项属于既有叶子，不创建别名或另一命令族。
+
+P3 metadata leaves 各自将完整 canonical source 和一个逻辑 UTF-8 value（clear 不带 value）交给唯一 application method。CLI 不访问 repository；application 负责构造文本或 Unicode 15.1.0 tag value，SQLite port 负责锁、snapshot、transaction、durability 与结果。每个 success 使用对应的 `library.alias.*`、`library.category.*`、`library.tag.*` 或 `library.note.*` operation，返回 `LibraryMutationData` 的 committed entry、changed fields、`network: { used: false, attempts: [] }` 和三个 null acquisition-policy fields；missing canonical source 以 `not_found`/`LookupDetails`/exit 4 返回。人类输出以 terminal-safe quoted encoding 显示 operation、outcome、source、changed fields、trust state 和最终元数据。
 
 ## Common Arguments
 

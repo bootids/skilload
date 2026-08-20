@@ -4,14 +4,18 @@ mod args;
 mod human;
 mod json;
 
-use args::{Cli, Command, ConfigCommand, LibraryCommand};
+use args::{
+    Cli, Command, ConfigCommand, LibraryAliasCommand, LibraryCategoryCommand, LibraryCommand,
+    LibraryNoteCommand, LibraryTagCommand,
+};
 use clap::{Parser, error::ErrorKind};
 use skilload_core::adapters::configuration::FileConfigurationStore;
 use skilload_core::adapters::portable_library::PortableLibraryTransferStore;
 use skilload_core::adapters::sqlite_library::SqliteLibraryRepository;
 use skilload_core::{
     AppError, Application, ConfigEntries, ConfigEntry, ConfigKey, LibraryExportRequest,
-    LibraryImportRequest, LibraryImportResult, NativePath, PortableLibraryDocument,
+    LibraryImportRequest, LibraryImportResult, LibraryMutationOperation, NativePath,
+    PortableLibraryDocument,
 };
 use std::env;
 use std::ffi::OsString;
@@ -37,6 +41,11 @@ enum Projection {
         output: NativePath,
         document: PortableLibraryDocument,
     },
+    LibraryMutation {
+        operation: &'static str,
+        outcome: &'static str,
+        data: Box<LibraryMutationOperation>,
+    },
 }
 
 fn main() -> ExitCode {
@@ -47,14 +56,19 @@ fn main() -> ExitCode {
 }
 
 fn run(arguments: Vec<OsString>) -> Result<(), u8> {
-    if args::rejects_json_meta_invocation(&arguments) {
-        eprintln!("error: --json cannot be combined with --help or --version");
-        return Err(2);
-    }
-    let json_operation = args::json_configuration_operation(&arguments);
+    let json_operation = args::json_operation(&arguments);
     let cli = match Cli::try_parse_from(&arguments) {
         Ok(cli) => cli,
         Err(error) => {
+            if args::json_requested(&arguments)
+                && matches!(
+                    error.kind(),
+                    ErrorKind::DisplayHelp | ErrorKind::DisplayVersion
+                )
+            {
+                eprintln!("error: --json cannot be combined with --help or --version");
+                return Err(2);
+            }
             if let Some(operation) = json_operation {
                 return render_error(true, operation, &parser_usage_error());
             }
@@ -175,6 +189,78 @@ fn dispatch(
                     })
                     .map_err(|error| ("library.export", error))
             }
+            LibraryCommand::Alias { command } => match command {
+                LibraryAliasCommand::Set { source, alias } => application
+                    .library_alias_set(source, alias)
+                    .map(|data| Projection::LibraryMutation {
+                        operation: "library.alias.set",
+                        outcome: data.outcome.as_str(),
+                        data: Box::new(data),
+                    })
+                    .map_err(|error| ("library.alias.set", error)),
+                LibraryAliasCommand::Clear { source } => application
+                    .library_alias_clear(source)
+                    .map(|data| Projection::LibraryMutation {
+                        operation: "library.alias.clear",
+                        outcome: data.outcome.as_str(),
+                        data: Box::new(data),
+                    })
+                    .map_err(|error| ("library.alias.clear", error)),
+            },
+            LibraryCommand::Category { command } => match command {
+                LibraryCategoryCommand::Set { source, category } => application
+                    .library_category_set(source, category)
+                    .map(|data| Projection::LibraryMutation {
+                        operation: "library.category.set",
+                        outcome: data.outcome.as_str(),
+                        data: Box::new(data),
+                    })
+                    .map_err(|error| ("library.category.set", error)),
+                LibraryCategoryCommand::Clear { source } => application
+                    .library_category_clear(source)
+                    .map(|data| Projection::LibraryMutation {
+                        operation: "library.category.clear",
+                        outcome: data.outcome.as_str(),
+                        data: Box::new(data),
+                    })
+                    .map_err(|error| ("library.category.clear", error)),
+            },
+            LibraryCommand::Tag { command } => match command {
+                LibraryTagCommand::Add { source, tag } => application
+                    .library_tag_add(source, tag)
+                    .map(|data| Projection::LibraryMutation {
+                        operation: "library.tag.add",
+                        outcome: data.outcome.as_str(),
+                        data: Box::new(data),
+                    })
+                    .map_err(|error| ("library.tag.add", error)),
+                LibraryTagCommand::Remove { source, tag } => application
+                    .library_tag_remove(source, tag)
+                    .map(|data| Projection::LibraryMutation {
+                        operation: "library.tag.remove",
+                        outcome: data.outcome.as_str(),
+                        data: Box::new(data),
+                    })
+                    .map_err(|error| ("library.tag.remove", error)),
+            },
+            LibraryCommand::Note { command } => match command {
+                LibraryNoteCommand::Set { source, note } => application
+                    .library_note_set(source, note)
+                    .map(|data| Projection::LibraryMutation {
+                        operation: "library.note.set",
+                        outcome: data.outcome.as_str(),
+                        data: Box::new(data),
+                    })
+                    .map_err(|error| ("library.note.set", error)),
+                LibraryNoteCommand::Clear { source } => application
+                    .library_note_clear(source)
+                    .map(|data| Projection::LibraryMutation {
+                        operation: "library.note.clear",
+                        outcome: data.outcome.as_str(),
+                        data: Box::new(data),
+                    })
+                    .map_err(|error| ("library.note.clear", error)),
+            },
         },
     }
 }
@@ -199,6 +285,12 @@ fn render_success(json_output: bool, projection: Projection) -> Result<(), u8> {
             json::library_export("library.export", document)
                 .map_err(|error| report_internal_serialization_error(error.to_string()))?
         }
+        Projection::LibraryMutation {
+            operation,
+            outcome,
+            data,
+        } if json_output => json::library_metadata_mutation(operation, outcome, *data)
+            .map_err(|error| report_internal_serialization_error(error.to_string()))?,
         Projection::Entry {
             operation,
             outcome,
@@ -218,6 +310,16 @@ fn render_success(json_output: bool, projection: Projection) -> Result<(), u8> {
         Projection::LibraryExport { output, document } => {
             return write_stdout(human::render_library_export(&output, &document).as_bytes())
                 .map_err(report_stdout_error);
+        }
+        Projection::LibraryMutation {
+            operation,
+            outcome,
+            data,
+        } => {
+            return write_stdout(
+                human::render_library_mutation(operation, outcome, data.as_ref()).as_bytes(),
+            )
+            .map_err(report_stdout_error);
         }
     };
     let mut bytes = bytes;

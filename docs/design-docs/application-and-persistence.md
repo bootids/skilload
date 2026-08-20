@@ -1,6 +1,6 @@
 # Application and Persistence Design
 
-Status: 部分实现的 0.1 CLI MVP design。`PLAN-0002` 实现 configuration-only `skilload-core` 路径；`PLAN-0003` 实现 SQLite-backed 可移植 Library import/export，其他 durable/domain system 仍为 planned。
+Status: 部分实现的 0.1 CLI MVP design。`PLAN-0002` 实现 configuration-only `skilload-core` 路径；`PLAN-0003` 实现 SQLite-backed 可移植 Library import/export；`PLAN-0004` 复用 v1 schema 实现显式 Library metadata mutation，其他 durable/domain system 仍为 planned。
 
 This design supports the durable and application-layer portions of `SKL-LIB-*`, `SKL-TRUST-*`, `SKL-WSP-*`, `SKL-GLB-*`, `SKL-MGR-*`, `SKL-CACHE-*`, `SKL-OPS-*`, and `SKL-CLI-*`, within the boundaries in `ARCHITECTURE.md`.
 
@@ -31,7 +31,7 @@ This design supports the durable and application-layer portions of `SKL-LIB-*`, 
 
 `crates/skilload-cli` owns `clap` command definitions, conversion into application requests, human rendering, JSON envelope serialization, and process exit status. It composes production adapters once at startup but does not expose them to command handlers.
 
-当前实现包含 P1 的 `domain/configuration.rs`、`application/configuration.rs`、`ports/configuration.rs`、`adapters/xdg.rs`、`adapters/configuration.rs` 与 `error.rs`，以及 P2 的 `domain/source.rs`、`domain/library.rs`、`domain/unicode_15_1.rs`、`application/library.rs`、`ports/library.rs`、`adapters/portable_library.rs`、`adapters/sqlite_library.rs` 和 local Unicode 15.1.0 build generator。`Application` 同时接收 focused configuration store、Library repository 与 transfer store；构造不打开 SQLite。P2 对 absent Library 的 export/dry-run 返回内存空视图，真实 import 只在完整 input/schema/domain/conflict plan 后创建 data/state，并以 staging SQLite publish `data/skilload.db`。
+当前实现包含 P1 的 `domain/configuration.rs`、`application/configuration.rs`、`ports/configuration.rs`、`adapters/xdg.rs`、`adapters/configuration.rs` 与 `error.rs`，以及 P2/P3 的 `domain/source.rs`、`domain/library.rs`、`domain/unicode_15_1.rs`、`application/library.rs`、`ports/library.rs`、`adapters/portable_library.rs`、`adapters/sqlite_library.rs` 和 local Unicode 15.1.0 build generator。`Application` 同时接收 focused configuration store、Library repository 与 transfer store；构造不打开 SQLite。P3 的八个 metadata application methods 在进入 port 前构造受限 domain change，repository 在同一既有 database lock、snapshot、transaction 和 sync protocol 中返回 changed/unchanged、portable entry 与 changed field。P2 对 absent Library 的 export/dry-run 返回内存空视图，真实 import 只在完整 input/schema/domain/conflict plan 后创建 data/state，并以 staging SQLite publish `data/skilload.db`；P3 对 absent database 或 entry 返回 `not_found`，不创建根。
 
 Representative application interfaces should have this shape (names may be refined without changing the boundary):
 
@@ -82,7 +82,7 @@ The cache index is rebuildable operational metadata rather than durable product 
 
 ## Durable SQLite Model
 
-P2 已使用随二进制 bundled 的 SQLite（FTS5 编译能力已验证）实现 v1 最小 schema：`schema_info`、`state_revision`、`library_entries` 与 `library_tags`。P2 不创建 `library_fts`、Trust、global、profile、workspace、ownership、confirmation 或 journal 表；下列完整 ownership model 仍是后续交付的设计边界：
+P2 已使用随二进制 bundled 的 SQLite（FTS5 编译能力已验证）实现 v1 最小 schema：`schema_info`、`state_revision`、`library_entries` 与 `library_tags`。P3 在不迁移 schema 的前提下更新既有 alias/category/note 列或 tag row，并在 changed transaction 中恰好推进一次 `state_revision`；unchanged 不执行 SQL write 或 durability sync。P2/P3 不创建 `library_fts`、Trust、global、profile、workspace、ownership、confirmation 或 journal 表；下列完整 ownership model 仍是后续交付的设计边界：
 
 * `schema_info`: current schema version and migration metadata.
 * `state_revision`: a monotonic semantic revision incremented by committed product-state mutations, not by confirmation-token bookkeeping or derived-index maintenance.
@@ -175,7 +175,7 @@ P2 的首次导入若在取得锁前按数据库不存在进行规划、但在�
 
 SQLite busy timeout is a second line of defense, not the primary product lock. No application service holds a filesystem lock while waiting indefinitely on network input or human confirmation.
 
-P2 将每个 SQLite connection 的 busy timeout 固定为与 global durable-database lock 相同的两秒；SQLite 返回 `DatabaseBusy` 或 `DatabaseLocked` 时必须投影为 `BusyDetails { lock_domain: "database", waited_ms: 2000 }`，不能误报为损坏或无效状态。
+P2/P3 将每个 SQLite connection 的 busy timeout 固定为与 global durable-database lock 相同的两秒；SQLite 返回 `DatabaseBusy` 或 `DatabaseLocked` 时必须投影为 `BusyDetails { lock_domain: "database", waited_ms: 2000 }`，不能误报为损坏或无效状态。
 
 ## Import and Export
 

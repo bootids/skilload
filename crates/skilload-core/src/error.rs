@@ -23,8 +23,10 @@ pub enum AppError {
         allowed: u64,
         path: NativePath,
     },
-    #[error("library import conflicts with durable state")]
+    #[error("requested change conflicts with durable state")]
     Conflict { conflicts: Vec<Conflict> },
+    #[error("{domain} target not found")]
+    NotFound { domain: String, selector: String },
     #[error("invalid environment path for {variable}: {reason}")]
     InvalidEnvironment {
         variable: String,
@@ -123,6 +125,13 @@ impl AppError {
         Self::Conflict { conflicts }
     }
 
+    pub fn not_found(domain: impl Into<String>, selector: impl Into<String>) -> Self {
+        Self::NotFound {
+            domain: domain.into(),
+            selector: selector.into(),
+        }
+    }
+
     pub fn invalid_environment(
         variable: impl Into<String>,
         path: Option<NativePath>,
@@ -176,6 +185,7 @@ impl AppError {
             Self::Validation { .. } => "validation_failed",
             Self::LibraryInputLimit { .. } => "library_input_limit_exceeded",
             Self::Conflict { .. } => "conflict",
+            Self::NotFound { .. } => "not_found",
             Self::InvalidEnvironment { .. } => "invalid_environment_path",
             Self::OverlappingStateRoots { .. } => "overlapping_state_roots",
             Self::Busy { .. } => "busy",
@@ -193,6 +203,7 @@ impl AppError {
             Self::Validation { .. }
             | Self::LibraryInputLimit { .. }
             | Self::Conflict { .. }
+            | Self::NotFound { .. }
             | Self::InvalidEnvironment { .. }
             | Self::OverlappingStateRoots { .. }
             | Self::InvalidState { .. } => 4,

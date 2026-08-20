@@ -1,6 +1,6 @@
 use skilload_core::{
-    AppError, ConfigEntries, ConfigEntry, ConfigValue, LibraryImportResult, NativePath,
-    PortableLibraryDocument, SourceIdentity,
+    AppError, ConfigEntries, ConfigEntry, ConfigValue, LibraryImportResult,
+    LibraryMutationOperation, NativePath, PortableLibraryDocument, SourceIdentity,
 };
 use std::fmt::Write as _;
 use std::os::unix::ffi::OsStrExt;
@@ -49,6 +49,51 @@ pub fn render_library_export(output: &NativePath, document: &PortableLibraryDocu
     )
 }
 
+pub fn render_library_mutation(
+    operation: &str,
+    outcome: &str,
+    mutation: &LibraryMutationOperation,
+) -> String {
+    let changed_fields = if mutation.changed_fields.is_empty() {
+        "none".to_owned()
+    } else {
+        mutation
+            .changed_fields
+            .iter()
+            .map(|field| quote_string(field.as_str()))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let alias = mutation
+        .entry
+        .alias
+        .as_deref()
+        .map(quote_string)
+        .unwrap_or_else(|| "null".to_owned());
+    let category = mutation
+        .entry
+        .category
+        .as_deref()
+        .map(quote_string)
+        .unwrap_or_else(|| "null".to_owned());
+    let note = mutation
+        .entry
+        .note
+        .as_deref()
+        .map(quote_string)
+        .unwrap_or_else(|| "null".to_owned());
+    let mut output = format!(
+        "{operation}: {outcome}\nsource: {}\nchanged_fields: {changed_fields}\ntrust_state: {}\nalias: {alias}\ncategory: {category}\ntags: {}\nnote: {note}\n",
+        quote_string(&mutation.source.canonical),
+        mutation.entry.trust_state.as_str(),
+        mutation.entry.tags.len(),
+    );
+    for tag in &mutation.entry.tags {
+        let _ = writeln!(output, "  - {}", quote_string(tag));
+    }
+    output
+}
+
 pub fn render_error(error: &AppError) -> String {
     match error {
         AppError::Usage {
@@ -90,7 +135,7 @@ pub fn render_error(error: &AppError) -> String {
         ),
         AppError::Conflict { conflicts } => {
             let mut output = format!(
-                "error [{}]: Library import has {} conflict(s)\n",
+                "error [{}]: Requested change has {} conflict(s)\n",
                 error.code(),
                 conflicts.len()
             );
@@ -113,6 +158,12 @@ pub fn render_error(error: &AppError) -> String {
             }
             output
         }
+        AppError::NotFound { domain, selector } => format!(
+            "error [{}]: {} target {} was not found\n",
+            error.code(),
+            quote_string(domain),
+            quote_string(selector)
+        ),
         AppError::InvalidEnvironment {
             variable,
             path,
@@ -378,6 +429,8 @@ mod tests {
             skilload_core::Conflict::internal_duplicate(Some("alias\n".to_owned()), source.clone()),
             skilload_core::Conflict::internal_duplicate(None, source),
         ]));
+
+        assert!(rendered.contains("error [conflict]: Requested change has 2 conflict(s)\n"));
 
         assert!(rendered.contains(
             "kind: \"internal_duplicate\"; name: \"alias\\n\"; source: \"github:owner/repository#skills/review@refs/heads/main\""

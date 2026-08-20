@@ -518,6 +518,23 @@ fn json_meta_and_invalid_native_path_errors_are_safe() {
         assert!(String::from_utf8_lossy(&meta.stderr).contains("--json cannot be combined"));
     }
 
+    let positional_help = execute(
+        temporary.path(),
+        &[
+            "--json",
+            "library",
+            "alias",
+            "set",
+            "github:owner/repository#skills/review@refs/heads/main",
+            "--",
+            "--help",
+        ],
+    );
+    assert_eq!(positional_help.status.code(), Some(4));
+    let positional_help: Value = serde_json::from_slice(&positional_help.stdout).unwrap();
+    assert_eq!(positional_help["operation"], "library.alias.set");
+    assert_eq!(positional_help["error"]["code"], "not_found");
+
     let no_operation = execute(temporary.path(), &["--json"]);
     assert_eq!(no_operation.status.code(), Some(2));
     assert!(no_operation.stdout.is_empty());
@@ -657,4 +674,256 @@ fn concurrent_distinct_setters_merge_their_configuration_changes() {
     let content = fs::read_to_string(config_file(root.as_path())).unwrap();
     assert!(content.contains("cache_limit_bytes = 1"));
     assert!(content.contains("[agents.codex]"));
+}
+
+#[test]
+fn library_metadata_commands_are_explicit_atomic_and_portable() {
+    let root = tempdir().unwrap();
+    fs::create_dir(root.path().join("home")).unwrap();
+    let input = root.path().join("portable-library.json");
+    fs::write(&input, portable_document("skills/review", None)).unwrap();
+    let source = "github:owner/repository#skills/review@refs/heads/main";
+    assert!(
+        execute(
+            root.path(),
+            &[
+                "--json",
+                "library",
+                "import",
+                "--input",
+                input.to_str().unwrap(),
+            ],
+        )
+        .status
+        .success()
+    );
+
+    let alias_set = json(&execute(
+        root.path(),
+        &["--json", "library", "alias", "set", source, "review-alias"],
+    ));
+    assert_eq!(alias_set["api_version"], 2);
+    assert_eq!(alias_set["operation"], "library.alias.set");
+    assert_eq!(alias_set["result"]["outcome"], "changed");
+    assert_eq!(alias_set["result"]["data"]["source"]["canonical"], source);
+    assert_eq!(
+        alias_set["result"]["data"]["entry"]["trust_state"],
+        "missing"
+    );
+    assert_eq!(
+        alias_set["result"]["data"]["changed_fields"],
+        serde_json::json!(["alias"])
+    );
+    assert_eq!(alias_set["result"]["data"]["network"]["used"], false);
+    assert_eq!(
+        alias_set["result"]["data"]["network"]["attempts"],
+        serde_json::json!([])
+    );
+    for field in ["source_limits", "fetch_budget", "cache_quota"] {
+        assert!(alias_set["result"]["data"][field].is_null());
+    }
+    let alias_repeat = json(&execute(
+        root.path(),
+        &["--json", "library", "alias", "set", source, "review-alias"],
+    ));
+    assert_eq!(alias_repeat["result"]["outcome"], "unchanged");
+    assert_eq!(
+        alias_repeat["result"]["data"]["changed_fields"],
+        serde_json::json!([])
+    );
+
+    let category_set = json(&execute(
+        root.path(),
+        &["--json", "library", "category", "set", source, ""],
+    ));
+    assert_eq!(category_set["operation"], "library.category.set");
+    assert_eq!(category_set["result"]["data"]["entry"]["category"], "");
+    let category_clear = json(&execute(
+        root.path(),
+        &["--json", "library", "category", "clear", source],
+    ));
+    assert_eq!(
+        category_clear["result"]["data"]["entry"]["category"],
+        Value::Null
+    );
+
+    let tag_add = json(&execute(
+        root.path(),
+        &["--json", "library", "tag", "add", source, " Feature "],
+    ));
+    assert_eq!(tag_add["operation"], "library.tag.add");
+    assert_eq!(
+        tag_add["result"]["data"]["entry"]["tags"],
+        serde_json::json!(["Feature", "Review"])
+    );
+    let tag_repeat = json(&execute(
+        root.path(),
+        &["--json", "library", "tag", "add", source, "feature"],
+    ));
+    assert_eq!(tag_repeat["result"]["outcome"], "unchanged");
+    let tag_remove = json(&execute(
+        root.path(),
+        &["--json", "library", "tag", "remove", source, " FEATURE "],
+    ));
+    assert_eq!(tag_remove["result"]["outcome"], "changed");
+    assert_eq!(
+        tag_remove["result"]["data"]["entry"]["tags"],
+        serde_json::json!(["Review"])
+    );
+    let tag_remove_repeat = json(&execute(
+        root.path(),
+        &["--json", "library", "tag", "remove", source, "feature"],
+    ));
+    assert_eq!(tag_remove_repeat["result"]["outcome"], "unchanged");
+
+    let hostile_note = "\u{202e}local\nnote";
+    let human_note = execute(
+        root.path(),
+        &["library", "note", "set", source, hostile_note],
+    );
+    assert!(human_note.status.success());
+    let human_note = String::from_utf8(human_note.stdout).unwrap();
+    assert!(human_note.contains("\\u{202E}local\\nnote"));
+    assert!(!human_note.contains(hostile_note));
+    let note_clear = json(&execute(
+        root.path(),
+        &["--json", "library", "note", "clear", source],
+    ));
+    assert_eq!(note_clear["operation"], "library.note.clear");
+    assert!(note_clear["result"]["data"]["entry"]["note"].is_null());
+    let note_clear_repeat = json(&execute(
+        root.path(),
+        &["--json", "library", "note", "clear", source],
+    ));
+    assert_eq!(note_clear_repeat["result"]["outcome"], "unchanged");
+
+    let second_input = root.path().join("second-library.json");
+    fs::write(&second_input, portable_document("skills/second", None)).unwrap();
+    assert!(
+        execute(
+            root.path(),
+            &[
+                "--json",
+                "library",
+                "import",
+                "--input",
+                second_input.to_str().unwrap(),
+            ],
+        )
+        .status
+        .success()
+    );
+    let second_source = "github:owner/repository#skills/second@refs/heads/main";
+    assert!(
+        execute(
+            root.path(),
+            &["--json", "library", "alias", "set", source, "shared"],
+        )
+        .status
+        .success()
+    );
+    let conflict = execute(
+        root.path(),
+        &["--json", "library", "alias", "set", second_source, "shared"],
+    );
+    assert_eq!(conflict.status.code(), Some(4));
+    let conflict: Value = serde_json::from_slice(&conflict.stdout).unwrap();
+    assert_eq!(conflict["operation"], "library.alias.set");
+    assert_eq!(conflict["error"]["code"], "conflict");
+    assert_eq!(
+        conflict["error"]["message"],
+        "requested change conflicts with durable state"
+    );
+    assert_eq!(
+        conflict["error"]["details"]["conflicts"][0]["name"],
+        "shared"
+    );
+    assert_eq!(
+        conflict["error"]["details"]["conflicts"][0]["source"]["canonical"],
+        second_source
+    );
+    let alias_clear = json(&execute(
+        root.path(),
+        &["--json", "library", "alias", "clear", source],
+    ));
+    assert_eq!(alias_clear["operation"], "library.alias.clear");
+    assert!(alias_clear["result"]["data"]["entry"]["alias"].is_null());
+
+    let missing = execute(
+        root.path(),
+        &[
+            "--json",
+            "library",
+            "note",
+            "clear",
+            "github:owner/repository#skills/missing@refs/heads/main",
+        ],
+    );
+    assert_eq!(missing.status.code(), Some(4));
+    let missing: Value = serde_json::from_slice(&missing.stdout).unwrap();
+    assert_eq!(missing["operation"], "library.note.clear");
+    assert_eq!(missing["error"]["code"], "not_found");
+    assert_eq!(missing["error"]["details"]["domain"], "library");
+    assert_eq!(
+        missing["error"]["details"]["selector"],
+        "github:owner/repository#skills/missing@refs/heads/main"
+    );
+    assert!(missing["error"]["details"]["path"].is_null());
+
+    let parser_error = execute(root.path(), &["--json", "library", "alias", "set", source]);
+    assert_eq!(parser_error.status.code(), Some(2));
+    let parser_error: Value = serde_json::from_slice(&parser_error.stdout).unwrap();
+    assert_eq!(parser_error["operation"], "library.alias.set");
+    assert_eq!(parser_error["error"]["code"], "usage_error");
+    let unknown = execute(root.path(), &["library", "list"]);
+    assert_eq!(unknown.status.code(), Some(2));
+
+    let output = root.path().join("library-export.json");
+    let exported = json(&execute(
+        root.path(),
+        &[
+            "--json",
+            "library",
+            "export",
+            "--output",
+            output.to_str().unwrap(),
+        ],
+    ));
+    let exported_document: Value = serde_json::from_slice(&fs::read(&output).unwrap()).unwrap();
+    assert_eq!(exported["result"]["data"], exported_document);
+
+    let reimport = tempdir().unwrap();
+    fs::create_dir(reimport.path().join("home")).unwrap();
+    assert!(
+        execute(
+            reimport.path(),
+            &[
+                "--json",
+                "library",
+                "import",
+                "--input",
+                output.to_str().unwrap(),
+            ],
+        )
+        .status
+        .success()
+    );
+    let reimport_output = reimport.path().join("library-export.json");
+    assert!(
+        execute(
+            reimport.path(),
+            &[
+                "--json",
+                "library",
+                "export",
+                "--output",
+                reimport_output.to_str().unwrap(),
+            ],
+        )
+        .status
+        .success()
+    );
+    let reimported_document: Value =
+        serde_json::from_slice(&fs::read(reimport_output).unwrap()).unwrap();
+    assert_eq!(exported_document, reimported_document);
 }
