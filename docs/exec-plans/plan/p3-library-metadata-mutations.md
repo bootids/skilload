@@ -27,7 +27,7 @@ depends_on: [PLAN-0003]
 
 * `docs/product-specs/library.md` 中 `SKL-LIB-001` Revision 1：Library entry 继续以 canonical source 作为稳定身份；同名来源可共存，alias 全局唯一；alias、category、tags 和 note 的修改不改变 resolved source evidence、Trust、pin 或 deployment。`PLAN-0003` 已建立该数据模型和导入冲突约束，本交付补齐用户可直接执行的修改路径及其独立性证据。
 * 同一文件中 `SKL-LIB-008` Revision 1：只允许 `alias set|clear`、`category set|clear`、`tag add|remove` 和 `note set|clear` 修改元数据；执行精确的文本上限、64-tag 上限、Unicode 15.1.0 NFC/White_Space/full-case-fold 标签算法、alias 唯一性、missing-target 和幂等语义。
-* `docs/product-specs/cli-contract.md` 中 `SKL-CLI-010` Revision 1：只通过规范的八个嵌套叶子暴露 Library 元数据修改；不得增加 generic edit、简写或 add/refresh 的隐式修改。
+`docs/product-specs/cli-contract.md` 中 `SKL-CLI-010` Revision 1 是本切片的命令边界约束，不属于本计划的完成 baseline。其 Acceptance 明确要求已实现的 `library add` 和 `library refresh` 经 user-authored metadata preservation tests 验证；两者均被本交付排除并继续是 usage error。八个新增叶子不能引入 generic edit、简写或隐式 mutation；本切片的 parser/usage 覆盖只证明这一局部边界。`SKL-CLI-010` 保持 planned，直到后续交付能够实现并验证其 add/refresh acceptance。
 
 以下行为约束本切片，但本计划不把这些跨产品行为误报为新完成项。`SKL-CLI-007` 和 `SKL-CLI-008` 要求本切片分别返回 `changed`/`unchanged` 与 `not_found`；`SKL-OPS-005` 要求对空状态的 missing-target 失败不创建任何根；`SKL-OPS-008` 要求这些本地修改不联网；`SKL-CACHE-009` 要求数据库 mutation 使用有界进程锁。`PLAN-0003` 已完成 Revision 2 的 `SKL-CLI-004`、`SKL-CLI-005` 和 `SKL-CLI-012`，本交付必须扩充而不能削弱其 API-v2 envelope、错误和离线约束。`SKL-LIB-009` 与 `SKL-LIB-010` 的已完成 revision 继续要求任一持久 Library 可确定性导出并重新导入，因此 changed mutation 在提交前必须证明完整候选 `LibraryExportData` 仍不超过 10,000 entries 和 67,108,864 bytes。
 
@@ -46,7 +46,7 @@ depends_on: [PLAN-0003]
 
 可观察验收为：八个叶子都到达真实 application operation；首次有效修改返回 `changed`，重复满足同一目标返回 `unchanged` 且数据库 bytes 与 `state_revision` 不变；标签等价拼写保留第一个 display spelling，等价 remove 删除同一 key；第二个 entry 争用 alias 时返回包含 alias 和被拒绝 source 的 `conflict`；不存在的 canonical source 返回 API-v2 `not_found`；无效/超限值和第 65 个 tag 不写状态；最终 `library export` 精确反映修改且仍可由隔离实例重新导入。所有成功结果都使用规定的 `LibraryMutationData`，其中 `network` 为 `{used:false, attempts:[]}`，三个 acquisition-policy 字段为 `null`，当前没有 Trust 表的 entry 如实报告 `trust_state: "missing"`。
 
-执行结束时更新 `docs/product-specs/README.md`、`docs/product-specs/library.md` 和 `docs/product-specs/cli-contract.md` 的实现状态文字，但不改上述行为正文或 revision。`SKL-CLI-001`、`SKL-LIB-011` 及其他未完整实现的行为仍保持 planned。
+执行结束时更新 `docs/product-specs/README.md`、`docs/product-specs/library.md` 和 `docs/product-specs/cli-contract.md` 的实现状态文字，但不改上述行为正文或 revision。`SKL-CLI-001`、`SKL-CLI-010`、`SKL-LIB-011` 及其他未完整实现的行为仍保持 planned。
 
 ## Design and Architecture Inputs
 
@@ -72,6 +72,7 @@ depends_on: [PLAN-0003]
 - [x] (2026-08-20 07:08Z) 已在干净且与 `origin/main` 同步的 `main` 上完成工具链、GitHub auth、规格、架构、设计、reference、既有 Plan 和实现基线调查；选定 `PLAN-0004` 的显式 Library 元数据切片。
 - [x] (2026-08-20 07:08Z) 已创建 `codex/p3-library-metadata-mutations` 分支和本 `plan` 状态 ExecPlan；首个规划提交 `20d47866f78a904099eeb6b47df6c6e9302c4415` 已推送，没有修改运行时代码。
 - [x] (2026-08-20 07:18Z) 已创建 Draft PR https://github.com/bootids/skilload/pull/4，写回 canonical URL并完成第二个 planning metadata 提交；推送后等待后续明确的人类执行授权。
+- [x] (2026-08-20 08:06Z) 已完整读取 PR #4 的顶层评论、submitted review 和全部 inline threads；两个有效 planning 问题均已分类为可修复，并在不进入 `active`、不修改运行时代码的前提下修正完成范围与 smoke 可复现性。
 - [ ] 后续收到明确 `execute-exec-plan` 提示后进入 `active`，实现 domain/application/port/error 合约。
 - [ ] 实现 SQLite 原子元数据 mutation、幂等路径、portable closure 和 failure/concurrency 回归。
 - [ ] 注册八个真实 CLI 叶子，完成 API-v2、人类输出、usage/not-found/conflict 投影与实际 CLI smoke。
@@ -90,6 +91,8 @@ depends_on: [PLAN-0003]
   Evidence: `SKL-LIB-009`/`SKL-LIB-010` 要求每个持久 Library 的唯一传输表示保持 export/import closure；当前 import plan 已对完整候选文档执行该检查。
 - Observation: 当前 `AppError` 没有 `not_found`/`LookupDetails` 领域数据，CLI parser operation 识别函数仍以 configuration 命名但已临时覆盖 import/export。
   Evidence: `crates/skilload-core/src/error.rs` 的 enum 不含 lookup variant；`crates/skilload-cli/src/args.rs` 的 `json_configuration_operation` 已同时识别 Library transfer 叶子。
+- Observation: `SKL-CLI-010` 的完整 acceptance 依赖尚未实现的 `library add` 与 `library refresh`，不能由本切片对 unknown-command 的 parser rejection 替代。
+  Evidence: `docs/product-specs/cli-contract.md` 要求 add/refresh tests 证明用户元数据不变；本 Plan 的 Delivery Metadata 明确排除这两个命令。
 
 ## Decision Log
 
@@ -118,16 +121,52 @@ depends_on: [PLAN-0003]
 - Decision: 10,000-entry acceptance 对已建立 fixture 的 changed 和 unchanged 代表操作各设 10 秒上限，计时不含 fixture 构造，并记录 release build 实测值；永久测试验证 10,000-entry 语义，但不以共享 CI wall-clock 断言制造 flaky gate。
   Rationale: `SKL-LIB-011` 要求实现计划先给出具体预算；10 秒为本地单用户 CLI mutation 提供明确上界，同时把机器调度噪声与语义回归分开。该 Plan 不声称完整完成仍缺 list/search/get 的 `SKL-LIB-011`。
   Date/Author: 2026-08-20 / Codex
+- Decision: `SKL-CLI-010` 保持 planned，且从 `PLAN-0004` 的完成 Product Baseline 移出。
+  Rationale: 该行为要求 future `library add` 和 `library refresh` 的 user-authored metadata preservation tests；本 PR 的八个 metadata leaves 可独立完成 `SKL-LIB-001` 与 `SKL-LIB-008`，但不能伪称验证了尚不存在的命令。
+  Date/Author: 2026-08-20 / Codex
+- Decision: 实际 CLI smoke 固定调用仓库构建的 `./target/debug/skilload`，并显式创建、导出和清理临时 HOME/XDG roots。
+  Rationale: 裸 `skilload` 可能缺失或解析到用户安装的旧二进制；明确的绝对 roots 使 mutation 不接触真实本机状态，并使 newcomer 可复现 import、mutation、export 和隔离 re-import。
+  Date/Author: 2026-08-20 / Codex
 
 ## Outcomes & Retrospective
 
 
-规划基线已完成并关联 Draft PR https://github.com/bootids/skilload/pull/4；首个规划提交已推送，本 metadata 更新提交将 URL、Progress 和 publication evidence 写回。没有运行时代码、测试或产品实现状态变化。预期结果仍是八个 canonical Library 元数据叶子拥有真实的离线、原子、幂等行为，并由 portable export/import round trip 证明；search、Trust 和其他 Library 命令保持明确缺席。当前等待单独的人类执行授权。
+规划基线已完成并关联 Draft PR https://github.com/bootids/skilload/pull/4；首个规划提交已推送，本 metadata 更新提交将 URL、Progress 和 publication evidence 写回。2026-08-20 08:06Z 已处理两项 planning review：`SKL-CLI-010` 改为未完成的跨命令约束，实际 CLI smoke 改为显式仓库二进制与临时 XDG roots。没有运行时代码、测试或产品实现状态变化。预期结果仍是八个 canonical Library 元数据叶子拥有真实的离线、原子、幂等行为，并由 portable export/import round trip 证明；search、Trust、add、refresh 和其他 Library 命令保持明确缺席。当前等待单独的人类执行授权。
 
 ## Review Conversation Log
 
 
-尚未处理任何评审会话。
+### PRRT_kwDOT7YN2s6auhyi — `SKL-CLI-010` 完成范围
+
+Source: 内联线程 `PRRT_kwDOT7YN2s6auhyi`，评论 `PRRC_kwDOT7YN2s7jqe3C`，https://github.com/bootids/skilload/pull/4#discussion_r3819564482（`chatgpt-codex-connector`；未过期、未解决）。
+
+Problem: 当前 Plan 把 `SKL-CLI-010` 写入完整完成 baseline，但该行为的 acceptance 要求已实现的 `library add` 和 `library refresh` 经用户元数据保持测试验证；本交付明确不实现这些命令。
+
+Disposition: fixed.
+
+Status: open.
+
+Resolution: 将把 `SKL-CLI-010` 改为本切片的约束而非完成 baseline，并明确它保持 planned，直至后续交付实现并验证 add/refresh acceptance。
+
+Evidence: `docs/product-specs/cli-contract.md` 的 `SKL-CLI-010` acceptance；本 Plan 的 Delivery Metadata、Product Baseline 和 command boundary。
+
+GitHub outcome: 待推送修订、回复并关闭线程。
+
+### PRRT_kwDOT7YN2s6auhym — 可复现的实际 CLI smoke
+
+Source: 内联线程 `PRRT_kwDOT7YN2s6auhym`，评论 `PRRC_kwDOT7YN2s7jqe3J`，https://github.com/bootids/skilload/pull/4#discussion_r3819564489（`chatgpt-codex-connector`；未过期、未解决）。
+
+Problem: smoke block 使用裸 `skilload`，且未给出临时 HOME/XDG roots 的具体设置，可能调用 PATH 中不存在或错误版本的二进制，并污染真实状态。
+
+Disposition: fixed.
+
+Status: open.
+
+Resolution: 将把 smoke 替换为使用 `./target/debug/skilload`、绝对临时根、明确 HOME/XDG exports、输入/输出路径和清理 trap 的可复制命令。
+
+Evidence: `crates/skilload-cli/tests/cli_contract.rs` 的隔离环境和 portable document fixture；Plan 当前 Concrete Steps。
+
+GitHub outcome: 待推送修订、回复并关闭线程。
 
 ## Context and Orientation
 
@@ -174,17 +213,65 @@ Milestone 4 完成行为、规模和文档验收。扩展 core adapter failure/c
     mise exec -- cargo test --workspace --all-features --locked
     mise exec -- cargo build --workspace --all-features --locked
 
-实际 CLI smoke 使用 `target/debug/skilload`、隔离且绝对的 HOME/XDG roots，以及一个由 `crates/skilload-cli/tests/cli_contract.rs` 中 portable fixture 同等字段生成的合法 input。依次执行并观察：
+实际 CLI smoke 必须从仓库根目录调用刚构建的 `./target/debug/skilload`，不依赖 PATH。以下命令创建绝对临时 roots、生成与 `crates/skilload-cli/tests/cli_contract.rs` portable fixture 同一 schema 的合法单-entry input，并在 shell 退出时清理全部状态：
 
-    skilload library import --input <ABSOLUTE-INPUT>
-    skilload library alias set 'github:owner/repository#skills/review@refs/heads/main' review-alias --json
-    skilload library category set 'github:owner/repository#skills/review@refs/heads/main' 'Code Review'
-    skilload library tag add 'github:owner/repository#skills/review@refs/heads/main' ' Review '
-    skilload library tag add 'github:owner/repository#skills/review@refs/heads/main' review --json
-    skilload library note set 'github:owner/repository#skills/review@refs/heads/main' 'Local note'
-    skilload library export --output <ABSOLUTE-OUTPUT>
+    SMOKE_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
+    trap 'rm -rf "$SMOKE_ROOT"' EXIT HUP INT TERM
+    export HOME="$SMOKE_ROOT/home"
+    export XDG_CONFIG_HOME="$SMOKE_ROOT/config"
+    export XDG_DATA_HOME="$SMOKE_ROOT/data"
+    export XDG_STATE_HOME="$SMOKE_ROOT/state"
+    export XDG_CACHE_HOME="$SMOKE_ROOT/cache"
+    mkdir -p "$HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" "$XDG_STATE_HOME" "$XDG_CACHE_HOME"
+    INPUT="$SMOKE_ROOT/portable-library.json"
+    OUTPUT="$SMOKE_ROOT/exported-library.json"
+    SOURCE='github:owner/repository#skills/review@refs/heads/main'
+    cat > "$INPUT" <<'JSON'
+    {
+      "format_version": 1,
+      "entries": [
+        {
+          "skill": {
+            "source": {
+              "canonical": "github:owner/repository#skills/review@refs/heads/main",
+              "owner": "owner",
+              "repository": "repository",
+              "repository_display": "Repository",
+              "path": "skills/review",
+              "ref_kind": "branch",
+              "ref_value": "refs/heads/main"
+            },
+            "repository_id": "42",
+            "commit": "0123456789012345678901234567890123456789",
+            "integrity": "sha256:0123456789012345678901234567890123456789012345678901234567890123",
+            "name": "review",
+            "description": "Portable Library entry",
+            "entry_count": "1",
+            "byte_count": "10"
+          },
+          "alias": null,
+          "category": null,
+          "tags": [],
+          "note": null
+        }
+      ]
+    }
+    JSON
+    ./target/debug/skilload library import --input "$INPUT" --json
+    ./target/debug/skilload library alias set "$SOURCE" review-alias --json
+    ./target/debug/skilload library category set "$SOURCE" 'Code Review' --json
+    ./target/debug/skilload library tag add "$SOURCE" ' Review ' --json
+    ./target/debug/skilload library tag add "$SOURCE" review --json
+    ./target/debug/skilload library note set "$SOURCE" 'Local note' --json
+    ./target/debug/skilload library export --output "$OUTPUT" --json
 
-预期第一次有效修改为 `changed`，第二次等价 tag add 为 `unchanged`；JSON 有 `api_version: 2`、准确 operation、`trust_state: "missing"`、空 network attempts 和 null policy fields。export 文档显示 alias `review-alias`、category `Code Review`、唯一 display tag `Review` 和 note `Local note`。随后 clear/remove 并重复一次，第一次为 `changed`、第二次为 `unchanged`。在第二个隔离 XDG 环境导入该 output 并再次 export，两个 portable document 语义相同。
+预期每个首次有效修改为 `changed`，第二次等价 tag add 为 `unchanged`；JSON 有 `api_version: 2`、准确 operation、`trust_state: "missing"`、空 network attempts 和 null policy fields。export 文档显示 alias `review-alias`、category `Code Review`、唯一 display tag `Review` 和 note `Local note`。随后以相同的 `./target/debug/skilload` 调用 clear/remove 并重复一次；首次为 `changed`，重复为 `unchanged`。将 `OUTPUT` 导入第二组明确隔离的 roots 后再次 export，两个 portable document 必须语义相同：
+
+    REIMPORT_ROOT="$SMOKE_ROOT/reimport"
+    REIMPORT_OUTPUT="$REIMPORT_ROOT/exported-library.json"
+    mkdir -p "$REIMPORT_ROOT/home" "$REIMPORT_ROOT/config" "$REIMPORT_ROOT/data" "$REIMPORT_ROOT/state" "$REIMPORT_ROOT/cache"
+    env HOME="$REIMPORT_ROOT/home" XDG_CONFIG_HOME="$REIMPORT_ROOT/config" XDG_DATA_HOME="$REIMPORT_ROOT/data" XDG_STATE_HOME="$REIMPORT_ROOT/state" XDG_CACHE_HOME="$REIMPORT_ROOT/cache" ./target/debug/skilload library import --input "$OUTPUT" --json
+    env HOME="$REIMPORT_ROOT/home" XDG_CONFIG_HOME="$REIMPORT_ROOT/config" XDG_DATA_HOME="$REIMPORT_ROOT/data" XDG_STATE_HOME="$REIMPORT_ROOT/state" XDG_CACHE_HOME="$REIMPORT_ROOT/cache" ./target/debug/skilload library export --output "$REIMPORT_OUTPUT" --json
 
 10,000-entry acceptance 使用 release binary，fixture 构造和首次 import 不计入 mutation 计时；记录 changed alias set 与 unchanged repeat 的 wall-clock，以及 equivalent tag add 的 wall-clock，每项要求小于等于 10 秒：
 
@@ -354,3 +441,5 @@ changed 时数组恰有对应一个字段，unchanged 时为空。Library adapte
 2026-08-20：创建 `PLAN-0004` 规划基线，选择 P2 之后最小可独立验收的显式 Library 元数据 mutation，记录 exact scope、接口、portable closure、SQLite atomicity、CLI/API-v2 和验证要求；尚未实现运行时代码。
 
 2026-08-20 07:18Z：写回 Draft PR https://github.com/bootids/skilload/pull/4、首个远端规划提交和 publication progress，使 Plan frontmatter、正文和 GitHub 交付关系一致；仍未进入 `active` 或修改实现。
+
+2026-08-20 08:06Z：处理 PR #4 的完整 review conversation。根据 `SKL-CLI-010` 的 add/refresh acceptance，将该行为从本计划的完成 Product Baseline 改为 planned 约束；同时将实际 CLI smoke 改为显式 `./target/debug/skilload`、可复制临时 HOME/XDG roots、portable input 和隔离 re-import。两项均为 planning 文档修订，没有进入 `active` 或修改运行时代码。
