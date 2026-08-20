@@ -76,7 +76,7 @@ Read兼容性是显式边界。完整 v1 base rows可供 list/get/export只读�
 - [x] (2026-08-20 13:36Z) Milestone 3：workspace 为 `rusqlite 0.40.2` 启用 `backup` feature 并加入 `sha2 =0.11.0`；`SqliteLibraryRepository` 实现 `DatabaseMaintenance`（absent/healthy/v1/newer/FTS-drift 诊断、online backup 到 `:memory:` 后运行 FTS5 `integrity-check`）；`doctor --fix` 在 durable lock 下发布 `data/backups/` 的 standalone backup + completed manifest（SHA-256/size/source identity/epoch-ns，no-clobber linkat 发布）后执行单事务 v1→v2 migration，或对 FTS-only drift 做 rebuild；state revision 不变；保守 prune。
 - [x] (2026-08-20 13:36Z) Milestone 4：CLI 注册 `library list/search/get`（clap range parser 拒绝 limit 0/1001/负数，u64 parser 拒绝 offset 溢出）与 `doctor [--fix]`；json.rs 增加 `LibraryEntriesData`/`LibrarySearchData`/`LibraryEntry`/`DoctorData`（含 `TargetRef` projection、DecimalU64 strings）；human.rs 增加 terminal-safe 渲染；core adapter tests（13 个新增：分页/逐字段搜索/操作符 literal/v1 门控/migration+backup+manifest/FTS drift/doctor 惰性/WAL gate/迁移 failpoints/并发快照/newer/corrupt backups）与 cli_contract tests（4 个新增）全部通过；10,000-entry release 测量见 Artifacts；debug binary smoke 通过；产品/架构/设计文档已同步。
 - [x] (2026-08-20 13:44Z) Implementation、acceptance、documentation与 retrospective已全部提交并推送：implementation commit `7f9fd769b12eb75f051c1f29aaece9dd4a292c6b`（29 files，+4985/−1367）。执行 `gh pr ready` 后验证 `isDraft: false`、`state: OPEN`且 `headRefOid` 等于该提交；本 Plan 随即移入 `docs/exec-plans/review/`、`status` 改为 `review`并推送本 status commit。
-- [ ] (2026-08-20) 处理 PR #5 第二轮实现评审的 7 个 inline 问题（FTS shadow 分类、backups 目录项同步、backup digest/symlink 校验、prune 保护当前 backup、mutation 路径 corruption 补全、锁内 FTS 重诊断、doctor identity 重验）并回复/resolve 全部 thread。
+- [x] (2026-08-20 14:39Z) 处理 PR #5 第二轮实现评审的 7 个 inline 问题（FTS shadow 分类、backups 目录项同步、backup digest/symlink 校验、prune 保护当前 backup、mutation 路径 corruption 补全、锁内 FTS 重诊断、doctor identity 重验）并回复/resolve 全部 thread。
 
 ## Surprises & Discoveries
 
@@ -246,13 +246,13 @@ Problem: `validate_base_database` 使用整库 `PRAGMA integrity_check`，它会
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: 已实现：`validate_base_database`（`crates/skilload-core/src/adapters/sqlite_library.rs`）改为对 `sqlite_master` 与四个 v1 base 表逐表运行 `PRAGMA integrity_check('<table>')`（新增 `BASE_INTEGRITY_TABLES`），FTS shadow 健康不再影响 base 分类；`derived_index_is_consistent` 中内存副本上的 FTS5 `integrity-check` 失败改为返回 `false`（可修复 finding）而不是向上传播。由于物理 damaged 的 shadow b-tree 连 `DROP TABLE`/`DELETE` 都以 `SQLITE_CORRUPT` 失败（实验证实），`rebuild_derived_index` 新增 damage 检测（`fts_shadow_btree_is_damaged`：逐 shadow `PRAGMA integrity_check` + 存在性检查）与 `writable_schema` schema-row 手术（`detach_damaged_fts_schema`：同一 transaction 内删除 vtab + 5 个 shadow 的 schema 行、bump `schema_version` 强制重解析后重建），使 `doctor --fix` 对物理 shadow 损坏也真正可 rebuild；旧 shadow pages 成为 orphan pages，不影响逐表 base 验证。逐表检查失去的唯一整库信号是 freelist/orphan-page 记账，不影响 base records 完整性证明。
 
-Evidence: 新增回归测试 `fts_shadow_corruption_stays_doctor_fixable`：损坏 `library_fts_data` root page 尾部 cell 字节后，先断言 fixture 前提（整库 `PRAGMA integrity_check` 非 `ok`，输出 `Tree 9 page 9 cell 1: Extends off end of page`），再验证 `inspect()` 返回单个 `library_fts_invalid` finding（非 `database_corrupt`）、`fix()` 返回 `repair` action、search 恢复命中、`inspect()` 健康。既有 135 个 core tests（含 `corrupt_base_keeps_typed_details_with_known_backups` 的 page-1 corruption 仍被 `sqlite_master` 逐表检查捕获）全部通过；`cargo test --workspace` 11+17+141（debug 与 release）、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --locked` 均通过。commit 待推送后回填。
+Evidence: 新增回归测试 `fts_shadow_corruption_stays_doctor_fixable`：损坏 `library_fts_data` root page 尾部 cell 字节后，先断言 fixture 前提（整库 `PRAGMA integrity_check` 非 `ok`，输出 `Tree 9 page 9 cell 1: Extends off end of page`），再验证 `inspect()` 返回单个 `library_fts_invalid` finding（非 `database_corrupt`）、`fix()` 返回 `repair` action、search 恢复命中、`inspect()` 健康。既有 135 个 core tests（含 `corrupt_base_keeps_typed_details_with_known_backups` 的 page-1 corruption 仍被 `sqlite_master` 逐表检查捕获）全部通过；`cargo test --workspace` 11+17+141（debug 与 release）、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --locked` 均通过。修复以 `4469112367ecb145cc5755100c1959a5de5934e6` 推送到 PR head（`git diff --check` 无输出）。
 
-GitHub outcome: 待回复。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/5#discussion_r3822533520；thread resolved: true。
 
 ### PRRT_kwDOT7YN2s6a1M6o - 新建 backups 目录的目录项必须同步
 
@@ -263,13 +263,13 @@ Problem: 首次 v1 migration 时 `data/backups` 通常不存在，但 `publish_v
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: 已实现：`publish_validated_backup` 保留 `ensure_restrictive_directory` 的 `CreatedDirectory` 记录，在 staging 文件写入前调用 `sync_created_directory_entries(&created_directories, "XDG_DATA_HOME")`，使新建 `backups` 目录在其父 `data/skilload` 中的目录项在任何 staging 写入与 live schema write 之前 crash-durable。
 
-Evidence: 修改位于 `crates/skilload-core/src/adapters/sqlite_library.rs` 的 `publish_validated_backup` 开头；fsync 行为无法在测试中断言，回归由既有 `doctor_fix_migrates_v1_after_a_validated_backup`、`migration_failpoints_leave_a_coherent_state` 与新增 prune/backup 测试覆盖的迁移路径完整性保证。全部 workspace tests 通过。commit 待推送后回填。
+Evidence: 修改位于 `crates/skilload-core/src/adapters/sqlite_library.rs` 的 `publish_validated_backup` 开头；fsync 行为无法在测试中断言，回归由既有 `doctor_fix_migrates_v1_after_a_validated_backup`、`migration_failpoints_leave_a_coherent_state` 与新增 prune/backup 测试覆盖的迁移路径完整性保证。全部 workspace tests 通过。修复以 `4469112367ecb145cc5755100c1959a5de5934e6` 推送到 PR head（`git diff --check` 无输出）。
 
-GitHub outcome: 待回复。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/5#discussion_r3822536249；thread resolved: true。
 
 ### PRRT_kwDOT7YN2s6a1M6u - 已验证 backup 列表必须校验 SHA-256 并拒绝 symlink manifest
 
@@ -280,13 +280,13 @@ Problem: `known_validated_backups` 只检查 `complete` 与 `database_bytes`，�
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: 已实现：新增共享 predicate `backup_pair_is_valid(backups_root, stem)`——manifest 必须是 no-follow regular file（symlink 拒绝）、记录可解析、`complete`、database 为 regular file 且长度相等、`sha256` 与 `sha256_of_file` 流式哈希一致；`known_validated_backups` 与 `prune_old_backups` 共用同一 predicate。
 
-Evidence: 新增回归测试 `tampered_or_symlinked_backups_are_never_validated`：(a) 等长翻转 backup 末字节（digest 漂移）后损坏 live database，`inspect()` 的 `DatabaseCorrupt.backups` 为空；(b) manifest 换成 symlink 后同样为空。既有 `corrupt_base_keeps_typed_details_with_known_backups` 仍验证未篡改 backup 列出 1 项。全部 workspace tests 通过。commit 待推送后回填。
+Evidence: 新增回归测试 `tampered_or_symlinked_backups_are_never_validated`：(a) 等长翻转 backup 末字节（digest 漂移）后损坏 live database，`inspect()` 的 `DatabaseCorrupt.backups` 为空；(b) manifest 换成 symlink 后同样为空。既有 `corrupt_base_keeps_typed_details_with_known_backups` 仍验证未篡改 backup 列出 1 项。全部 workspace tests 通过。修复以 `4469112367ecb145cc5755100c1959a5de5934e6` 推送到 PR head（`git diff --check` 无输出）。
 
-GitHub outcome: 待回复。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/5#discussion_r3822539977；thread resolved: true。
 
 ### PRRT_kwDOT7YN2s6a1M6y - prune 必须保护本次 migration 刚发布的 backup
 
@@ -297,13 +297,13 @@ Problem: `prune_old_backups` 先对全部 manifest 形态文件名应用保留�
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: 已实现：`prune_old_backups(backups_root, protected_stem)` 先用 `backup_pair_is_valid` 验证每个 pair 再进入保留排序（无效/外部条目不再占用保留名额，symlink pair 不再被误删）；`publish_validated_backup` 返回最终 stem，migration 把它作为 `protected_stem` 传入 prune，该 stem 永不进入删除集合；仅第 `RETAINED_COMPLETE_BACKUPS` 名之后的已验证 pair 会被删除。
 
-Evidence: 新增回归测试 `prune_keeps_the_backup_of_the_current_migration`：预置 3 个 future-dated（20 位 epoch ns stem）但完全有效的 foreign pair 后执行 `fix()`，断言迁移后 4 个 pair 全部保留（旧逻辑会把排序最旧的本次迁移 backup 删除）、schema 为 v2、`inspect()` 健康。全部 workspace tests 通过。commit 待推送后回填。
+Evidence: 新增回归测试 `prune_keeps_the_backup_of_the_current_migration`：预置 3 个 future-dated（20 位 epoch ns stem）但完全有效的 foreign pair 后执行 `fix()`，断言迁移后 4 个 pair 全部保留（旧逻辑会把排序最旧的本次迁移 backup 删除）、schema 为 v2、`inspect()` 健康。全部 workspace tests 通过。修复以 `4469112367ecb145cc5755100c1959a5de5934e6` 推送到 PR head（`git diff --check` 无输出）。
 
-GitHub outcome: 待回复。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/5#discussion_r3822542981；thread resolved: true。
 
 ### PRRT_kwDOT7YN2s6a1M60 - mutation 路径的 corruption 错误必须补全 backups
 
@@ -314,13 +314,13 @@ Problem: `import`/`mutate_metadata` 的既有库分支与 `fix` 的 action 调�
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: 已实现：`import` 的三个 database 分支（dry-run `read_existing`、`import_existing`、`import_first`）与 `mutate_metadata` 的 `mutate_existing` 均经 `enrich_database_corruption` 包装；`fix()` 的 `migrate_v1`/`repair_fts` action 错误同样包装，所有公开入口的 `DatabaseCorrupt` 现在都带完整 `backups`。
 
-Evidence: 新增回归测试 `mutation_paths_list_known_backups_on_base_corruption`：migration 产生 1 个 backup 后损坏 live database，`mutate_metadata` 与 `import` 的 `DatabaseCorrupt.backups` 均列出该 1 个 validated backup（修复前为空）。全部 workspace tests 通过。commit 待推送后回填。
+Evidence: 新增回归测试 `mutation_paths_list_known_backups_on_base_corruption`：migration 产生 1 个 backup 后损坏 live database，`mutate_metadata` 与 `import` 的 `DatabaseCorrupt.backups` 均列出该 1 个 validated backup（修复前为空）。全部 workspace tests 通过。修复以 `4469112367ecb145cc5755100c1959a5de5934e6` 推送到 PR head（`git diff --check` 无输出）。
 
-GitHub outcome: 待回复。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/5#discussion_r3822545191；thread resolved: true。
 
 ### PRRT_kwDOT7YN2s6a1M62 - 取得修复锁后必须重新诊断 FTS drift
 
@@ -331,13 +331,13 @@ Problem: 两个 `doctor --fix` 进程都在拿锁前诊断出 FTS drift 时，�
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: 已实现：`repair_fts_locked` 改为 `Result<Option<DoctorAction>>`——先用只读 transaction 完成 schema/base 校验，再于 durable lock 内重新执行 `derived_index_is_consistent`，已一致时重验 identity 后返回 `None`（数据库字节不变），只有仍不一致才进入 rebuild transaction；`fix()` 收到 `None` 时对该 FtsInvalid 情形重新执行 `diagnosis_classification` 并以 `unchanged` 返回最新 findings 与 `database_writable`。
 
-Evidence: 新增回归测试 `fts_repair_rechecks_drift_under_the_lock`：健康 v2 database 上直接调用 `repair_fts` 返回 `None` 且文件字节逐字节不变；制造 drift 后同一调用返回 `repair` action 且 search 恢复。`fix()` 的幂等 `unchanged` 分支由既有 `fts_drift_is_doctor_fixable_without_touching_base_rows` 的 repeated-fix 断言覆盖。全部 workspace tests 通过。commit 待推送后回填。
+Evidence: 新增回归测试 `fts_repair_rechecks_drift_under_the_lock`：健康 v2 database 上直接调用 `repair_fts` 返回 `None` 且文件字节逐字节不变；制造 drift 后同一调用返回 `repair` action 且 search 恢复。`fix()` 的幂等 `unchanged` 分支由既有 `fts_drift_is_doctor_fixable_without_touching_base_rows` 的 repeated-fix 断言覆盖。全部 workspace tests 通过。修复以 `4469112367ecb145cc5755100c1959a5de5934e6` 推送到 PR head（`git diff --check` 无输出）。
 
-GitHub outcome: 待回复。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/5#discussion_r3822547563；thread resolved: true。
 
 ### PRRT_kwDOT7YN2s6a1M64 - doctor 返回诊断前必须重验 database identity
 
@@ -348,13 +348,13 @@ Problem: `diagnosis_classification` 丢弃 `open_existing_database` 返回的 id
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: 已实现：`diagnosis_classification` 保留 `open_existing_database` 返回的 identity，并在返回诊断前按既有读取路径模式于 transaction commit 前后各执行一次 `revalidate_database_identity`；路径名被原子替换为其他 inode 时返回 `database_identity_drift` invalid_state 而不是基于旧 inode 的诊断。
 
-Evidence: 新增回归测试 `doctor_never_reports_a_replaced_database`：以 `after_existing_database_open` hook 在打开后用 `rename` 原子替换 `skilload.db`，`inspect()` 与 `fix()` 均返回 `database_identity_drift`（open 尾部的既有重验与本条新增的快照前后重验共同构成该契约；若两级重验均被移除则测试失败）。全部 workspace tests 通过。commit 待推送后回填。
+Evidence: 新增回归测试 `doctor_never_reports_a_replaced_database`：以 `after_existing_database_open` hook 在打开后用 `rename` 原子替换 `skilload.db`，`inspect()` 与 `fix()` 均返回 `database_identity_drift`（open 尾部的既有重验与本条新增的快照前后重验共同构成该契约；若两级重验均被移除则测试失败）。全部 workspace tests 通过。修复以 `4469112367ecb145cc5755100c1959a5de5934e6` 推送到 PR head（`git diff --check` 无输出）。
 
-GitHub outcome: 待回复。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/5#discussion_r3822550014；thread resolved: true。
 
 ## Context and Orientation
 
@@ -682,3 +682,5 @@ Backup manifest是private versioned serde record，不进入API-v2或portable ex
 
 
 2026-08-20 13:44Z：进入 review。Ready 事务证据：`gh pr ready` 成功（"Pull request bootids/skilload#5 is marked as \"ready for review\""），随后 `gh pr view --json isDraft,headRefOid,state` 观察到 `isDraft: false`、`state: OPEN`、`headRefOid: 7f9fd769b12eb75f051c1f29aaece9dd4a292c6b`（等于已推送的 implementation HEAD）。最终 validation（fmt/clippy -D warnings/全 workspace tests 11+17+135/build --locked/`git diff --check`）全部通过，证据见 Artifacts。
+
+2026-08-20 14:39Z：处理 PR #5 第二轮实现评审（`address-pr-threads`，final review 模式）。Codex review `PRR_kwDOT7YN2s8AAAABKQk3WA` 的 7 个 inline 问题（FTS shadow 分类、backups 目录项同步、backup digest/symlink 校验、prune 保护当前 backup、mutation 路径 corruption 补全、锁内 FTS 重诊断、doctor identity 重验）全部按 `fixed` 处置：实现修复与 6 个新回归测试以 `4469112367ecb145cc5755100c1959a5de5934e6` 推送到 PR head，全部 thread 已回复并 resolved；逐表 integrity_check、shadow 损坏的 SQL 不可清除性与 `writable_schema` 手术事实同步到 `docs/references/sqlite-fts5-library-search.md`。最终 validation：`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace`（11+17+141，debug 与 release）、`cargo build --workspace --locked`、`git diff --check` 全部通过。Plan 保持 `review`、PR 保持 ready。
