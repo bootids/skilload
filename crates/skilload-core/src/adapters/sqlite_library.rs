@@ -24,7 +24,7 @@ use rusqlite::{
     Connection, Error as SqlError, ErrorCode, OpenFlags, OptionalExtension, backup::Backup, ffi,
     params,
 };
-use rustix::fs::{AtFlags, Mode, OFlags, fstat, linkat, openat, statat, unlinkat};
+use rustix::fs::{AtFlags, Dir, Mode, OFlags, fstat, linkat, openat, statat, unlinkat};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -32,6 +32,7 @@ use std::ffi::OsString;
 use std::fs::{self, File, OpenOptions};
 use std::io::Read;
 use std::io::{self, Write};
+use std::os::fd::AsRawFd;
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -56,7 +57,6 @@ repository, \
 tokenize = 'unicode61 remove_diacritics 0')";
 const FTS_ROW_COLUMNS: usize = 9;
 const BACKUP_MANIFEST_FORMAT_VERSION: u64 = 1;
-const RETAINED_COMPLETE_BACKUPS: usize = 3;
 const BASE_INTEGRITY_TABLES: [&str; 5] = [
     "sqlite_master",
     "schema_info",
@@ -213,11 +213,15 @@ impl SqliteLibraryRepository {
         path: &Path,
         flags: OpenFlags,
     ) -> Result<(Connection, (u64, u64)), AppError> {
-        let identity = metadata_identity(&Self::existing_database_metadata(path)?);
-        self.pre_open_generation_gate(path)?;
+        let (held_generation, identity) = self.pre_open_generation_gate(path)?;
         self.hooks.before_existing_database_open(path)?;
-        let connection = Connection::open_with_flags(path, flags | OpenFlags::SQLITE_OPEN_NOFOLLOW)
-            .map_err(|error| database_error(path, error))?;
+        let connection = if flags.contains(OpenFlags::SQLITE_OPEN_READ_ONLY) {
+            let held_path = PathBuf::from(format!("/dev/fd/{}", held_generation.as_raw_fd()));
+            Connection::open_with_flags(&held_path, flags)
+        } else {
+            Connection::open_with_flags(path, flags | OpenFlags::SQLITE_OPEN_NOFOLLOW)
+        }
+        .map_err(|error| database_error(path, error))?;
         self.hooks.after_existing_database_open(path)?;
         verify_sqlite_connection_identity(&connection)?;
         configure_connection(&connection, path)?;
@@ -688,7 +692,7 @@ impl SqliteLibraryRepository {
         })()
     }
 
-    fn pre_open_generation_gate(&self, path: &Path) -> Result<(), AppError> {
+    fn pre_open_generation_gate(&self, path: &Path) -> Result<(File, (u64, u64)), AppError> {
         let mut options = OpenOptions::new();
         options.read(true).custom_flags(libc::O_NOFOLLOW);
         let mut file = options.open(path).map_err(|error| {
@@ -699,6 +703,17 @@ impl SqliteLibraryRepository {
                 error,
             )
         })?;
+        let metadata = file.metadata().map_err(|error| {
+            environment_io(
+                "XDG_DATA_HOME",
+                path,
+                "inspect opened database for generation check",
+                error,
+            )
+        })?;
+        if !metadata.file_type().is_file() {
+            return Err(Self::database_identity_drift());
+        }
         let mut header = [0u8; 100];
         if file.read_exact(&mut header).is_err()
             || !header.starts_with(SQLITE_HEADER_MAGIC)
@@ -722,7 +737,7 @@ impl SqliteLibraryRepository {
                 }
             }
         }
-        Ok(())
+        Ok((file, metadata_identity(&metadata)))
     }
 
     fn database_corrupt_with_known_backups(&self, path: &Path) -> AppError {
@@ -740,23 +755,22 @@ impl SqliteLibraryRepository {
 
     fn known_validated_backups(roots: &ResolvedRoots) -> Vec<NativePath> {
         let backups_root = roots.data.effective.join("backups");
-        let Ok(directory) = fs::read_dir(&backups_root) else {
+        let Ok(directory) = ValidatedDataDirectory::open(&backups_root) else {
             return Vec::new();
         };
-        let mut stems = directory
-            .flatten()
-            .filter_map(|entry| entry.file_name().into_string().ok())
-            .filter(|name| name.ends_with(".manifest.json"))
-            .map(|name| name.trim_end_matches(".manifest.json").to_owned())
-            .collect::<Vec<_>>();
+        let mut stems = backup_manifest_stems(&directory);
         stems.sort();
         let mut validated = Vec::new();
         for stem in stems {
-            if backup_pair_is_valid(&backups_root, &stem) {
+            if backup_pair_is_valid(&directory, &stem) {
                 validated.push(NativePath::new(backups_root.join(format!("{stem}.db"))));
             }
         }
-        validated
+        if directory.revalidate().is_err() {
+            Vec::new()
+        } else {
+            validated
+        }
     }
 
     fn list_page(
@@ -1047,7 +1061,7 @@ impl SqliteLibraryRepository {
             load_validated_entries(&transaction, &database)?
         };
 
-        let protected_stem = self.publish_validated_backup(
+        self.publish_validated_backup(
             &roots,
             &connection,
             &database,
@@ -1116,8 +1130,6 @@ impl SqliteLibraryRepository {
             },
         )?;
         Self::revalidate_database_identity(&database, identity)?;
-        let backups_root = roots.data.effective.join("backups");
-        Self::prune_old_backups(&backups_root, &protected_stem);
         Ok(DoctorAction {
             kind: DoctorActionKind::Migrate,
             target: NativePath::new(database),
@@ -1224,7 +1236,7 @@ impl SqliteLibraryRepository {
         database: &Path,
         source_identity: (u64, u64),
         state_revision_baseline: i64,
-    ) -> Result<String, AppError> {
+    ) -> Result<(), AppError> {
         let backups_root = roots.data.effective.join("backups");
         let created_directories = ensure_restrictive_directory(&backups_root, "XDG_DATA_HOME")?;
         let backups_directory = ValidatedDataDirectory::open(&backups_root)?;
@@ -1419,7 +1431,7 @@ impl SqliteLibraryRepository {
         })?;
         self.hooks
             .after_backup_publish(&backups_root.join(final_db_name))?;
-        Ok(stem)
+        Ok(())
     }
 
     fn open_staging_backup(staging_path: &Path) -> Result<Connection, AppError> {
@@ -1432,76 +1444,91 @@ impl SqliteLibraryRepository {
         configure_connection(&connection, staging_path)?;
         Ok(connection)
     }
+}
 
-    /// Conservatively keep only the newest complete validated backup pairs.
-    /// Every pair is validated before it can enter the retention ranking, so
-    /// invalid, unpaired, symlinked, digest-drifted, or foreign entries
-    /// neither get deleted nor push valid backups into the deletion slice.
-    /// The backup published by the current migration is never deleted, even
-    /// when foreign future-dated manifests or a backwards clock make it sort
-    /// as the oldest entry.
-    fn prune_old_backups(backups_root: &Path, protected_stem: &str) {
-        let directory = match fs::read_dir(backups_root) {
-            Ok(directory) => directory,
-            Err(_) => return,
+/// List candidate manifest stems through a held directory descriptor so a
+/// replacement of the directory pathname cannot redirect later validation.
+fn backup_manifest_stems(directory: &ValidatedDataDirectory) -> Vec<String> {
+    let Ok(mut entries) = Dir::read_from(&directory.handle) else {
+        return Vec::new();
+    };
+    let mut stems = Vec::new();
+    while let Some(entry) = entries.read() {
+        let Ok(entry) = entry else {
+            return Vec::new();
         };
-        let mut validated = directory
-            .flatten()
-            .filter_map(|entry| entry.file_name().into_string().ok())
-            .filter(|name| name.starts_with("skilload-db-v1-to-v2-"))
-            .filter(|name| name.ends_with(".manifest.json"))
-            .map(|name| name.trim_end_matches(".manifest.json").to_owned())
-            .filter(|stem| backup_pair_is_valid(backups_root, stem))
-            .collect::<Vec<_>>();
-        validated.sort();
-        validated.reverse();
-        for stem in validated
-            .into_iter()
-            .skip(RETAINED_COMPLETE_BACKUPS)
-            .filter(|stem| stem != protected_stem)
-        {
-            let _ = fs::remove_file(backups_root.join(format!("{stem}.db")));
-            let _ = fs::remove_file(backups_root.join(format!("{stem}.manifest.json")));
+        let Ok(name) = entry.file_name().to_str() else {
+            continue;
+        };
+        if let Some(stem) = name.strip_suffix(".manifest.json") {
+            stems.push(stem.to_owned());
         }
+    }
+    stems
+}
+
+fn open_regular_file_at(
+    directory: &ValidatedDataDirectory,
+    name: &std::ffi::OsStr,
+) -> Option<File> {
+    let file = File::from(
+        openat(
+            &directory.handle,
+            name,
+            OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK,
+            Mode::empty(),
+        )
+        .ok()?,
+    );
+    if file.metadata().ok()?.file_type().is_file() {
+        Some(file)
+    } else {
+        None
     }
 }
 
-/// A backup pair counts as validated only when the manifest is a real regular
-/// file (never a symlink), records a complete backup, the database is a real
-/// regular file of the recorded length, and its streamed SHA-256 matches the
-/// manifest digest. This is the single predicate behind corruption-response
-/// backup listing and retention pruning.
-fn backup_pair_is_valid(backups_root: &Path, stem: &str) -> bool {
-    let database = backups_root.join(format!("{stem}.db"));
-    let manifest = backups_root.join(format!("{stem}.manifest.json"));
-    let Ok(manifest_metadata) = fs::symlink_metadata(&manifest) else {
+fn directory_entry_matches_file(
+    directory: &ValidatedDataDirectory,
+    name: &std::ffi::OsStr,
+    file: &File,
+) -> bool {
+    fstat(file)
+        .ok()
+        .zip(statat(&directory.handle, name, AtFlags::SYMLINK_NOFOLLOW).ok())
+        .is_some_and(|(held, entry)| held.st_dev == entry.st_dev && held.st_ino == entry.st_ino)
+}
+
+/// A backup pair counts as validated only when both files are opened through
+/// the held directory with no-follow descriptors, remain linked under their
+/// advertised names, and their manifest and streamed digest agree.
+fn backup_pair_is_valid(directory: &ValidatedDataDirectory, stem: &str) -> bool {
+    let database_name = OsString::from(format!("{stem}.db"));
+    let manifest_name = OsString::from(format!("{stem}.manifest.json"));
+    let Some(mut manifest) = open_regular_file_at(directory, &manifest_name) else {
         return false;
     };
-    if !manifest_metadata.file_type().is_file() {
+    let mut record_bytes = Vec::new();
+    if manifest.read_to_end(&mut record_bytes).is_err() {
         return false;
     }
-    let Ok(record_bytes) = fs::read(&manifest) else {
-        return false;
-    };
     let Ok(record) = serde_json::from_slice::<BackupManifestRecord>(&record_bytes) else {
         return false;
     };
-    let Ok(metadata) = fs::symlink_metadata(&database) else {
+    let Some(database) = open_regular_file_at(directory, &database_name) else {
         return false;
     };
-    if !metadata.file_type().is_file()
-        || !record.complete
-        || record.database_bytes != metadata.len()
-    {
+    let Ok(metadata) = database.metadata() else {
+        return false;
+    };
+    if !record.complete || record.database_bytes != metadata.len() {
         return false;
     }
-    let Ok(file) = File::open(&database) else {
-        return false;
-    };
-    let Ok(digest) = sha256_of_file(&file) else {
+    let Ok(digest) = sha256_of_file(&database) else {
         return false;
     };
     format!("sha256:{digest}") == record.sha256
+        && directory_entry_matches_file(directory, &manifest_name, &manifest)
+        && directory_entry_matches_file(directory, &database_name, &database)
 }
 
 impl Default for SqliteLibraryRepository {
@@ -2365,6 +2392,20 @@ fn fts_index_invalid() -> AppError {
     )
 }
 
+fn fts_match_error(path: &Path, error: SqlError) -> AppError {
+    match &error {
+        SqlError::SqliteFailure(code, _)
+            if matches!(
+                code.code,
+                ErrorCode::DatabaseCorrupt | ErrorCode::NotADatabase
+            ) =>
+        {
+            fts_index_invalid()
+        }
+        _ => database_error(path, error),
+    }
+}
+
 /// Write-path validation: base rows must be intact and the database must
 /// already be schema v2 with a consistent derived index. A v1 database
 /// reports `migration_required` and an unknown newer schema reports
@@ -2787,7 +2828,7 @@ fn count_fts_matches(
             params![expression],
             |row| row.get(0),
         )
-        .map_err(|error| database_error(path, error))?;
+        .map_err(|error| fts_match_error(path, error))?;
     u64::try_from(count)
         .map_err(|_| AppError::database_corrupt(NativePath::new(path.to_path_buf())))
 }
@@ -2831,10 +2872,17 @@ fn joined_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<JoinedRow> {
 fn collect_joined_rows(
     rows: impl Iterator<Item = rusqlite::Result<JoinedRow>>,
     path: &Path,
+    fts_corruption_is_derived: bool,
 ) -> Result<Vec<PortableLibraryEntry>, AppError> {
     let mut entries: Vec<PortableLibraryEntry> = Vec::new();
     for row in rows {
-        let row = row.map_err(|error| database_error(path, error))?;
+        let row = row.map_err(|error| {
+            if fts_corruption_is_derived {
+                fts_match_error(path, error)
+            } else {
+                database_error(path, error)
+            }
+        })?;
         let tag = match (row.tag_comparison_key, row.tag_display) {
             (Some(comparison_key), Some(display)) => {
                 let normalized = normalize_tag(&display)
@@ -2909,9 +2957,14 @@ fn query_page(
             ORDER BY e.canonical_source, t.comparison_key"
         ),
     };
-    let mut statement = connection
-        .prepare(&sql)
-        .map_err(|error| database_error(path, error))?;
+    let fts_corruption_is_derived = matches!(filter, ReadFilter::FtsMatch(_));
+    let mut statement = connection.prepare(&sql).map_err(|error| {
+        if fts_corruption_is_derived {
+            fts_match_error(path, error)
+        } else {
+            database_error(path, error)
+        }
+    })?;
     let rows = match filter {
         ReadFilter::All => statement
             .query_map(params![i64::from(page.limit()), offset], joined_row)
@@ -2921,9 +2974,9 @@ fn query_page(
                 params![expression, i64::from(page.limit()), offset],
                 joined_row,
             )
-            .map_err(|error| database_error(path, error))?,
+            .map_err(|error| fts_match_error(path, error))?,
     };
-    Ok(collect_joined_rows(rows, path)?
+    Ok(collect_joined_rows(rows, path, fts_corruption_is_derived)?
         .into_iter()
         .map(|entry| LibraryEntry::from_portable(entry, LibraryTrustState::Missing))
         .collect())
@@ -2947,7 +3000,7 @@ fn query_entry(
     let rows = statement
         .query_map(params![selector], joined_row)
         .map_err(|error| database_error(path, error))?;
-    let entries = collect_joined_rows(rows, path)?;
+    let entries = collect_joined_rows(rows, path, false)?;
     Ok(entries
         .into_iter()
         .next()
@@ -4353,7 +4406,7 @@ mod tests {
     }
 
     #[test]
-    fn export_rejects_a_read_only_database_aba_open() {
+    fn export_uses_checked_generation_when_a_read_only_aba_is_restored() {
         let temporary = tempdir().unwrap();
         let environment = Arc::new(TestEnvironment::with_roots(temporary.path()));
         let initial = SqliteLibraryRepository::with_environment(
@@ -4377,14 +4430,63 @@ mod tests {
             }),
         );
 
+        let exported = repository.export().unwrap();
+
+        assert_eq!(exported.entries.len(), 1);
+        assert!(database.exists());
+        assert!(!replacement.exists());
+    }
+
+    struct ExistingReadOnlyWalReplacement {
+        database: PathBuf,
+        displaced: PathBuf,
+        replacement: PathBuf,
+    }
+
+    impl PersistenceHooks for ExistingReadOnlyWalReplacement {
+        fn before_existing_database_open(&self, _database: &Path) -> Result<(), AppError> {
+            fs::rename(&self.database, &self.displaced).unwrap();
+            fs::rename(&self.replacement, &self.database).unwrap();
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn read_only_open_never_creates_sidecars_for_a_replaced_wal_generation() {
+        let temporary = tempdir().unwrap();
+        let environment = Arc::new(TestEnvironment::with_roots(temporary.path()));
+        let initial = SqliteLibraryRepository::with_environment(
+            environment.clone(),
+            Arc::new(XdgRootResolver),
+        );
+        initial
+            .import(&document(vec![entry("skills/review", None)]), false)
+            .unwrap();
+        let database = temporary.path().join("data/skilload/skilload.db");
+        let replacement = temporary.path().join("wal-replacement.db");
+        fs::copy(&database, &replacement).unwrap();
+        Connection::open(&replacement)
+            .unwrap()
+            .execute_batch("PRAGMA journal_mode = WAL;")
+            .unwrap();
+        let repository = SqliteLibraryRepository::with_hooks(
+            environment,
+            Arc::new(XdgRootResolver),
+            Arc::new(ExistingReadOnlyWalReplacement {
+                database: database.clone(),
+                displaced: temporary.path().join("displaced.db"),
+                replacement,
+            }),
+        );
+
         let error = repository.export().unwrap_err();
 
         assert!(matches!(
             error,
             AppError::InvalidState { state, .. } if state == "database_identity_drift"
         ));
-        assert!(database.exists());
-        assert!(!replacement.exists());
+        assert!(!database.with_file_name("skilload.db-shm").exists());
+        assert!(!database.with_file_name("skilload.db-wal").exists());
     }
 
     struct ExistingDatabaseReplacementAfterSync {
@@ -5672,6 +5774,13 @@ mod tests {
             Arc::new(TestEnvironment::with_roots(temporary.path())),
             Arc::new(XdgRootResolver),
         );
+        let query = Query::new("code review".to_owned()).unwrap();
+        let error = repository.search(&query, &page(100, 0)).unwrap_err();
+        assert!(matches!(
+            error,
+            AppError::InvalidState { state, .. } if state == "library_fts_invalid"
+        ));
+
         let diagnosis = repository.inspect().unwrap();
         assert_eq!(diagnosis.findings.len(), 1);
         assert_eq!(diagnosis.findings[0].code, "library_fts_invalid");
@@ -5776,18 +5885,17 @@ mod tests {
     }
 
     #[test]
-    fn prune_keeps_the_backup_of_the_current_migration() {
+    fn migration_retains_all_validated_backup_pairs() {
         let temporary = tempdir().unwrap();
         let database = initialize_v1_database(&temporary);
         let backups_root = temporary.path().join("data/skilload/backups");
         fs::create_dir_all(&backups_root).unwrap();
-        // Three foreign future-dated but fully valid pairs: after the
-        // migration the just-published backup sorts as the oldest validated
-        // entry and would fall into the deletion slice without protection.
+        // Three fully valid pairs that sort before the new migration backup
+        // prove retention never deletes a pair based only on its pathname.
         for index in 0..3 {
             seed_foreign_valid_pair(
                 &backups_root,
-                &format!("skilload-db-v1-to-v2-999999999999999999{index}"),
+                &format!("skilload-db-v1-to-v2-0000000000000000000{index}"),
                 &database,
             );
         }
@@ -5805,7 +5913,7 @@ mod tests {
             .count();
         assert_eq!(
             pairs, 4,
-            "the current migration backup must survive pruning"
+            "migration retains every validated pair when deletion cannot be identity-bound"
         );
         assert!(repository.inspect().unwrap().findings.is_empty());
     }
