@@ -2,7 +2,7 @@
 plan_id: PLAN-0005
 branch: codex/p4-library-indexed-reads
 pull_request: https://github.com/bootids/skilload/pull/5
-status: active
+status: review
 depends_on: [PLAN-0004]
 ---
 
@@ -75,7 +75,7 @@ Read兼容性是显式边界。完整 v1 base rows可供 list/get/export只读�
 - [x] (2026-08-20 13:36Z) Milestone 2：`SCHEMA_VERSION=2`，`initialize_schema` 创建固定 SQL 的 `library_fts`；validation 拆为 base（含 domain rows）与 derived（fixed-SQL 比对 + 内容一一相等）两层；`open_existing_database` 先经 pre-open generation gate（header magic/journal-mode bytes (1,1)、`-wal`/`-shm` sibling 盘点）；list/get/export 接受 v1/newer（newer 仅 export），search 在 v1 返回 `migration_required`；list/search 用 CTE + 单次 LEFT JOIN 组装分页；`apply_additions`/`apply_metadata_change` 同事务维护 FTS。
 - [x] (2026-08-20 13:36Z) Milestone 3：workspace 为 `rusqlite 0.40.2` 启用 `backup` feature 并加入 `sha2 =0.11.0`；`SqliteLibraryRepository` 实现 `DatabaseMaintenance`（absent/healthy/v1/newer/FTS-drift 诊断、online backup 到 `:memory:` 后运行 FTS5 `integrity-check`）；`doctor --fix` 在 durable lock 下发布 `data/backups/` 的 standalone backup + completed manifest（SHA-256/size/source identity/epoch-ns，no-clobber linkat 发布）后执行单事务 v1→v2 migration，或对 FTS-only drift 做 rebuild；state revision 不变；保守 prune。
 - [x] (2026-08-20 13:36Z) Milestone 4：CLI 注册 `library list/search/get`（clap range parser 拒绝 limit 0/1001/负数，u64 parser 拒绝 offset 溢出）与 `doctor [--fix]`；json.rs 增加 `LibraryEntriesData`/`LibrarySearchData`/`LibraryEntry`/`DoctorData`（含 `TargetRef` projection、DecimalU64 strings）；human.rs 增加 terminal-safe 渲染；core adapter tests（13 个新增：分页/逐字段搜索/操作符 literal/v1 门控/migration+backup+manifest/FTS drift/doctor 惰性/WAL gate/迁移 failpoints/并发快照/newer/corrupt backups）与 cli_contract tests（4 个新增）全部通过；10,000-entry release 测量见 Artifacts；debug binary smoke 通过；产品/架构/设计文档已同步。
-- [ ] 在 implementation、acceptance、documentation和 retrospective全部 committed/pushed后运行 `gh pr ready`，验证 `isDraft: false`及 `headRefOid`等于 pushed implementation HEAD，再自动移入 `review`并推送 status commit。
+- [x] (2026-08-20 13:44Z) Implementation、acceptance、documentation与 retrospective已全部提交并推送：implementation commit `7f9fd769b12eb75f051c1f29aaece9dd4a292c6b`（29 files，+4985/−1367）。执行 `gh pr ready` 后验证 `isDraft: false`、`state: OPEN`且 `headRefOid` 等于该提交；本 Plan 随即移入 `docs/exec-plans/review/`、`status` 改为 `review`并推送本 status commit。
 - [ ] 收到明确 merge prompt后执行完成态 preflight、合并、更新 `main`并删除本地 delivery branch。
 
 ## Surprises & Discoveries
@@ -544,3 +544,5 @@ Backup manifest是private versioned serde record，不进入API-v2或portable ex
 2026-08-20 12:20Z：进入执行。前置验证全部通过（依赖 completed、PR Draft、branch/HEAD 一致）；本文件移入 `docs/exec-plans/active/`，`status` 改为 `active`。未改动其他内容。
 
 2026-08-20 13:36Z：完成全部四个 milestones 的实现与验收。运行时代码变更：`crates/skilload-core`（domain library/doctor、ports library/doctor、application library/doctor、adapters/sqlite_library、application/configuration 的 `Application::new` 签名）与 `crates/skilload-cli`（args/main/json/human/tests）；依赖仅按既定 Decision 增加 `rusqlite` `backup` feature 与 `sha2 =0.11.0`。同步 `docs/product-specs/README.md`、`docs/product-specs/library.md`、`docs/product-specs/cache-and-operations.md`、`ARCHITECTURE.md`、两个 design docs 的实现状态；Progress、Surprises & Discoveries、Decision Log、Outcomes & Retrospective 与 Artifacts 已记录实现证据。实现中的低风险决策（FTS drift 的 `invalid_state` 分类、`repository_display` 列、linkat backup 发布、corruption details enrichment、v1 测试 fixture 生成方式）均已记录在 Decision Log。
+
+2026-08-20 13:44Z：进入 review。Ready 事务证据：`gh pr ready` 成功（"Pull request bootids/skilload#5 is marked as \"ready for review\""），随后 `gh pr view --json isDraft,headRefOid,state` 观察到 `isDraft: false`、`state: OPEN`、`headRefOid: 7f9fd769b12eb75f051c1f29aaece9dd4a292c6b`（等于已推送的 implementation HEAD）。最终 validation（fmt/clippy -D warnings/全 workspace tests 11+17+135/build --locked/`git diff --check`）全部通过，证据见 Artifacts。
