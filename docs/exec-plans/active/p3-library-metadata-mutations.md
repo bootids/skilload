@@ -2,7 +2,7 @@
 plan_id: PLAN-0004
 branch: codex/p3-library-metadata-mutations
 pull_request: https://github.com/bootids/skilload/pull/4
-status: plan
+status: active
 depends_on: [PLAN-0003]
 ---
 
@@ -18,7 +18,7 @@ depends_on: [PLAN-0003]
 
 本交付直接依赖 `PLAN-0003`。该前置计划已经在默认分支的 `docs/exec-plans/completed/p2-library-portable-import-export.md` 中完成，提供 Rust workspace、API-v2 当前 producer、受限可移植 Library 导入/导出、Unicode 15.1.0 标签规范化，以及保存 Library 来源和元数据的 SQLite v1 schema。本计划不重复列出传递依赖 `PLAN-0001` 和 `PLAN-0002`。
 
-本交付只增加显式 Library 元数据变更：alias、category、tag 和 note 的 set/add/remove/clear。它不实现 GitHub 来源解析、Trust、`library add|remove|list|search|get|refresh`、FTS5 表、数据库迁移、cache、workspace、global、manager 或 doctor。未实现的命令继续是 usage error，不能注册占位叶子。本计划关联 Draft PR https://github.com/bootids/skilload/pull/4；在后续人类明确触发 `execute-exec-plan` 前不得修改运行时代码。
+本交付只增加显式 Library 元数据变更：alias、category、tag 和 note 的 set/add/remove/clear。它不实现 GitHub 来源解析、Trust、`library add|remove|list|search|get|refresh`、FTS5 表、数据库迁移、cache、workspace、global、manager 或 doctor。未实现的命令继续是 usage error，不能注册占位叶子。本计划关联 Draft PR https://github.com/bootids/skilload/pull/4；2026-08-20 08:53Z 收到明确执行授权并通过 preflight 后已进入 `active`，现仅按本计划实现已界定的交付。
 
 ## Product Baseline
 
@@ -74,7 +74,8 @@ depends_on: [PLAN-0003]
 - [x] (2026-08-20 07:18Z) 已创建 Draft PR https://github.com/bootids/skilload/pull/4，写回 canonical URL并完成第二个 planning metadata 提交；推送后等待后续明确的人类执行授权。
 - [x] (2026-08-20 08:06Z) 已完整读取 PR #4 的顶层评论、submitted review 和全部 inline threads；两个有效 planning 问题均已分类为可修复，并在不进入 `active`、不修改运行时代码的前提下修正完成范围与 smoke 可复现性。
 - [x] (2026-08-20 08:42Z) 已推送 planning 修订 `f2dd223d38666c015bc00f7c597372067da601d0`，在两个 inline threads 分别回复证据并成功关闭；Review Conversation Log 已记录回复 URL、commit、验证和最终 resolved state。
-- [ ] 后续收到明确 `execute-exec-plan` 提示后进入 `active`，实现 domain/application/port/error 合约。
+- [x] (2026-08-20 08:53Z) 已完成 execution preflight：`mise install`、GitHub auth、干净 worktree、`git fetch origin` 和 PR #4 Draft/head 已核对；`PLAN-0003` 在 `origin/main` 的 completed 目录中为 `status: completed`，本 Plan 已转入 `active`。
+- [ ] 实现 domain/application/port/error 元数据变更合约。
 - [ ] 实现 SQLite 原子元数据 mutation、幂等路径、portable closure 和 failure/concurrency 回归。
 - [ ] 注册八个真实 CLI 叶子，完成 API-v2、人类输出、usage/not-found/conflict 投影与实际 CLI smoke。
 - [ ] 同步产品状态、架构和设计文档，完成 focused、workspace、10,000-entry 和 round-trip 验收并记录证据。
@@ -132,7 +133,7 @@ depends_on: [PLAN-0003]
 ## Outcomes & Retrospective
 
 
-规划基线已完成并关联 Draft PR https://github.com/bootids/skilload/pull/4；首个规划提交已推送，本 metadata 更新提交将 URL、Progress 和 publication evidence 写回。2026-08-20 08:06Z 至 08:42Z 已处理两项 planning review：`SKL-CLI-010` 改为未完成的跨命令约束，实际 CLI smoke 改为显式仓库二进制与临时 XDG roots；修订已作为 `f2dd223d38666c015bc00f7c597372067da601d0` 推送，两个 inline threads 都已回复并 resolved。没有运行时代码、测试或产品实现状态变化。预期结果仍是八个 canonical Library 元数据叶子拥有真实的离线、原子、幂等行为，并由 portable export/import round trip 证明；search、Trust、add、refresh 和其他 Library 命令保持明确缺席。当前等待单独的人类执行授权。
+规划基线已完成并关联 Draft PR https://github.com/bootids/skilload/pull/4；首个规划提交已推送，本 metadata 更新提交将 URL、Progress 和 publication evidence 写回。2026-08-20 08:06Z 至 08:42Z 已处理两项 planning review：`SKL-CLI-010` 改为未完成的跨命令约束，实际 CLI smoke 改为显式仓库二进制与临时 XDG roots；修订已作为 `f2dd223d38666c015bc00f7c597372067da601d0` 推送，两个 inline threads 都已回复并 resolved。2026-08-20 08:53Z 已收到明确执行授权，preflight 确认 `PLAN-0003` 已在 `origin/main` 完成、PR #4 为 Draft 且本地/远端交付 HEAD 一致；本 Plan 已转入 `active`，此时尚未开始修改运行时代码。预期结果仍是八个 canonical Library 元数据叶子拥有真实的离线、原子、幂等行为，并由 portable export/import round trip 证明；search、Trust、add、refresh 和其他 Library 命令保持明确缺席。
 
 ## Review Conversation Log
 
@@ -346,6 +347,21 @@ ready/review transaction 的恢复必须精确遵守 `docs/PLANS.md`。若 `gh p
 
 首个规划提交 `20d47866f78a904099eeb6b47df6c6e9302c4415` 已推送到 `origin/codex/p3-library-metadata-mutations`。GitHub 创建 canonical Draft PR https://github.com/bootids/skilload/pull/4；本次第二个 planning metadata 提交写回该 URL 和 publication evidence，推送后完成 plan creation workflow。
 
+执行 preflight 证据（2026-08-20 08:53Z）：
+
+    mise install
+    mise all tools are installed
+
+    git status --short --branch
+    ## codex/p3-library-metadata-mutations...origin/codex/p3-library-metadata-mutations
+
+    gh pr view --json number,url,state,isDraft,headRefName,headRefOid,baseRefName
+    {"baseRefName":"main","headRefName":"codex/p3-library-metadata-mutations","headRefOid":"af9be6689d134828bcebf87d6f64ae9b1c226444","isDraft":true,"number":4,"state":"OPEN","url":"https://github.com/bootids/skilload/pull/4"}
+
+    git show origin/main:docs/exec-plans/completed/p2-library-portable-import-export.md
+    plan_id: PLAN-0003
+    status: completed
+
 ## Interfaces and Dependencies
 
 
@@ -446,3 +462,5 @@ changed 时数组恰有对应一个字段，unchanged 时为空。Library adapte
 2026-08-20 08:06Z：处理 PR #4 的完整 review conversation。根据 `SKL-CLI-010` 的 add/refresh acceptance，将该行为从本计划的完成 Product Baseline 改为 planned 约束；同时将实际 CLI smoke 改为显式 `./target/debug/skilload`、可复制临时 HOME/XDG roots、portable input 和隔离 re-import。两项均为 planning 文档修订，没有进入 `active` 或修改运行时代码。
 
 2026-08-20 08:42Z：planning 修订 `f2dd223d38666c015bc00f7c597372067da601d0` 已推送；已向两个 inline review sources 回复具体修订与验证，并确认两个 threads 均为 resolved。Review Conversation Log 与 GitHub 结果同步，Plan 与 PR 仍保持 `plan`/Draft 状态。
+
+2026-08-20 08:53Z：收到明确 `execute-exec-plan` 授权后，重新运行 `mise install`、GitHub/branch/PR preflight 和 `git fetch origin`；确认 PR #4 仍为 Draft、交付 branch 与 PR head 一致，且 `PLAN-0003` 已在 `origin/main` 以 `completed` 状态存在。随后将本 Plan 移入 `active/` 并更新 status；运行时代码尚未修改。
