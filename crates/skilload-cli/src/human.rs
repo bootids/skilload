@@ -135,7 +135,7 @@ pub fn render_error(error: &AppError) -> String {
         ),
         AppError::Conflict { conflicts } => {
             let mut output = format!(
-                "error [{}]: Library import has {} conflict(s)\n",
+                "error [{}]: Requested change has {} conflict(s)\n",
                 error.code(),
                 conflicts.len()
             );
@@ -429,6 +429,8 @@ mod tests {
             skilload_core::Conflict::internal_duplicate(Some("alias\n".to_owned()), source.clone()),
             skilload_core::Conflict::internal_duplicate(None, source),
         ]));
+
+        assert!(rendered.contains("error [conflict]: Requested change has 2 conflict(s)\n"));
 
         assert!(rendered.contains(
             "kind: \"internal_duplicate\"; name: \"alias\\n\"; source: \"github:owner/repository#skills/review@refs/heads/main\""

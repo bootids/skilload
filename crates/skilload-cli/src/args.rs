@@ -140,14 +140,6 @@ pub fn top_level_help() -> String {
     help
 }
 
-pub fn rejects_json_meta_invocation(arguments: &[OsString]) -> bool {
-    json_requested(arguments)
-        && arguments
-            .iter()
-            .skip(1)
-            .any(|argument| is_text_meta_invocation(argument.as_os_str()))
-}
-
 pub fn json_operation(arguments: &[OsString]) -> Option<&'static str> {
     if !json_requested(arguments) {
         return None;
@@ -195,24 +187,13 @@ pub fn json_operation(arguments: &[OsString]) -> Option<&'static str> {
     }
 }
 
-fn is_text_meta_invocation(argument: &OsStr) -> bool {
-    matches!(
-        argument,
-        value if value == OsStr::new("--help") || value == OsStr::new("--version")
-    ) || argument.to_str().is_some_and(|value| {
-        value.strip_prefix('-').is_some_and(|cluster| {
-            !cluster.is_empty() && cluster.chars().all(|flag| matches!(flag, 'h' | 'V'))
-        })
-    })
-}
-
 fn is_option_like(argument: &OsStr) -> bool {
     argument
         .to_str()
         .is_some_and(|value| value.starts_with('-') && value != "-")
 }
 
-fn json_requested(arguments: &[OsString]) -> bool {
+pub fn json_requested(arguments: &[OsString]) -> bool {
     arguments
         .iter()
         .skip(1)
@@ -275,31 +256,6 @@ mod tests {
                 .get_subcommands()
                 .any(|subcommand| subcommand.get_name() == "help")
         );
-    }
-
-    #[test]
-    fn json_is_rejected_only_for_text_meta_invocations() {
-        assert!(rejects_json_meta_invocation(&[
-            "skilload".into(),
-            "--json".into(),
-            "--help".into()
-        ]));
-        assert!(rejects_json_meta_invocation(&[
-            "skilload".into(),
-            "--json".into(),
-            "-hV".into()
-        ]));
-        assert!(rejects_json_meta_invocation(&[
-            "skilload".into(),
-            "--json".into(),
-            "-Vh".into()
-        ]));
-        assert!(!rejects_json_meta_invocation(&[
-            "skilload".into(),
-            "config".into(),
-            "list".into(),
-            "--json".into()
-        ]));
     }
 
     #[test]

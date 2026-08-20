@@ -23,7 +23,7 @@ pub enum AppError {
         allowed: u64,
         path: NativePath,
     },
-    #[error("library import conflicts with durable state")]
+    #[error("requested change conflicts with durable state")]
     Conflict { conflicts: Vec<Conflict> },
     #[error("{domain} target not found")]
     NotFound { domain: String, selector: String },

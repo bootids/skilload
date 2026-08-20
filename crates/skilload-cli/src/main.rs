@@ -56,14 +56,19 @@ fn main() -> ExitCode {
 }
 
 fn run(arguments: Vec<OsString>) -> Result<(), u8> {
-    if args::rejects_json_meta_invocation(&arguments) {
-        eprintln!("error: --json cannot be combined with --help or --version");
-        return Err(2);
-    }
     let json_operation = args::json_operation(&arguments);
     let cli = match Cli::try_parse_from(&arguments) {
         Ok(cli) => cli,
         Err(error) => {
+            if args::json_requested(&arguments)
+                && matches!(
+                    error.kind(),
+                    ErrorKind::DisplayHelp | ErrorKind::DisplayVersion
+                )
+            {
+                eprintln!("error: --json cannot be combined with --help or --version");
+                return Err(2);
+            }
             if let Some(operation) = json_operation {
                 return render_error(true, operation, &parser_usage_error());
             }

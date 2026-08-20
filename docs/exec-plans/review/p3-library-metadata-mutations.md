@@ -18,7 +18,7 @@ depends_on: [PLAN-0003]
 
 本交付直接依赖 `PLAN-0003`。该前置计划已经在默认分支的 `docs/exec-plans/completed/p2-library-portable-import-export.md` 中完成，提供 Rust workspace、API-v2 当前 producer、受限可移植 Library 导入/导出、Unicode 15.1.0 标签规范化，以及保存 Library 来源和元数据的 SQLite v1 schema。本计划不重复列出传递依赖 `PLAN-0001` 和 `PLAN-0002`。
 
-本交付只增加显式 Library 元数据变更：alias、category、tag 和 note 的 set/add/remove/clear。它不实现 GitHub 来源解析、Trust、`library add|remove|list|search|get|refresh`、FTS5 表、数据库迁移、cache、workspace、global、manager 或 doctor。未实现的命令继续是 usage error，不能注册占位叶子。本计划关联 Draft PR https://github.com/bootids/skilload/pull/4；2026-08-20 08:53Z 收到明确执行授权并通过 preflight 后已进入 `active`，现仅按本计划实现已界定的交付。
+本交付只增加显式 Library 元数据变更：alias、category、tag 和 note 的 set/add/remove/clear。它不实现 GitHub 来源解析、Trust、`library add|remove|list|search|get|refresh`、FTS5 表、数据库迁移、cache、workspace、global、manager 或 doctor。未实现的命令继续是 usage error，不能注册占位叶子。本计划当前关联 ready PR https://github.com/bootids/skilload/pull/4；2026-08-20 09:26Z 已完成 authorized implementation 并进入 `review`，review-state commit `b83609f7841b5d126c2f4aa2e9e5678b19b0a3a6` 已推送且与 PR head 一致；后续 remediation 仅在本计划已界定的 Product Baseline 内进行。
 
 ## Product Baseline
 
@@ -79,7 +79,8 @@ depends_on: [PLAN-0003]
 - [x] (2026-08-20 09:21Z) 已实现 SQLite 原子 mutation、幂等路径、完整 portable closure、10,000-entry 语义、portable ceiling、alias conflict、missing target 与两秒 process-lock 回归。
 - [x] (2026-08-20 09:21Z) 已注册八个真实 CLI 叶子，完成 API-v2、人类输出、usage/not-found/conflict projection 与使用 `./target/debug/skilload` 的实际 CLI smoke。
 - [x] (2026-08-20 09:24Z) 已同步产品状态、架构和设计文档；focused、workspace、10,000-entry、portable ceiling、round-trip、actual CLI smoke 与 release timing 均通过并记录证据。
-- [x] (2026-08-20 09:26Z) 已推送实现提交 `9077b84747edf586ec803d7dfc318a10cd1a617c`，运行 `gh pr ready` 并观察 PR #4 `isDraft: false`、`headRefOid` 等于该实现 SHA；本 Plan 已移入 `review`，review-state commit 待推送。
+- [x] (2026-08-20 09:26Z) 已推送实现提交 `9077b84747edf586ec803d7dfc318a10cd1a617c`，运行 `gh pr ready` 并观察 PR #4 `isDraft: false`、`headRefOid` 等于该实现 SHA；本 Plan 已移入 `review`，review-state commit `b83609f7841b5d126c2f4aa2e9e5678b19b0a3a6` 已推送，当前远端 PR head 与本地 HEAD 一致。
+- [x] (2026-08-20 10:30Z) 已完整重读 PR #4 的顶层评论、submitted review 和全部 resolved/unresolved inline threads；将三个新的有效 review 问题分类为本 Product Baseline 内的 fixed，先用 regression 重现，再完成实现、focused/full gates 和实际 debug-binary smoke；待推送 remediation commit 并回复、关闭三个线程。
 - [ ] 后续收到明确 merge 提示后完成 preflight、进入 `completed`、通过 required checks、合并、更新 `main` 并删除本地交付分支。
 
 ## Surprises & Discoveries
@@ -97,6 +98,11 @@ depends_on: [PLAN-0003]
   Evidence: `docs/product-specs/cli-contract.md` 要求 add/refresh tests 证明用户元数据不变；本 Plan 的 Delivery Metadata 明确排除这两个命令。
 - Observation: API-v2 要求所有 tag array 按 comparison key 确定性排序，因此 mutation response 不能直接返回 append-order entry。
   Evidence: `docs/product-specs/api-v2.md` 的 common array-ordering rule；`library_metadata_commands_are_explicit_atomic_and_portable` 观察 `Feature` 在 `Review` 之前，adapter 在 portable candidate 原地排序后按 source 取回 response entry。
+
+- Observation: `--json` 与 help/version 的旧冲突检查发生在 Clap 解析前，无法区分 option 与 `--` 后的合法 metadata positional。
+  Evidence: 修复前 `mise exec -- cargo run --locked -p skilload-cli --bin skilload -- --json library alias set <SOURCE> -- --help` 返回 exit 2；修复后实际 debug binary 把 `--help`、`--version`、`-hV` 和 `-Vh` 持久化为 metadata。
+- Observation: `TagValue` 的 public fields 允许 core caller 绕过 `tag_add`/`tag_remove` constructors。
+  Evidence: direct `TagAdd { display: " Review ", comparison_key: "review" }` 的 pre-fix regression 返回 success；现在返回 `validation_failed` 的 `library_tag_display` 且 entry 保持不变。
 
 ## Decision Log
 
@@ -136,12 +142,21 @@ depends_on: [PLAN-0003]
   Rationale: 这同时满足 API-v2 tag 排序与 export/import closure，避免复制最多 67,108,864-byte candidate；unchanged 在比较后直接返回，不排序、编码、写入或 sync。
   Date/Author: 2026-08-20 / Codex
 
+- Decision: 只在 `Cli::try_parse_from` 实际产生 `DisplayHelp` 或 `DisplayVersion` 时拒绝 `--json`，不再扫描原始参数中的 help-like 文本。
+  Rationale: Clap 已知道 `--` 和 `allow_hyphen_values` 的 positional 边界；复用其结果可保留 meta-command contract，同时实现 `SKL-LIB-008` 的完整 free-text 值空间。
+  Date/Author: 2026-08-20 / Codex
+- Decision: shared `Conflict` 采用 operation-neutral message，直接构造的 `TagValue` 必须匹配完整重新规范化结果。
+  Rationale: 前者不能把 metadata mutation 误报为 import，后者在任何 entry/SQLite mutation 前阻止不可重新加载的 display spelling；两者保持既有 error code、details 和 Product Baseline。
+  Date/Author: 2026-08-20 / Codex
+
 ## Outcomes & Retrospective
 
 
 规划基线已完成并关联 Draft PR https://github.com/bootids/skilload/pull/4；首个规划提交已推送，本 metadata 更新提交将 URL、Progress 和 publication evidence 写回。2026-08-20 08:06Z 至 08:42Z 已处理两项 planning review：`SKL-CLI-010` 改为未完成的跨命令约束，实际 CLI smoke 改为显式仓库二进制与临时 XDG roots；修订已作为 `f2dd223d38666c015bc00f7c597372067da601d0` 推送，两个 inline threads 都已回复并 resolved。2026-08-20 09:24Z 已完成运行时代码与文档同步：八个 canonical metadata leaves 经 domain/application/SQLite port 实现，changed/unchanged、`not_found`、conflict、Unicode、portable closure、process lock、10,000-entry 语义和 API-v2/human projection 均有 focused evidence；实际仓库 debug binary smoke 已完成 import → mutation → export → isolated re-import，release 10,000-entry changed/unchanged/equivalent-tag 操作均低于 10 秒。`cargo fmt --check`、Clippy `-D warnings`、locked all-features workspace tests（115 core、11 CLI unit、13 CLI integration）和 workspace build 均通过。范围内没有遗留功能缺口；search、Trust、add、refresh 和其他 Library 命令仍明确缺席。下一步是检查完整 diff、提交推送实现与 active Plan，然后执行 ready/review transaction。
 
 2026-08-20 09:26Z review transition：PR #4 已由 Draft 转为 ready，GitHub 返回 `isDraft: false` 与 implementation SHA `9077b84747edf586ec803d7dfc318a10cd1a617c` 一致。本 review Plan 记录该证据、Product Baseline 的 Revision 1 完成范围和全部验收结果；后续 review conversation 依照 `address-pr-threads` 处理，只有收到明确 merge 授权才可进入 `completed`。
+
+2026-08-20 10:30Z 已处理 ready PR 的三个新 review concerns：parser 在真实 `--` positional 后保留 help-like metadata 值；shared conflict message 不再伪称 import；direct `TagValue` 防御性验证同时比较 normalized display 与 comparison key。三项 regression 均先在修复前失败，随后 focused tests、完整 Rust gates 与实际 `./target/debug/skilload` smoke 全部通过；本次 remediation commit、GitHub replies 和 thread resolution 仍待完成。
 
 ## Review Conversation Log
 
@@ -177,6 +192,54 @@ Resolution: 提交 `f2dd223d38666c015bc00f7c597372067da601d0` 将 Concrete Steps
 Evidence: 推送提交 `f2dd223d38666c015bc00f7c597372067da601d0`；`git diff --check` 通过；Plan 校验确认只有该 Plan 变更、11 处 `./target/debug/skilload` 调用和合法 portable fixture；提取的 smoke shell 脚本已通过 `sh -n`。
 
 GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/4#discussion_r3819951369；thread resolved: true。
+
+### PRRT_kwDOT7YN2s6awdg0 — JSON 元数据值不得被误判为 meta option
+
+Source: 内联线程 `PRRT_kwDOT7YN2s6awdg0`，评论 `PRRC_kwDOT7YN2s7jtXAN`，https://github.com/bootids/skilload/pull/4#discussion_r3820318733（`chatgpt-codex-connector`；未过期；当前未解决）。
+
+Problem: `rejects_json_meta_invocation` 在 Clap 解析前扫描全部原始参数，因而将 `--` 后合法的 alias/category/tag/note 值 `--help`、`--version`、`-h`、`-V` 或短选项 cluster 错当作文本 help/version invocation，违反 `SKL-LIB-008` 的 free-text 值空间。
+
+Disposition: fixed.
+
+Status: open.
+
+Resolution: 已移除 `crates/skilload-cli/src/args.rs` 的 raw `rejects_json_meta_invocation`；`crates/skilload-cli/src/main.rs` 现在先让 Clap 解析，仅在实际返回 `DisplayHelp` 或 `DisplayVersion` 且请求 JSON 时拒绝。`crates/skilload-cli/tests/cli_contract.rs` 以 `--json library alias set <SOURCE> -- --help` 断言到达 `library.alias.set` 的 `not_found` application path。
+
+Evidence: 修复前真实 binary scenario 返回 exit 2；focused `json_meta_and_invalid_native_path_errors_are_safe` 修复后通过。`cargo fmt --check`、core library/SQLite tests、CLI all-feature tests、Clippy `-D warnings`、locked workspace tests/build 均通过；实际 debug-binary smoke 成功持久化并 export `--help`、`--version`、`-hV` 和 `-Vh`。待创建 remediation commit。
+
+GitHub outcome: 待回复；thread resolved: false。
+
+### PRRT_kwDOT7YN2s6awdg_ — alias collision 的 conflict 文案必须与操作无关
+
+Source: 内联线程 `PRRT_kwDOT7YN2s6awdg_`，评论 `PRRC_kwDOT7YN2s7jtXAb`，https://github.com/bootids/skilload/pull/4#discussion_r3820318747（`chatgpt-codex-connector`；未过期；当前未解决）。
+
+Problem: `library alias set` 的 alias collision 复用 `AppError::Conflict`，但该错误的 Display、API-v2 `error.message` 与 human renderer 均声称发生了 Library import，错误描述实际 operation。
+
+Disposition: fixed.
+
+Status: open.
+
+Resolution: `crates/skilload-core/src/error.rs` 将 shared `AppError::Conflict` Display/API-v2 message 改为 `requested change conflicts with durable state`；`crates/skilload-cli/src/human.rs` 改为 `Requested change has … conflict(s)`。`crates/skilload-cli/tests/cli_contract.rs` 和 `human.rs` unit regression 分别锁定 JSON 与 human wording，同时保留 `conflict` code 和既有 `ConflictDetails`。
+
+Evidence: 修复前 metadata CLI regression 观察到 `library import conflicts with durable state`，human unit regression 也失败；两项 focused regression 修复后通过。`cargo fmt --check`、core library/SQLite tests、CLI all-feature tests、Clippy `-D warnings`、locked workspace tests/build 均通过。待创建 remediation commit。
+
+GitHub outcome: 待回复；thread resolved: false。
+
+### PRRT_kwDOT7YN2s6awdhN — 直接构造的 TagValue 必须完整规范化
+
+Source: 内联线程 `PRRT_kwDOT7YN2s6awdhN`，评论 `PRRC_kwDOT7YN2s7jtXAr`，https://github.com/bootids/skilload/pull/4#discussion_r3820318763（`chatgpt-codex-connector`；未过期；当前未解决）。
+
+Problem: public `LibraryMetadataChange::TagAdd`/`TagRemove` variants 可直接接收 `TagValue`；现有防御性 `validate` 只比较 comparison key，允许未 trim/NFC 的 display 被写入，随后 `load_tags` 会将同一持久状态判为损坏。
+
+Disposition: fixed.
+
+Status: open.
+
+Resolution: `crates/skilload-core/src/domain/library.rs` 现在比较重新 `normalize_tag` 得到的 display 与 comparison key；任何直接构造的非 canonical `TagValue` 都在 `PortableLibraryEntry::apply_metadata_change` 进入 mutation 前以 `library_tag_display` 或 `library_tag_comparison_key` 拒绝。新增 regression 证明 malformed display 返回错误且 entry 未变。
+
+Evidence: 新 regression 在 pre-fix 状态失败、修复后通过；core library/SQLite tests、CLI all-feature tests、Clippy `-D warnings`、locked workspace tests/build 均通过。待创建 remediation commit。
+
+GitHub outcome: 待回复；thread resolved: false。
 
 ## Context and Orientation
 
@@ -517,4 +580,6 @@ changed 时数组恰有对应一个字段，unchanged 时为空。Library adapte
 
 2026-08-20 09:24Z：同步 `docs/product-specs/README.md`、`library.md`、`cli-contract.md`、`ARCHITECTURE.md` 与两份设计文档的实现状态；所有 required focused/full validation、实际 CLI smoke 和 release-scale timing 已通过。实现可进入最终 diff、commit/push 与 ready/review transaction。
 
-2026-08-20 09:26Z：实现提交 `9077b84747edf586ec803d7dfc318a10cd1a617c` 已推送后，PR #4 已成功转为 ready；已观察 GitHub ready state 与 implementation SHA 一致。按 transaction 将 Plan 移入 `review/` 并设置 `status: review`，记录 ready evidence，待本 review-state commit 推送后复核 GitHub 和 repository state。
+2026-08-20 09:26Z：实现提交 `9077b84747edf586ec803d7dfc318a10cd1a617c` 已推送后，PR #4 已成功转为 ready；已观察 GitHub ready state 与 implementation SHA 一致。按 transaction 将 Plan 移入 `review/` 并设置 `status: review`；review-state commit `b83609f7841b5d126c2f4aa2e9e5678b19b0a3a6` 已推送，后续 preflight 确认其为当前远端 PR head。
+
+2026-08-20 10:30Z：完整重新读取 ready PR conversation 后记录三个新的 unresolved inline review concerns。它们均属既定 baseline 的 ordinary remediation：将 JSON help/version guard 迁移到 Clap 的实际 parse result、使 shared conflict wording operation-neutral、并在 public direct `TagValue` 边界验证 normalized display。新增 regression 先失败后通过，required focused/full Rust gates 和 isolated actual debug-binary smoke 均成功；本提交记录 preliminary open ledger，待推送后填入 SHA 并同步 GitHub replies/thread resolution。

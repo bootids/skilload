@@ -518,6 +518,23 @@ fn json_meta_and_invalid_native_path_errors_are_safe() {
         assert!(String::from_utf8_lossy(&meta.stderr).contains("--json cannot be combined"));
     }
 
+    let positional_help = execute(
+        temporary.path(),
+        &[
+            "--json",
+            "library",
+            "alias",
+            "set",
+            "github:owner/repository#skills/review@refs/heads/main",
+            "--",
+            "--help",
+        ],
+    );
+    assert_eq!(positional_help.status.code(), Some(4));
+    let positional_help: Value = serde_json::from_slice(&positional_help.stdout).unwrap();
+    assert_eq!(positional_help["operation"], "library.alias.set");
+    assert_eq!(positional_help["error"]["code"], "not_found");
+
     let no_operation = execute(temporary.path(), &["--json"]);
     assert_eq!(no_operation.status.code(), Some(2));
     assert!(no_operation.stdout.is_empty());
@@ -813,6 +830,10 @@ fn library_metadata_commands_are_explicit_atomic_and_portable() {
     let conflict: Value = serde_json::from_slice(&conflict.stdout).unwrap();
     assert_eq!(conflict["operation"], "library.alias.set");
     assert_eq!(conflict["error"]["code"], "conflict");
+    assert_eq!(
+        conflict["error"]["message"],
+        "requested change conflicts with durable state"
+    );
     assert_eq!(
         conflict["error"]["details"]["conflicts"][0]["name"],
         "shared"

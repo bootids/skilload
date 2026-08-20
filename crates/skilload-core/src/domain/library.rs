@@ -154,6 +154,9 @@ impl LibraryMetadataChange {
             ),
             Self::TagAdd(value) | Self::TagRemove(value) => {
                 let normalized = normalize_tag(&value.display)?;
+                if normalized.display != value.display {
+                    return Err(AppError::validation("library_tag_display", None));
+                }
                 if normalized.comparison_key != value.comparison_key {
                     return Err(AppError::validation("library_tag_comparison_key", None));
                 }
@@ -820,5 +823,22 @@ mod tests {
             LibraryMutationOutcome::Changed
         );
         assert!(entry.tags.is_empty());
+    }
+
+    #[test]
+    fn metadata_changes_reject_directly_constructed_noncanonical_tag_values() {
+        let mut entry = entry("skills/review");
+        entry.tags.clear();
+        let original = entry.clone();
+        let change = LibraryMetadataChange::TagAdd(TagValue {
+            display: " Review ".to_owned(),
+            comparison_key: "review".to_owned(),
+        });
+
+        assert!(matches!(
+            entry.apply_metadata_change(&change),
+            Err(AppError::Validation { constraint, .. }) if constraint == "library_tag_display"
+        ));
+        assert_eq!(entry, original);
     }
 }
