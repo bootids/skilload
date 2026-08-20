@@ -125,7 +125,9 @@ Revision 2 的 `SKL-CLI-004`、`SKL-CLI-005` 与 `SKL-CLI-012` 以 API-v2 curren
 - [x] (2026-08-20T05:52Z) `PRRC_kwDOT7YN2s7jWsuw`、`PRRC_kwDOT7YN2s7jiT5X`、`PRRC_kwDOT7YN2s7jiT5i` 与 `PRRC_kwDOT7YN2s7jlNzR` 的人类决策已统一为 Revision-5 recovery contract；PR 已恢复为 Draft，Plan 正在回到 `active`，四个 thread 保持 open，直至实现、验证、回复和 closure 完成。
 
 - [x] (2026-08-20T06:05Z) 已完成 Revision 5 的保守 pre-COMMIT cleanup：`configuration.rs` 不再在错误路径删除新建 directory，`sqlite_library.rs` 不再按 first-observed FD 删除 SQLite sidecar，首次 import 仅清理 held staging/live link。已同步产品、持久化设计与 Rust/SQLite reference；focused core（107）、fmt、Clippy、locked workspace tests（11、12、107）、build 和隔离 CLI dry-run/import/export byte-identical round trip 均通过。
-- [ ] 将 Revision 5 实现、回归、受管文档和 preliminary Review Conversation Log 推送；重新获取 GitHub 会话，逐一回复并关闭四个 resolved product-decision thread，再提交最终 ledger reconciliation 并重新进入 ready/review。
+- [x] (2026-08-20T06:10Z) Revision 5 实现、回归、受管文档和 preliminary ledger 已由 `420897683b3bafb3012cb0bd6cd4955778385064` 推送；重新读取完整 GitHub 会话后，四个 product-decision thread 均有回复且 `isResolved: true`，无 unresolved thread。
+- [ ] 在工作树与 PR head 一致后完成 active-to-ready 事务：先使 PR ready、验证 implementation head，再移动 Plan 至 `review/` 并推送 review-state commit；随后重新读取完整会话确认无漂移。
+
 
 
 - [ ] 收到明确人类合并授权后，完成预检、评审会话记录、completed 事务、必要检查、合并、默认分支更新和本地交付分支清理。
@@ -416,6 +418,8 @@ P2 implementation 与完整验证已完成，PR #3 已于 2026-08-19 05:57Z 转�
 2026-08-20 的 reply reconciliation 显示 14 条 top-level trigger 均为 `@codex`，117 个 review body 均为空或通用 automation；90 个 inline source 全部在 Review Conversation Log 中有 heading。六个本轮 fixed source 都有 `4ef1ba205eb323c702bceda830445f44feb4da46`、验证、GitHub reply URL 和 `thread resolved: true`；`PRRC_kwDOT7YN2s7jlNzR` 已得到精确 decision question，连同三个既有 provenance/directory source 维持 pending/blocked/open。下一步提交、推送本最终 reconciliation，然后再次读取会话确认没有漂移。
 2026-08-20T05:52Z 的 merge preflight 发现四个 `pending`/`blocked` inline thread，故未进入 `completed`。人类选择 Revision-5 recovery contract 后，`gh pr ready --undo` 已将 PR #3 恢复为 open Draft，且 branch/head/依赖重新核对一致。本 Plan 正在从 `review` 回到 `active`；下一步是移除不可证明 provenance 的 cleanup、更新受管文档与回归，再重新完成 ready/review 事务和会话 reconciliation。
 2026-08-20T06:05Z 的 Revision-5 active rework 已完成本地实现与验收：directory helper 的 error path 保留 partial directory，首次 import 不再用 first-observed FD 清理 SQLite sidecar，`FirstImportDirectories` 只在 successful publication 后同步。新增/修订回归覆盖 directory、sidecar、lock 与 held staging cleanup 边界；`cargo fmt --all --check`、workspace Clippy `-D warnings`、locked all-features tests（11、12、107）、workspace build 以及隔离 API-v2 CLI dry-run/import/export byte-identical round trip 均通过。四个 decision source 已更新为 fixed/open，待 preliminary commit/push 后回复并关闭。
+2026-08-20T06:10Z 的 review remediation reconciliation 已完成：`420897683b3bafb3012cb0bd6cd4955778385064` 已推送，四个 Revision-5 source 均收到具体 commit/validation GitHub reply，随后线程均报告 `isResolved: true`。完整会话的 14 条 top-level trigger 与 117 个 review body 没有独立问题，90 个 Plan source 全覆盖；下一步提交此 final ledger reconciliation，并执行 ready/review transaction。
+
 
 
 
@@ -1550,13 +1554,13 @@ Problem: `create_restrictive_directory_with_open` 在 successful `create_dir` �
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: `crates/skilload-core/src/adapters/configuration.rs` 删除 error-path `PendingCreatedDirectory`/partial-prefix removal；首次 import 的 `FirstImportDirectories` 只在成功后 sync，不再在 pre-COMMIT error 删除 data/state directory。`created_directory_is_retained_when_opening_it_fails`、`restrictive_directory_retains_partial_created_prefix` 与 `first_import_precommit_failure_retains_unproven_state_and_data_directories` 覆盖保守 retention。
 
-Evidence: 2026-08-20T06:05Z 本地实现；focused core 107、fmt、Clippy、locked workspace tests（11、12、107）、build 和 CLI smoke 通过。待 preliminary commit/push 后写入 SHA。
+Evidence: `420897683b3bafb3012cb0bd6cd4955778385064`；focused core 107、fmt、Clippy、locked workspace tests（11、12、107）、build 和隔离 API-v2 CLI smoke 通过。
 
-GitHub outcome: 既有回复 https://github.com/bootids/skilload/pull/3#discussion_r3814847446 已提出并获得 recovery-contract 决策；thread resolved: false，待推送证据后回复并关闭。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_r3819052285；thread resolved: true。
 
 ### PRRC_kwDOT7YN2s7jcs0L — first-import 全路径 sidecar cleanup
 
@@ -1630,13 +1634,13 @@ Problem: `FirstImportStaging::link_to_absent_database` 在 `verify_entry` 后仍
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: 人类选择的 Revision-5 contract 使 `linkat` source race 的可观察结果明确为 typed drift error、未知 target 保留且不报告 success/state absence；`FirstImportStaging::link_to_absent_database` 的 held-entry revalidation 与 `first_import_reports_staging_identity_drift_after_publish_race` 保持该边界。未引入虚假的 held-FD primitive。
 
-Evidence: 2026-08-20T06:05Z 产品、持久化设计与 Rust/SQLite reference 已同步；focused core 107、fmt、Clippy、locked workspace tests（11、12、107）、build 和 CLI smoke 通过。待 preliminary commit/push 后写入 SHA。
+Evidence: `420897683b3bafb3012cb0bd6cd4955778385064`；产品、持久化设计与 Rust/SQLite reference 已同步，focused core 107、fmt、Clippy、locked workspace tests（11、12、107）、build 和 CLI smoke 通过。
 
-GitHub outcome: 既有回复 https://github.com/bootids/skilload/pull/3#discussion_r3817530466 已提出并获得 recovery-contract 决策；thread resolved: false，待推送证据后回复并关闭。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_r3819053216；thread resolved: true。
 
 ### PRRC_kwDOT7YN2s7jiT5c — absent export target visibility
 
@@ -1662,13 +1666,13 @@ Problem: `record_owned_sidecars` 以 first observed matching FD/identity 将 `-j
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: `FirstImportStaging` 不再保存或删除 first-observed matching FD sidecar；Drop 只清理 held staging/live-link entry。`first_import_staging_preserves_unproven_sqlite_sidecars` 证明 matching-name sidecar 保留，Revision 5 明确允许其残留。
 
-Evidence: 2026-08-20T06:05Z 本地实现；focused core 107、fmt、Clippy、locked workspace tests（11、12、107）、build 和 CLI smoke 通过。待 preliminary commit/push 后写入 SHA。
+Evidence: `420897683b3bafb3012cb0bd6cd4955778385064`；focused core 107、fmt、Clippy、locked workspace tests（11、12、107）、build 和 CLI smoke 通过。
 
-GitHub outcome: 既有回复 https://github.com/bootids/skilload/pull/3#discussion_r3817531868 已提出并获得 recovery-contract 决策；thread resolved: false，待推送证据后回复并关闭。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_r3819054231；thread resolved: true。
 
 ### PRRC_kwDOT7YN2s7jiT5n — export I/O error category
 
@@ -1774,13 +1778,13 @@ Problem: `docs/product-specs/library.md` 的 `SKL-LIB-010` Revision 4 acceptance
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: `SKL-LIB-010` 已升至 Revision 5：pre-COMMIT failure 返回 error，但不再承诺 data/state absence；durable `database.lock`、directory、sidecar 或 other unknown residual 保留，只有 held staging/live-link entry 可清理。`first_import_precommit_failure_retains_unproven_state_and_data_directories` 保留同一 lock inode 并验证后续 import 可继续。
 
-Evidence: 2026-08-20T06:05Z 产品、持久化设计与 Rust/SQLite reference 已同步；focused core 107、fmt、Clippy、locked workspace tests（11、12、107）、build 和 CLI smoke 通过。待 preliminary commit/push 后写入 SHA。
+Evidence: `420897683b3bafb3012cb0bd6cd4955778385064`；产品、持久化设计与 Rust/SQLite reference 已同步，focused core 107、fmt、Clippy、locked workspace tests（11、12、107）、build 和 CLI smoke 通过。
 
-GitHub outcome: 既有回复 https://github.com/bootids/skilload/pull/3#discussion_r3818397649 已提出并获得 recovery-contract 决策；thread resolved: false，待推送证据后回复并关闭。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/3#discussion_r3819055294；thread resolved: true。
 
 ### PRRC_kwDOT7YN2s7jlNzT — exchange 后 publication entry replacement
 
@@ -2160,3 +2164,5 @@ Library 是本机可搜索的来源元数据集合；在本交付中它只保存
 计划修订说明（2026-08-20T05:52Z）：merge preflight 完整读取 14 条 top-level、117 个 review body 与 90 个 inline thread，发现四项 pending/blocked 议题，因而没有进入 `completed`。人类选择将 `SKL-LIB-010` 修订为 Revision 5 的保守 recovery contract，明确不授权跨 macOS/Linux native/FFI primitive；PR #3 已恢复 Draft，Plan 移回 `active`。本修订将四项 ledger source 改为 open/pending，并把下一步限定为移除不可证明 provenance 的 cleanup、同步规范/设计/reference/测试、重新 ready/review 及会话 reconciliation。
 
 计划修订说明（2026-08-20T06:05Z）：人类选择的 `SKL-LIB-010` Revision 5 recovery contract 已在代码、产品规格、持久化设计与 Rust/SQLite reference 落地。`configuration.rs` 保留错误路径的 partial directory，`sqlite_library.rs` 不再以 first-observed FD 清理 sidecar，并仅清理 held staging/live-link entry；四个原 decision thread 均改为 fixed/open，待 preliminary commit/push、GitHub reply/closure 和最终 conversation reconciliation。完整 fmt、Clippy、locked all-features tests、build 与隔离 CLI round trip 已通过。
+
+计划修订说明（2026-08-20T06:10Z）：`420897683b3bafb3012cb0bd6cd4955778385064` 的 Revision-5 recovery implementation 已推送。四个原 pending product-decision source 现有具体回复 URL、commit 和验证 evidence，全部 thread resolved；完整会话没有新增问题。下一步提交此 final ledger reconciliation，完成 Draft PR 的 ready/review 原子事务并重新读取会话。
