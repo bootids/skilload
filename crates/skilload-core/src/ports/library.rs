@@ -1,5 +1,8 @@
 use crate::domain::configuration::NativePath;
-use crate::domain::library::{LibraryImportOperation, PortableLibraryDocument};
+use crate::domain::library::{
+    LibraryImportOperation, LibraryMetadataMutation, LibraryMetadataStoreResult,
+    PortableLibraryDocument,
+};
 use crate::error::AppError;
 
 pub trait LibraryTransferStore: Send + Sync {
@@ -18,4 +21,8 @@ pub trait LibraryRepository: Send + Sync {
         document: &PortableLibraryDocument,
         dry_run: bool,
     ) -> Result<LibraryImportOperation, AppError>;
+    fn mutate_metadata(
+        &self,
+        mutation: &LibraryMetadataMutation,
+    ) -> Result<LibraryMetadataStoreResult, AppError>;
 }

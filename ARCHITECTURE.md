@@ -1,12 +1,12 @@
 # skilload Architecture
 
-Status: 0.1 CLI MVP 架构处于部分实现状态。`PLAN-0002` 建立 Rust workspace 与配置垂直切片；`PLAN-0003` 增加可移植 Library 导入/导出、受限 SQLite Library 元数据与本地 Unicode 15.1.0 规范化。来源解析、缓存内容、部署、manager 资产及其他产品域仍为 planned。
+Status: 0.1 CLI MVP 架构处于部分实现状态。`PLAN-0002` 建立 Rust workspace 与配置垂直切片；`PLAN-0003` 增加可移植 Library 导入/导出、受限 SQLite Library 元数据与本地 Unicode 15.1.0 规范化；`PLAN-0004` 在不改变 schema 或 ownership 的前提下增加八个显式、离线的 Library 元数据 mutation。来源解析、缓存内容、部署、manager 资产及其他产品域仍为 planned。
 
 Product behavior is authoritative in [`docs/product-specs/`](docs/product-specs/README.md). This file defines boundaries, dependency direction, state ownership, and invariants. Technical mechanisms and rationale live in [`docs/design-docs/`](docs/design-docs/).
 
 ## System Shape
 
-目标 0.1 系统是一个本地 Rust 二进制：它解析并验证 GitHub 托管的 Skill 目录，存储 durable metadata 与 desired state，在可移除 cache 中维护不可变外部内容，并将受管链接收敛到原生 Claude Code/Codex Skill roots；它绝不包装或启动 Agent。当前二进制实现配置切片和仅限元数据、离线的可移植 Library 传输，不解析网络来源、不创建 Trust、不缓存、部署或执行外部内容。
+目标 0.1 系统是一个本地 Rust 二进制：它解析并验证 GitHub 托管的 Skill 目录，存储 durable metadata 与 desired state，在可移除 cache 中维护不可变外部内容，并将受管链接收敛到原生 Claude Code/Codex Skill roots；它绝不包装或启动 Agent。当前二进制实现配置切片、可移植 Library 导入/导出与显式 alias/category/tag/note 变更；它不解析网络来源、不创建 Trust、不缓存、部署或执行外部内容。
 
 The current Cargo workspace is:
 
@@ -24,7 +24,7 @@ The current Cargo workspace is:
       skilload-cli/
         src/
 
-已实现模块包括 `skilload-core` 的 configuration 与 Library domain/application/port/adapter 文件、`error.rs`，以及 `skilload-cli` 的参数、JSON、人类渲染和进程入口文件。P2 Library adapter 只拥有 `data/skilload.db` 中的可移植来源元数据、tags 与 semantic revision；它不拥有 Skill bytes、Trust、workspace、global 或 manager state。未实现的 ownership modules 与 manager assets 必须只在具有真实应用行为时加入。
+已实现模块包括 `skilload-core` 的 configuration 与 Library domain/application/port/adapter 文件、`error.rs`，以及 `skilload-cli` 的参数、JSON、人类渲染和进程入口文件。P2/P3 Library adapter 只拥有 `data/skilload.db` 中的可移植来源元数据、alias/category/note、tags 与 semantic revision；它不拥有 Skill bytes、Trust、workspace、global 或 manager state。未实现的 ownership modules 与 manager assets 必须只在具有真实应用行为时加入。
 
 ## Dependency Direction
 

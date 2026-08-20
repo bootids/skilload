@@ -4,7 +4,7 @@ These files are the authoritative source for skilload's user-visible behavior. `
 
 Every normative behavior has a stable ID and revision. Later ExecPlans must name the exact IDs and revisions they implement or verify. A wording-only clarification keeps the revision; a semantic change increments it or introduces a replacement ID.
 
-`PLAN-0002` 在开发版 `0.0.1` 配置切片中实现了 Revision 1 的 `SKL-CLI-002`、`SKL-CLI-003`、`SKL-CLI-011` 与 `SKL-OPS-006`。`PLAN-0003` 实现可移植 Library 传输切片中 Revision 4 的 `SKL-LIB-009` 与 Revision 5 的 `SKL-LIB-010`，并将当前 JSON producer 切换到 API-v2。除非所属规格另有说明，其他基线行为仍为 0.1 CLI MVP 的 **planned** 状态。
+`PLAN-0002` 在开发版 `0.0.1` 配置切片中实现了 Revision 1 的 `SKL-CLI-002`、`SKL-CLI-003`、`SKL-CLI-011` 与 `SKL-OPS-006`。`PLAN-0003` 实现可移植 Library 传输切片中 Revision 4 的 `SKL-LIB-009` 与 Revision 5 的 `SKL-LIB-010`，并将当前 JSON producer 切换到 API-v2。`PLAN-0004` 实现 Revision 1 的 `SKL-LIB-001` 与 `SKL-LIB-008`：canonical-source Library entry 的显式 alias、category、tag 和 note 变更。除非所属规格另有说明，其他基线行为仍为 0.1 CLI MVP 的 **planned** 状态。
 
 ## Specification Index
 

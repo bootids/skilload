@@ -1,8 +1,9 @@
 use crate::human::display_path;
 use serde::Serialize;
 use skilload_core::{
-    AppError, ConfigEntries, ConfigEntry, ConfigValue, LibraryImportResult, NativePath,
-    PortableLibraryDocument, SourceIdentity,
+    AppError, ConfigEntries, ConfigEntry, ConfigValue, LibraryChangedField, LibraryEntry,
+    LibraryImportResult, LibraryMutationOperation, NativePath, PortableLibraryDocument,
+    SourceIdentity,
 };
 use std::os::unix::ffi::OsStrExt;
 
@@ -44,6 +45,7 @@ enum ErrorDetails {
     Validation(ValidationDetails),
     Limit(LimitDetails),
     Conflict(ConflictDetails),
+    Lookup(LookupDetails),
     Environment(EnvironmentDetails),
     Busy(BusyDetails),
     Schema(SchemaDetails),
@@ -90,6 +92,13 @@ struct ConflictProjection {
     agent: Option<()>,
     path: Option<PathValue>,
     source: Option<SourceIdentity>,
+}
+
+#[derive(Serialize)]
+struct LookupDetails {
+    domain: String,
+    selector: Option<String>,
+    path: Option<()>,
 }
 
 #[derive(Serialize)]
@@ -167,6 +176,23 @@ enum ConfigValueProjection {
     Path(PathValue),
 }
 
+#[derive(Serialize)]
+struct LibraryMutationData {
+    source: SourceIdentity,
+    entry: LibraryEntry,
+    changed_fields: Vec<LibraryChangedField>,
+    network: NetworkUse,
+    source_limits: Option<()>,
+    fetch_budget: Option<()>,
+    cache_quota: Option<()>,
+}
+
+#[derive(Serialize)]
+struct NetworkUse {
+    used: bool,
+    attempts: Vec<()>,
+}
+
 pub fn entry(
     operation: &'static str,
     outcome: &'static str,
@@ -225,6 +251,33 @@ pub fn library_export(
         result: SuccessResult {
             outcome: "observed",
             data: document,
+        },
+    })
+}
+
+pub fn library_metadata_mutation(
+    operation: &'static str,
+    outcome: &'static str,
+    mutation: LibraryMutationOperation,
+) -> serde_json::Result<Vec<u8>> {
+    serde_json::to_vec(&SuccessEnvelope {
+        api_version: API_VERSION,
+        operation,
+        ok: true,
+        result: SuccessResult {
+            outcome,
+            data: LibraryMutationData {
+                source: mutation.source,
+                entry: mutation.entry,
+                changed_fields: mutation.changed_fields,
+                network: NetworkUse {
+                    used: false,
+                    attempts: Vec::new(),
+                },
+                source_limits: None,
+                fetch_budget: None,
+                cache_quota: None,
+            },
         },
     })
 }
@@ -313,6 +366,11 @@ fn error_details(error: &AppError) -> ErrorDetails {
                     source: conflict.source.clone(),
                 })
                 .collect(),
+        }),
+        AppError::NotFound { domain, selector } => ErrorDetails::Lookup(LookupDetails {
+            domain: domain.clone(),
+            selector: Some(selector.clone()),
+            path: None,
         }),
         AppError::InvalidEnvironment {
             variable,

@@ -59,6 +59,72 @@ pub enum LibraryCommand {
         #[arg(long)]
         output: PathBuf,
     },
+    Alias {
+        #[command(subcommand)]
+        command: LibraryAliasCommand,
+    },
+    Category {
+        #[command(subcommand)]
+        command: LibraryCategoryCommand,
+    },
+    Tag {
+        #[command(subcommand)]
+        command: LibraryTagCommand,
+    },
+    Note {
+        #[command(subcommand)]
+        command: LibraryNoteCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum LibraryAliasCommand {
+    Set {
+        source: String,
+        #[arg(allow_hyphen_values = true)]
+        alias: String,
+    },
+    Clear {
+        source: String,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum LibraryCategoryCommand {
+    Set {
+        source: String,
+        #[arg(allow_hyphen_values = true)]
+        category: String,
+    },
+    Clear {
+        source: String,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum LibraryTagCommand {
+    Add {
+        source: String,
+        #[arg(allow_hyphen_values = true)]
+        tag: String,
+    },
+    Remove {
+        source: String,
+        #[arg(allow_hyphen_values = true)]
+        tag: String,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum LibraryNoteCommand {
+    Set {
+        source: String,
+        #[arg(allow_hyphen_values = true)]
+        note: String,
+    },
+    Clear {
+        source: String,
+    },
 }
 
 pub fn top_level_help() -> String {
@@ -82,7 +148,7 @@ pub fn rejects_json_meta_invocation(arguments: &[OsString]) -> bool {
             .any(|argument| is_text_meta_invocation(argument.as_os_str()))
 }
 
-pub fn json_configuration_operation(arguments: &[OsString]) -> Option<&'static str> {
+pub fn json_operation(arguments: &[OsString]) -> Option<&'static str> {
     if !json_requested(arguments) {
         return None;
     }
@@ -103,6 +169,26 @@ pub fn json_configuration_operation(arguments: &[OsString]) -> Option<&'static s
         value if value == OsStr::new("library") => match positionals.next()?.as_os_str() {
             value if value == OsStr::new("import") => Some("library.import"),
             value if value == OsStr::new("export") => Some("library.export"),
+            value if value == OsStr::new("alias") => match positionals.next()?.as_os_str() {
+                value if value == OsStr::new("set") => Some("library.alias.set"),
+                value if value == OsStr::new("clear") => Some("library.alias.clear"),
+                _ => None,
+            },
+            value if value == OsStr::new("category") => match positionals.next()?.as_os_str() {
+                value if value == OsStr::new("set") => Some("library.category.set"),
+                value if value == OsStr::new("clear") => Some("library.category.clear"),
+                _ => None,
+            },
+            value if value == OsStr::new("tag") => match positionals.next()?.as_os_str() {
+                value if value == OsStr::new("add") => Some("library.tag.add"),
+                value if value == OsStr::new("remove") => Some("library.tag.remove"),
+                _ => None,
+            },
+            value if value == OsStr::new("note") => match positionals.next()?.as_os_str() {
+                value if value == OsStr::new("set") => Some("library.note.set"),
+                value if value == OsStr::new("clear") => Some("library.note.clear"),
+                _ => None,
+            },
             _ => None,
         },
         _ => None,
@@ -164,7 +250,26 @@ mod tests {
             .get_subcommands()
             .map(|subcommand| subcommand.get_name())
             .collect();
-        assert_eq!(library_names, ["import", "export"]);
+        assert_eq!(
+            library_names,
+            ["import", "export", "alias", "category", "tag", "note"]
+        );
+        for (group, leaves) in [
+            ("alias", &["set", "clear"][..]),
+            ("category", &["set", "clear"][..]),
+            ("tag", &["add", "remove"][..]),
+            ("note", &["set", "clear"][..]),
+        ] {
+            let command = library
+                .get_subcommands()
+                .find(|command| command.get_name() == group)
+                .unwrap();
+            let names: Vec<_> = command
+                .get_subcommands()
+                .map(|command| command.get_name())
+                .collect();
+            assert_eq!(names, leaves);
+        }
         assert!(
             !library
                 .get_subcommands()
@@ -200,7 +305,7 @@ mod tests {
     #[test]
     fn json_parser_failures_preserve_identifiable_implemented_operations() {
         assert_eq!(
-            json_configuration_operation(&[
+            json_operation(&[
                 "skilload".into(),
                 "--json".into(),
                 "config".into(),
@@ -210,7 +315,7 @@ mod tests {
             Some("config.set")
         );
         assert_eq!(
-            json_configuration_operation(&[
+            json_operation(&[
                 "skilload".into(),
                 "config".into(),
                 "--no-color".into(),
@@ -220,7 +325,7 @@ mod tests {
             Some("config.list")
         );
         assert_eq!(
-            json_configuration_operation(&[
+            json_operation(&[
                 "skilload".into(),
                 "--json".into(),
                 "--bogus".into(),
@@ -230,7 +335,7 @@ mod tests {
             Some("config.list")
         );
         assert_eq!(
-            json_configuration_operation(&[
+            json_operation(&[
                 "skilload".into(),
                 "--json".into(),
                 "config".into(),
@@ -240,7 +345,7 @@ mod tests {
             Some("config.list")
         );
         assert_eq!(
-            json_configuration_operation(&[
+            json_operation(&[
                 "skilload".into(),
                 "--json".into(),
                 "config".into(),
@@ -249,7 +354,7 @@ mod tests {
             None
         );
         assert_eq!(
-            json_configuration_operation(&[
+            json_operation(&[
                 "skilload".into(),
                 "--json".into(),
                 "library".into(),
@@ -258,7 +363,7 @@ mod tests {
             Some("library.import")
         );
         assert_eq!(
-            json_configuration_operation(&[
+            json_operation(&[
                 "skilload".into(),
                 "library".into(),
                 "export".into(),
@@ -266,6 +371,26 @@ mod tests {
                 "--output".into(),
             ]),
             Some("library.export")
+        );
+        assert_eq!(
+            json_operation(&[
+                "skilload".into(),
+                "--json".into(),
+                "library".into(),
+                "tag".into(),
+                "remove".into(),
+            ]),
+            Some("library.tag.remove")
+        );
+        assert_eq!(
+            json_operation(&[
+                "skilload".into(),
+                "--json".into(),
+                "library".into(),
+                "note".into(),
+                "unknown".into(),
+            ]),
+            None
         );
     }
 }

@@ -6,7 +6,8 @@ use crate::adapters::xdg::{SystemEnvironment, XdgRootResolver};
 use crate::domain::configuration::NativePath;
 use crate::domain::library::{
     LIBRARY_FORMAT_VERSION, LibraryImportOperation, LibraryImportOutcome, LibraryImportResult,
-    PortableLibraryDocument, PortableLibraryEntry,
+    LibraryMetadataChange, LibraryMetadataMutation, LibraryMetadataStoreResult,
+    LibraryMutationOutcome, PortableLibraryDocument, PortableLibraryEntry,
 };
 use crate::domain::source::{RefKind, ResolvedSkill, SourceIdentity, parse_decimal_u64};
 use crate::domain::unicode_15_1::normalize_tag;
@@ -189,18 +190,7 @@ impl SqliteLibraryRepository {
             .transaction()
             .map_err(|error| database_error(path, error))?;
         validate_database(&transaction, path)?;
-        let entries = load_entries(&transaction, path)?;
-        let validated = PortableLibraryDocument {
-            format_version: LIBRARY_FORMAT_VERSION,
-            entries: entries.clone(),
-        }
-        .validate()
-        .map_err(|_| AppError::database_corrupt(NativePath::new(path.to_path_buf())))?;
-        if validated.entries != entries {
-            return Err(AppError::database_corrupt(NativePath::new(
-                path.to_path_buf(),
-            )));
-        }
+        let entries = load_validated_entries(&transaction, path)?;
         Self::revalidate_database_identity(path, identity)?;
         transaction
             .commit()
@@ -273,18 +263,25 @@ impl SqliteLibraryRepository {
         })
     }
 
-    fn import_existing(
+    fn with_existing_database<T>(
         &self,
         roots: &ResolvedRoots,
-        document: &PortableLibraryDocument,
-    ) -> Result<LibraryImportOperation, AppError> {
+        operation: impl FnOnce(
+            &Path,
+            &ValidatedDataDirectory,
+            &std::ffi::OsStr,
+            &mut Connection,
+            (u64, u64),
+        ) -> Result<T, AppError>,
+    ) -> Result<T, AppError> {
+        let lock_path = roots.state.effective.join("locks/database.lock");
         let lock = acquire_restrictive_lock(roots, "database.lock", "database")?;
-        let result = self.import_existing_with_lock(roots, document);
+        let result = self.with_existing_database_locked(roots, operation);
         let unlock = lock.unlock();
         if let Err(error) = unlock {
             return Err(environment_io(
                 "XDG_STATE_HOME",
-                &roots.state.effective.join("locks/database.lock"),
+                &lock_path,
                 "unlock database.lock",
                 error,
             ));
@@ -292,11 +289,17 @@ impl SqliteLibraryRepository {
         result
     }
 
-    fn import_existing_with_lock(
+    fn with_existing_database_locked<T>(
         &self,
         roots: &ResolvedRoots,
-        document: &PortableLibraryDocument,
-    ) -> Result<LibraryImportOperation, AppError> {
+        operation: impl FnOnce(
+            &Path,
+            &ValidatedDataDirectory,
+            &std::ffi::OsStr,
+            &mut Connection,
+            (u64, u64),
+        ) -> Result<T, AppError>,
+    ) -> Result<T, AppError> {
         let roots = self.root_resolver.revalidate(roots)?;
         let database = Self::database_path(&roots);
         if !Self::database_exists(&database)? {
@@ -312,35 +315,181 @@ impl SqliteLibraryRepository {
             self.open_existing_database(&database, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
         data_directory.revalidate()?;
         Self::revalidate_database_identity(&database, identity)?;
-        validate_database(&connection, &database)?;
-        let existing = load_entries(&connection, &database)?;
+        operation(
+            &database,
+            &data_directory,
+            database_name.as_os_str(),
+            &mut connection,
+            identity,
+        )
+    }
+
+    fn import_existing(
+        &self,
+        roots: &ResolvedRoots,
+        document: &PortableLibraryDocument,
+    ) -> Result<LibraryImportOperation, AppError> {
+        self.with_existing_database(
+            roots,
+            |database, data_directory, database_name, connection, identity| {
+                self.import_existing_operation(
+                    document,
+                    database,
+                    data_directory,
+                    database_name,
+                    connection,
+                    identity,
+                )
+            },
+        )
+    }
+
+    fn import_existing_with_lock(
+        &self,
+        roots: &ResolvedRoots,
+        document: &PortableLibraryDocument,
+    ) -> Result<LibraryImportOperation, AppError> {
+        self.with_existing_database_locked(
+            roots,
+            |database, data_directory, database_name, connection, identity| {
+                self.import_existing_operation(
+                    document,
+                    database,
+                    data_directory,
+                    database_name,
+                    connection,
+                    identity,
+                )
+            },
+        )
+    }
+
+    fn import_existing_operation(
+        &self,
+        document: &PortableLibraryDocument,
+        database: &Path,
+        data_directory: &ValidatedDataDirectory,
+        database_name: &std::ffi::OsStr,
+        connection: &mut Connection,
+        identity: (u64, u64),
+    ) -> Result<LibraryImportOperation, AppError> {
+        let transaction = connection
+            .transaction()
+            .map_err(|error| database_error(database, error))?;
+        validate_database(&transaction, database)?;
+        let existing = load_validated_entries(&transaction, database)?;
         let plan = Self::plan(document, &existing, false)?;
         if plan.additions.is_empty() {
             data_directory.revalidate()?;
-            Self::revalidate_database_identity(&database, identity)?;
+            Self::revalidate_database_identity(database, identity)?;
+            transaction
+                .commit()
+                .map_err(|error| database_error(database, error))?;
+            Self::revalidate_database_identity(database, identity)?;
             return Ok(LibraryImportOperation {
                 outcome: LibraryImportOutcome::Unchanged,
                 data: plan.result,
             });
         }
         data_directory.revalidate()?;
-        Self::revalidate_database_identity(&database, identity)?;
-        let transaction = connection
-            .transaction()
-            .map_err(|error| database_error(&database, error))?;
-        apply_additions(&transaction, &plan.additions, &database)?;
+        Self::revalidate_database_identity(database, identity)?;
+        apply_additions(&transaction, &plan.additions, database)?;
         transaction
             .commit()
-            .map_err(|error| database_error(&database, error))?;
+            .map_err(|error| database_error(database, error))?;
         self.hooks.after_commit_before_sync()?;
-        sync_existing_database(&database, &data_directory, &database_name, identity, || {
+        sync_existing_database(database, data_directory, database_name, identity, || {
             self.hooks
-                .after_existing_database_sync_before_parent_sync(&database)
+                .after_existing_database_sync_before_parent_sync(database)
         })?;
         Ok(LibraryImportOperation {
             outcome: LibraryImportOutcome::Changed,
             data: plan.result,
         })
+    }
+
+    fn mutate_existing(
+        &self,
+        roots: &ResolvedRoots,
+        mutation: &LibraryMetadataMutation,
+    ) -> Result<LibraryMetadataStoreResult, AppError> {
+        self.with_existing_database(
+            roots,
+            |database, data_directory, database_name, connection, identity| {
+                let transaction = connection
+                    .transaction()
+                    .map_err(|error| database_error(database, error))?;
+                validate_database(&transaction, database)?;
+                let mut entries = load_validated_entries(&transaction, database)?;
+                let target_index = entries
+                    .iter()
+                    .position(|entry| entry.skill.source.canonical == mutation.selector)
+                    .ok_or_else(|| AppError::not_found("library", mutation.selector.clone()))?;
+                let source = entries[target_index].skill.source.clone();
+
+                if let LibraryMetadataChange::AliasSet(alias) = &mutation.change
+                    && entries[target_index].alias.as_ref() != Some(alias)
+                    && entries.iter().enumerate().any(|(index, entry)| {
+                        index != target_index && entry.alias.as_ref() == Some(alias)
+                    })
+                {
+                    return Err(AppError::conflict(vec![Conflict::internal_duplicate(
+                        Some(alias.clone()),
+                        source,
+                    )]));
+                }
+
+                let outcome = entries[target_index].apply_metadata_change(&mutation.change)?;
+                let changed_fields = if outcome == LibraryMutationOutcome::Changed {
+                    vec![mutation.change.changed_field()]
+                } else {
+                    Vec::new()
+                };
+                if outcome == LibraryMutationOutcome::Unchanged {
+                    let entry = entries[target_index].clone();
+                    data_directory.revalidate()?;
+                    Self::revalidate_database_identity(database, identity)?;
+                    transaction
+                        .commit()
+                        .map_err(|error| database_error(database, error))?;
+                    Self::revalidate_database_identity(database, identity)?;
+                    return Ok(LibraryMetadataStoreResult {
+                        outcome,
+                        entry,
+                        changed_fields,
+                    });
+                }
+
+                let mut candidate = PortableLibraryDocument {
+                    format_version: LIBRARY_FORMAT_VERSION,
+                    entries,
+                };
+                candidate.validate_transfer_size()?;
+                let entry = candidate
+                    .entries
+                    .iter()
+                    .find(|entry| entry.skill.source == source)
+                    .cloned()
+                    .ok_or_else(|| AppError::Internal {
+                        incident_id: "library_metadata_target_missing_after_validation".to_owned(),
+                    })?;
+                apply_metadata_change(&transaction, mutation, &source, database)?;
+                advance_state_revision(&transaction, database)?;
+                transaction
+                    .commit()
+                    .map_err(|error| database_error(database, error))?;
+                self.hooks.after_commit_before_sync()?;
+                sync_existing_database(database, data_directory, database_name, identity, || {
+                    self.hooks
+                        .after_existing_database_sync_before_parent_sync(database)
+                })?;
+                Ok(LibraryMetadataStoreResult {
+                    outcome,
+                    entry,
+                    changed_fields,
+                })
+            },
+        )
     }
 
     fn import_first(
@@ -550,6 +699,19 @@ impl LibraryRepository for SqliteLibraryRepository {
             let plan = Self::plan(&document, &[], false)?;
             self.import_first(&roots, &document, plan)
         }
+    }
+
+    fn mutate_metadata(
+        &self,
+        mutation: &LibraryMetadataMutation,
+    ) -> Result<LibraryMetadataStoreResult, AppError> {
+        mutation.change.validate()?;
+        let roots = self.resolve_roots()?;
+        let database = Self::database_path(&roots);
+        if !Self::database_exists(&database)? {
+            return Err(AppError::not_found("library", mutation.selector.clone()));
+        }
+        self.mutate_existing(&roots, mutation)
     }
 }
 
@@ -1115,6 +1277,19 @@ fn load_entries(
     Ok(loaded)
 }
 
+fn load_validated_entries(
+    connection: &Connection,
+    path: &Path,
+) -> Result<Vec<PortableLibraryEntry>, AppError> {
+    PortableLibraryDocument {
+        format_version: LIBRARY_FORMAT_VERSION,
+        entries: load_entries(connection, path)?,
+    }
+    .validate()
+    .map(|document| document.entries)
+    .map_err(|_| AppError::database_corrupt(NativePath::new(path.to_path_buf())))
+}
+
 fn load_tags(
     connection: &Connection,
     path: &Path,
@@ -1151,21 +1326,7 @@ fn apply_additions(
     additions: &[PortableLibraryEntry],
     path: &Path,
 ) -> Result<(), AppError> {
-    let changed_revision = connection
-        .execute(
-            "UPDATE state_revision
-             SET revision = revision + 1
-             WHERE typeof(revision) = 'integer' AND revision >= 0 AND revision < ?1",
-            params![i64::MAX],
-        )
-        .map_err(|error| database_error(path, error))?;
-    if changed_revision != 1 {
-        return Err(AppError::invalid_state(
-            "library_database",
-            "state_revision_not_incrementable",
-            ["a nonnegative state revision below i64::MAX"],
-        ));
-    }
+    advance_state_revision(connection, path)?;
     for entry in additions {
         let source = &entry.skill.source;
         connection
@@ -1204,6 +1365,76 @@ fn apply_additions(
                 )
                 .map_err(|error| database_error(path, error))?;
         }
+    }
+    Ok(())
+}
+
+fn apply_metadata_change(
+    connection: &Connection,
+    mutation: &LibraryMetadataMutation,
+    source: &SourceIdentity,
+    path: &Path,
+) -> Result<(), AppError> {
+    let changed_rows = match &mutation.change {
+        LibraryMetadataChange::AliasSet(value) => connection.execute(
+            "UPDATE library_entries SET alias = ?1 WHERE canonical_source = ?2",
+            params![value, source.canonical],
+        ),
+        LibraryMetadataChange::AliasClear => connection.execute(
+            "UPDATE library_entries SET alias = NULL WHERE canonical_source = ?1",
+            params![source.canonical],
+        ),
+        LibraryMetadataChange::CategorySet(value) => connection.execute(
+            "UPDATE library_entries SET category = ?1 WHERE canonical_source = ?2",
+            params![value, source.canonical],
+        ),
+        LibraryMetadataChange::CategoryClear => connection.execute(
+            "UPDATE library_entries SET category = NULL WHERE canonical_source = ?1",
+            params![source.canonical],
+        ),
+        LibraryMetadataChange::TagAdd(tag) => connection.execute(
+            "INSERT INTO library_tags (canonical_source, comparison_key, display) VALUES (?1, ?2, ?3)",
+            params![source.canonical, tag.comparison_key, tag.display],
+        ),
+        LibraryMetadataChange::TagRemove(tag) => connection.execute(
+            "DELETE FROM library_tags WHERE canonical_source = ?1 AND comparison_key = ?2",
+            params![source.canonical, tag.comparison_key],
+        ),
+        LibraryMetadataChange::NoteSet(value) => connection.execute(
+            "UPDATE library_entries SET note = ?1 WHERE canonical_source = ?2",
+            params![value, source.canonical],
+        ),
+        LibraryMetadataChange::NoteClear => connection.execute(
+            "UPDATE library_entries SET note = NULL WHERE canonical_source = ?1",
+            params![source.canonical],
+        ),
+    }
+    .map_err(|error| database_error(path, error))?;
+    if changed_rows != 1 {
+        return Err(AppError::invalid_state(
+            "library_database",
+            "metadata_mutation_affected_unexpected_rows",
+            ["exactly one durable Library metadata record"],
+        ));
+    }
+    Ok(())
+}
+
+fn advance_state_revision(connection: &Connection, path: &Path) -> Result<(), AppError> {
+    let changed_revision = connection
+        .execute(
+            "UPDATE state_revision
+             SET revision = revision + 1
+             WHERE typeof(revision) = 'integer' AND revision >= 0 AND revision < ?1",
+            params![i64::MAX],
+        )
+        .map_err(|error| database_error(path, error))?;
+    if changed_revision != 1 {
+        return Err(AppError::invalid_state(
+            "library_database",
+            "state_revision_not_incrementable",
+            ["a nonnegative state revision below i64::MAX"],
+        ));
     }
     Ok(())
 }
@@ -1396,6 +1627,7 @@ struct StoredEntry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::library::LibraryChangedField;
     use crate::domain::source::RefKind;
     use crate::ports::configuration::Environment;
     use std::collections::HashMap;
@@ -1475,6 +1707,20 @@ mod tests {
             format_version: 1,
             entries,
         }
+    }
+
+    fn metadata_mutation(selector: &str, change: LibraryMetadataChange) -> LibraryMetadataMutation {
+        LibraryMetadataMutation {
+            selector: selector.to_owned(),
+            change,
+        }
+    }
+
+    fn state_revision(database: &Path) -> i64 {
+        Connection::open(database)
+            .unwrap()
+            .query_row("SELECT revision FROM state_revision", [], |row| row.get(0))
+            .unwrap()
     }
 
     #[test]
@@ -2709,6 +2955,286 @@ mod tests {
         assert_eq!(fs::read(database).unwrap(), before);
     }
 
+    #[test]
+    fn metadata_mutations_are_atomic_idempotent_and_exportable() {
+        let temporary = tempdir().unwrap();
+        let repository = SqliteLibraryRepository::with_environment(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(XdgRootResolver),
+        );
+        let import = document(vec![entry("skills/review", None)]);
+        let source = import.entries[0].skill.source.canonical.clone();
+        repository.import(&import, false).unwrap();
+        let database = temporary.path().join("data/skilload/skilload.db");
+        let initial_revision = state_revision(&database);
+
+        let alias_set = repository
+            .mutate_metadata(&metadata_mutation(
+                &source,
+                LibraryMetadataChange::alias_set("review-alias".to_owned()).unwrap(),
+            ))
+            .unwrap();
+        assert_eq!(alias_set.outcome, LibraryMutationOutcome::Changed);
+        assert_eq!(alias_set.changed_fields, vec![LibraryChangedField::Alias]);
+        assert_eq!(alias_set.entry.alias.as_deref(), Some("review-alias"));
+
+        let unchanged_bytes = fs::read(&database).unwrap();
+        let unchanged_revision = state_revision(&database);
+        let alias_repeat = repository
+            .mutate_metadata(&metadata_mutation(
+                &source,
+                LibraryMetadataChange::alias_set("review-alias".to_owned()).unwrap(),
+            ))
+            .unwrap();
+        assert_eq!(alias_repeat.outcome, LibraryMutationOutcome::Unchanged);
+        assert!(alias_repeat.changed_fields.is_empty());
+        assert_eq!(fs::read(&database).unwrap(), unchanged_bytes);
+        assert_eq!(state_revision(&database), unchanged_revision);
+
+        for change in [
+            LibraryMetadataChange::AliasClear,
+            LibraryMetadataChange::category_set("Code Review".to_owned()).unwrap(),
+            LibraryMetadataChange::CategoryClear,
+            LibraryMetadataChange::tag_add("Feature".to_owned()).unwrap(),
+            LibraryMetadataChange::tag_remove(" feature ".to_owned()).unwrap(),
+            LibraryMetadataChange::note_set("Local note".to_owned()).unwrap(),
+            LibraryMetadataChange::NoteClear,
+        ] {
+            let result = repository
+                .mutate_metadata(&metadata_mutation(&source, change))
+                .unwrap();
+            assert_eq!(result.outcome, LibraryMutationOutcome::Changed);
+            assert_eq!(result.changed_fields.len(), 1);
+        }
+
+        assert_eq!(state_revision(&database), initial_revision + 8);
+        let exported = repository.export().unwrap();
+        assert_eq!(exported.entries[0].alias, None);
+        assert_eq!(exported.entries[0].category, None);
+        assert_eq!(exported.entries[0].tags, ["Review"]);
+        assert_eq!(exported.entries[0].note, None);
+    }
+
+    #[test]
+    fn metadata_alias_conflict_and_missing_target_do_not_mutate_state() {
+        let temporary = tempdir().unwrap();
+        let repository = SqliteLibraryRepository::with_environment(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(XdgRootResolver),
+        );
+        let absent = metadata_mutation(
+            "github:owner/repository#skills/missing@refs/heads/main",
+            LibraryMetadataChange::AliasClear,
+        );
+        let error = repository.mutate_metadata(&absent).unwrap_err();
+        assert!(matches!(error, AppError::NotFound { .. }));
+        assert!(!temporary.path().join("data").exists());
+        assert!(!temporary.path().join("state").exists());
+
+        let import = document(vec![entry("skills/one", None), entry("skills/two", None)]);
+        let first = import.entries[0].skill.source.canonical.clone();
+        let second = import.entries[1].skill.source.canonical.clone();
+        repository.import(&import, false).unwrap();
+        repository
+            .mutate_metadata(&metadata_mutation(
+                &first,
+                LibraryMetadataChange::alias_set("shared".to_owned()).unwrap(),
+            ))
+            .unwrap();
+        let database = temporary.path().join("data/skilload/skilload.db");
+        let before = fs::read(&database).unwrap();
+        let revision = state_revision(&database);
+        let error = repository
+            .mutate_metadata(&metadata_mutation(
+                &second,
+                LibraryMetadataChange::alias_set("shared".to_owned()).unwrap(),
+            ))
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            AppError::Conflict { conflicts }
+                if conflicts[0].name.as_deref() == Some("shared")
+                    && conflicts[0].source.as_ref().is_some_and(|source| source.canonical == second)
+        ));
+        assert_eq!(fs::read(&database).unwrap(), before);
+        assert_eq!(state_revision(&database), revision);
+    }
+
+    #[test]
+    fn sixty_fifth_metadata_tag_fails_without_a_write() {
+        let temporary = tempdir().unwrap();
+        let repository = SqliteLibraryRepository::with_environment(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(XdgRootResolver),
+        );
+        let import = document(vec![entry("skills/review", None)]);
+        let source = import.entries[0].skill.source.canonical.clone();
+        repository.import(&import, false).unwrap();
+        for index in 0..63 {
+            repository
+                .mutate_metadata(&metadata_mutation(
+                    &source,
+                    LibraryMetadataChange::tag_add(format!("tag-{index}")).unwrap(),
+                ))
+                .unwrap();
+        }
+        let database = temporary.path().join("data/skilload/skilload.db");
+        let before = fs::read(&database).unwrap();
+        let revision = state_revision(&database);
+        let error = repository
+            .mutate_metadata(&metadata_mutation(
+                &source,
+                LibraryMetadataChange::tag_add("overflow".to_owned()).unwrap(),
+            ))
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            AppError::Validation { constraint, .. } if constraint == "library_tag_count"
+        ));
+        assert_eq!(fs::read(&database).unwrap(), before);
+        assert_eq!(state_revision(&database), revision);
+    }
+
+    #[test]
+    fn metadata_mutation_preserves_semantics_at_ten_thousand_entries() {
+        let temporary = tempdir().unwrap();
+        let repository = SqliteLibraryRepository::with_environment(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(XdgRootResolver),
+        );
+        let entries = (0..crate::domain::library::MAX_PORTABLE_LIBRARY_ENTRIES)
+            .map(|index| entry(&format!("skills/{index}/review"), None))
+            .collect::<Vec<_>>();
+        let source = entries[9_999].skill.source.canonical.clone();
+        repository.import(&document(entries), false).unwrap();
+
+        let alias = repository
+            .mutate_metadata(&metadata_mutation(
+                &source,
+                LibraryMetadataChange::alias_set("last-review".to_owned()).unwrap(),
+            ))
+            .unwrap();
+        assert_eq!(alias.outcome, LibraryMutationOutcome::Changed);
+        assert_eq!(alias.entry.alias.as_deref(), Some("last-review"));
+        let equivalent_tag = repository
+            .mutate_metadata(&metadata_mutation(
+                &source,
+                LibraryMetadataChange::tag_add("review".to_owned()).unwrap(),
+            ))
+            .unwrap();
+        assert_eq!(equivalent_tag.outcome, LibraryMutationOutcome::Unchanged);
+        assert!(equivalent_tag.changed_fields.is_empty());
+        let exported = repository.export().unwrap();
+        assert_eq!(exported.entries.len(), 10_000);
+        assert_eq!(
+            exported
+                .entries
+                .iter()
+                .find(|entry| entry.skill.source.canonical == source)
+                .unwrap()
+                .alias
+                .as_deref(),
+            Some("last-review")
+        );
+    }
+
+    #[test]
+    fn metadata_mutation_uses_the_bounded_database_process_lock() {
+        let temporary = tempdir().unwrap();
+        let repository = SqliteLibraryRepository::with_environment(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(XdgRootResolver),
+        );
+        let import = document(vec![entry("skills/review", None)]);
+        let source = import.entries[0].skill.source.canonical.clone();
+        repository.import(&import, false).unwrap();
+        let roots = repository.resolve_roots().unwrap();
+        let lock = acquire_restrictive_lock(&roots, "database.lock", "database").unwrap();
+
+        let started = std::time::Instant::now();
+        let error = repository
+            .mutate_metadata(&metadata_mutation(
+                &source,
+                LibraryMetadataChange::alias_set("blocked".to_owned()).unwrap(),
+            ))
+            .unwrap_err();
+        assert!(started.elapsed() >= LOCK_WAIT);
+        assert!(matches!(
+            error,
+            AppError::Busy {
+                lock_domain,
+                waited_ms,
+            } if lock_domain == "database" && waited_ms == LOCK_WAIT.as_millis() as u64
+        ));
+        drop(lock);
+    }
+
+    #[test]
+    fn metadata_mutation_rejects_a_portable_ceiling_overage_without_a_write() {
+        const ENTRY_COUNT: usize = 5_000;
+
+        let mut document = document(
+            (0..ENTRY_COUNT)
+                .map(|index| entry(&format!("skills/{index}/review"), None))
+                .collect(),
+        )
+        .validate()
+        .unwrap();
+        for entry in &mut document.entries {
+            entry.note = Some(String::new());
+        }
+        let base_size = document.serialize_for_transfer().unwrap().len() as u64;
+        let mut one_character = document.clone();
+        one_character.entries[0].note = Some("\u{10000}".to_owned());
+        let encoded_character_bytes =
+            one_character.serialize_for_transfer().unwrap().len() as u64 - base_size;
+        assert!(encoded_character_bytes > 0);
+
+        let mut characters_to_add = ((crate::domain::library::MAX_PORTABLE_LIBRARY_DOCUMENT_BYTES
+            - base_size)
+            / encoded_character_bytes) as usize;
+        for entry in &mut document.entries {
+            if characters_to_add == 0 {
+                break;
+            }
+            let count = characters_to_add.min(4_096);
+            entry.note = Some("\u{10000}".repeat(count));
+            characters_to_add -= count;
+        }
+        assert_eq!(characters_to_add, 0);
+        let accepted_bytes = document.serialize_for_transfer().unwrap().len() as u64;
+        assert!(accepted_bytes <= crate::domain::library::MAX_PORTABLE_LIBRARY_DOCUMENT_BYTES);
+        assert!(
+            crate::domain::library::MAX_PORTABLE_LIBRARY_DOCUMENT_BYTES - accepted_bytes < 1_022,
+            "the fixture must leave less room than a maximal category value adds"
+        );
+
+        let temporary = tempdir().unwrap();
+        let repository = SqliteLibraryRepository::with_environment(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(XdgRootResolver),
+        );
+        let source = document.entries[0].skill.source.canonical.clone();
+        repository.import(&document, false).unwrap();
+        let database = temporary.path().join("data/skilload/skilload.db");
+        let before = fs::read(&database).unwrap();
+        let revision = state_revision(&database);
+
+        let error = repository
+            .mutate_metadata(&metadata_mutation(
+                &source,
+                LibraryMetadataChange::category_set("\u{10000}".repeat(256)).unwrap(),
+            ))
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            AppError::Validation { constraint, .. }
+                if constraint == "library_portable_document_bytes"
+        ));
+        assert_eq!(fs::read(&database).unwrap(), before);
+        assert_eq!(state_revision(&database), revision);
+        assert!(repository.export().unwrap().entries[0].category.is_none());
+    }
     struct ReplaceCreatedLocksDirectory {
         locks: PathBuf,
     }

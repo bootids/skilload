@@ -75,10 +75,10 @@ depends_on: [PLAN-0003]
 - [x] (2026-08-20 08:06Z) 已完整读取 PR #4 的顶层评论、submitted review 和全部 inline threads；两个有效 planning 问题均已分类为可修复，并在不进入 `active`、不修改运行时代码的前提下修正完成范围与 smoke 可复现性。
 - [x] (2026-08-20 08:42Z) 已推送 planning 修订 `f2dd223d38666c015bc00f7c597372067da601d0`，在两个 inline threads 分别回复证据并成功关闭；Review Conversation Log 已记录回复 URL、commit、验证和最终 resolved state。
 - [x] (2026-08-20 08:53Z) 已完成 execution preflight：`mise install`、GitHub auth、干净 worktree、`git fetch origin` 和 PR #4 Draft/head 已核对；`PLAN-0003` 在 `origin/main` 的 completed 目录中为 `status: completed`，本 Plan 已转入 `active`。
-- [ ] 实现 domain/application/port/error 元数据变更合约。
-- [ ] 实现 SQLite 原子元数据 mutation、幂等路径、portable closure 和 failure/concurrency 回归。
-- [ ] 注册八个真实 CLI 叶子，完成 API-v2、人类输出、usage/not-found/conflict 投影与实际 CLI smoke。
-- [ ] 同步产品状态、架构和设计文档，完成 focused、workspace、10,000-entry 和 round-trip 验收并记录证据。
+- [x] (2026-08-20 09:21Z) 已实现 domain/application/port/error 元数据变更合约：八种 typed change、`LibraryEntry`/`Missing` trust state、`mutate_metadata` focused port 与 `not_found`/`LookupDetails`。
+- [x] (2026-08-20 09:21Z) 已实现 SQLite 原子 mutation、幂等路径、完整 portable closure、10,000-entry 语义、portable ceiling、alias conflict、missing target 与两秒 process-lock 回归。
+- [x] (2026-08-20 09:21Z) 已注册八个真实 CLI 叶子，完成 API-v2、人类输出、usage/not-found/conflict projection 与使用 `./target/debug/skilload` 的实际 CLI smoke。
+- [x] (2026-08-20 09:24Z) 已同步产品状态、架构和设计文档；focused、workspace、10,000-entry、portable ceiling、round-trip、actual CLI smoke 与 release timing 均通过并记录证据。
 - [ ] 实现、验收、文档和 retrospective 全部提交推送后，运行 `gh pr ready`，核对 ready PR head 等于已推送实现 HEAD，再自动进入 `review` 并推送状态提交。
 - [ ] 后续收到明确 merge 提示后完成 preflight、进入 `completed`、通过 required checks、合并、更新 `main` 并删除本地交付分支。
 
@@ -91,10 +91,12 @@ depends_on: [PLAN-0003]
   Evidence: `docs/product-specs/api-v2.md` 要求 `LibraryEntry.trust_state`；`ARCHITECTURE.md` 和完成的 `PLAN-0003` 明确 P2 不建立 Trust，portable import 也不得授权。
 - Observation: changed metadata 可能让原本合法的完整 portable Library 越过 67,108,864-byte 上限，即使单字段仍符合 `SKL-LIB-008`。
   Evidence: `SKL-LIB-009`/`SKL-LIB-010` 要求每个持久 Library 的唯一传输表示保持 export/import closure；当前 import plan 已对完整候选文档执行该检查。
-- Observation: 当前 `AppError` 没有 `not_found`/`LookupDetails` 领域数据，CLI parser operation 识别函数仍以 configuration 命名但已临时覆盖 import/export。
-  Evidence: `crates/skilload-core/src/error.rs` 的 enum 不含 lookup variant；`crates/skilload-cli/src/args.rs` 的 `json_configuration_operation` 已同时识别 Library transfer 叶子。
+- Observation: P2 缺少 `not_found`/`LookupDetails` 与 nested metadata operation 识别；P3 已将它们加入 core error/CLI parser，并保持 unknown leaf 为 usage error。
+  Evidence: `crates/skilload-core/src/error.rs` 现有 `NotFound` code/exit 4；`crates/skilload-cli/src/args.rs::json_operation` 识别八个 nested operation，`library_metadata_commands_are_explicit_atomic_and_portable` 覆盖 parser error 与 missing target。
 - Observation: `SKL-CLI-010` 的完整 acceptance 依赖尚未实现的 `library add` 与 `library refresh`，不能由本切片对 unknown-command 的 parser rejection 替代。
   Evidence: `docs/product-specs/cli-contract.md` 要求 add/refresh tests 证明用户元数据不变；本 Plan 的 Delivery Metadata 明确排除这两个命令。
+- Observation: API-v2 要求所有 tag array 按 comparison key 确定性排序，因此 mutation response 不能直接返回 append-order entry。
+  Evidence: `docs/product-specs/api-v2.md` 的 common array-ordering rule；`library_metadata_commands_are_explicit_atomic_and_portable` 观察 `Feature` 在 `Review` 之前，adapter 在 portable candidate 原地排序后按 source 取回 response entry。
 
 ## Decision Log
 
@@ -130,10 +132,14 @@ depends_on: [PLAN-0003]
   Rationale: 裸 `skilload` 可能缺失或解析到用户安装的旧二进制；明确的绝对 roots 使 mutation 不接触真实本机状态，并使 newcomer 可复现 import、mutation、export 和隔离 re-import。
   Date/Author: 2026-08-20 / Codex
 
+- Decision: changed metadata mutation 在单一可移植 candidate vector 上原地排序并校验 transfer closure，再由 canonical source 取回 response entry。
+  Rationale: 这同时满足 API-v2 tag 排序与 export/import closure，避免复制最多 67,108,864-byte candidate；unchanged 在比较后直接返回，不排序、编码、写入或 sync。
+  Date/Author: 2026-08-20 / Codex
+
 ## Outcomes & Retrospective
 
 
-规划基线已完成并关联 Draft PR https://github.com/bootids/skilload/pull/4；首个规划提交已推送，本 metadata 更新提交将 URL、Progress 和 publication evidence 写回。2026-08-20 08:06Z 至 08:42Z 已处理两项 planning review：`SKL-CLI-010` 改为未完成的跨命令约束，实际 CLI smoke 改为显式仓库二进制与临时 XDG roots；修订已作为 `f2dd223d38666c015bc00f7c597372067da601d0` 推送，两个 inline threads 都已回复并 resolved。2026-08-20 08:53Z 已收到明确执行授权，preflight 确认 `PLAN-0003` 已在 `origin/main` 完成、PR #4 为 Draft 且本地/远端交付 HEAD 一致；本 Plan 已转入 `active`，此时尚未开始修改运行时代码。预期结果仍是八个 canonical Library 元数据叶子拥有真实的离线、原子、幂等行为，并由 portable export/import round trip 证明；search、Trust、add、refresh 和其他 Library 命令保持明确缺席。
+规划基线已完成并关联 Draft PR https://github.com/bootids/skilload/pull/4；首个规划提交已推送，本 metadata 更新提交将 URL、Progress 和 publication evidence 写回。2026-08-20 08:06Z 至 08:42Z 已处理两项 planning review：`SKL-CLI-010` 改为未完成的跨命令约束，实际 CLI smoke 改为显式仓库二进制与临时 XDG roots；修订已作为 `f2dd223d38666c015bc00f7c597372067da601d0` 推送，两个 inline threads 都已回复并 resolved。2026-08-20 09:24Z 已完成运行时代码与文档同步：八个 canonical metadata leaves 经 domain/application/SQLite port 实现，changed/unchanged、`not_found`、conflict、Unicode、portable closure、process lock、10,000-entry 语义和 API-v2/human projection 均有 focused evidence；实际仓库 debug binary smoke 已完成 import → mutation → export → isolated re-import，release 10,000-entry changed/unchanged/equivalent-tag 操作均低于 10 秒。`cargo fmt --check`、Clippy `-D warnings`、locked all-features workspace tests（115 core、11 CLI unit、13 CLI integration）和 workspace build 均通过。范围内没有遗留功能缺口；search、Trust、add、refresh 和其他 Library 命令仍明确缺席。下一步是检查完整 diff、提交推送实现与 active Plan，然后执行 ready/review transaction。
 
 ## Review Conversation Log
 
@@ -336,7 +342,7 @@ ready/review transaction 的恢复必须精确遵守 `docs/PLANS.md`。若 `gh p
 
 `docs/exec-plans/plan/`、`active/` 和 `review/` 在基线中没有当前 Plan；`completed/` 依次包含 `PLAN-0001`、`PLAN-0002` 和 `PLAN-0003`。`gh pr list --state open` 返回空数组，fetch 后没有已有 P3 分支。本计划因此使用未占用的 `PLAN-0004` 和 `codex/p3-library-metadata-mutations`，而不是创建重复交付。
 
-当前 `LibraryRepository` 只有以下已实现边界：
+当前 `LibraryRepository` 已实现边界：
 
     fn export(&self) -> Result<PortableLibraryDocument, AppError>;
     fn import(
@@ -344,6 +350,10 @@ ready/review transaction 的恢复必须精确遵守 `docs/PLANS.md`。若 `gh p
         document: &PortableLibraryDocument,
         dry_run: bool,
     ) -> Result<LibraryImportOperation, AppError>;
+    fn mutate_metadata(
+        &self,
+        mutation: &LibraryMetadataMutation,
+    ) -> Result<LibraryMetadataStoreResult, AppError>;
 
 首个规划提交 `20d47866f78a904099eeb6b47df6c6e9302c4415` 已推送到 `origin/codex/p3-library-metadata-mutations`。GitHub 创建 canonical Draft PR https://github.com/bootids/skilload/pull/4；本次第二个 planning metadata 提交写回该 URL 和 publication evidence，推送后完成 plan creation workflow。
 
@@ -361,6 +371,34 @@ ready/review transaction 的恢复必须精确遵守 `docs/PLANS.md`。若 `gh p
     git show origin/main:docs/exec-plans/completed/p2-library-portable-import-export.md
     plan_id: PLAN-0003
     status: completed
+
+运行时代码与 focused acceptance 证据（2026-08-20）：
+
+    mise exec -- cargo test -p skilload-core --all-features --locked metadata_mutation
+    4 passed; 0 failed; portable ceiling、10,000-entry、process lock 与 atomic/idempotent paths 通过
+
+    mise exec -- cargo test -p skilload-cli --all-features --locked library_metadata_commands
+    1 passed; 0 failed; 八个 leaf、API-v2、human escaping、conflict、not_found 与 portable round trip 通过
+
+    ./target/debug/skilload isolated smoke
+    eight metadata leaves, idempotent tag add, export/reimport closure, and clears passed
+
+    target/release/skilload; 10,000 entries; arm64
+    alias changed 0.07s; alias unchanged 0.05s; equivalent tag add 0.06s; all within 10s budget
+
+完整 gate（2026-08-20 09:24Z）：
+
+    mise exec -- cargo fmt --all --check
+    success
+
+    mise exec -- cargo clippy --workspace --all-targets --all-features -- -D warnings
+    success
+
+    mise exec -- cargo test --workspace --all-features --locked
+    11 CLI unit + 13 CLI integration + 115 core tests passed; 0 failed
+
+    mise exec -- cargo build --workspace --all-features --locked
+    success
 
 ## Interfaces and Dependencies
 
@@ -464,3 +502,7 @@ changed 时数组恰有对应一个字段，unchanged 时为空。Library adapte
 2026-08-20 08:42Z：planning 修订 `f2dd223d38666c015bc00f7c597372067da601d0` 已推送；已向两个 inline review sources 回复具体修订与验证，并确认两个 threads 均为 resolved。Review Conversation Log 与 GitHub 结果同步，Plan 与 PR 仍保持 `plan`/Draft 状态。
 
 2026-08-20 08:53Z：收到明确 `execute-exec-plan` 授权后，重新运行 `mise install`、GitHub/branch/PR preflight 和 `git fetch origin`；确认 PR #4 仍为 Draft、交付 branch 与 PR head 一致，且 `PLAN-0003` 已在 `origin/main` 以 `completed` 状态存在。随后将本 Plan 移入 `active/` 并更新 status；运行时代码尚未修改。
+
+2026-08-20 09:21Z：实现 P3 的 domain/application/port/SQLite/CLI/API-v2/human 路径并增加 focused domain、adapter、CLI contract regression。changed mutation 在一个原地排序的完整 candidate 上执行 portable-size validation，确保 deterministic tag response 与 export/import closure；unchanged 保持数据库 bytes、`state_revision` 和 durability state。已记录 10,000-entry release timing 与 isolated real-binary smoke；后续执行完整 gate、文档最终核对和 review transaction。
+
+2026-08-20 09:24Z：同步 `docs/product-specs/README.md`、`library.md`、`cli-contract.md`、`ARCHITECTURE.md` 与两份设计文档的实现状态；所有 required focused/full validation、实际 CLI smoke 和 release-scale timing 已通过。实现可进入最终 diff、commit/push 与 ready/review transaction。

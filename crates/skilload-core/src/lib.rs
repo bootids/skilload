@@ -12,9 +12,11 @@ pub use domain::configuration::{
     DEFAULT_CACHE_LIMIT_BYTES, MAX_CACHE_LIMIT_BYTES, MutationOutcome, NativePath,
 };
 pub use domain::library::{
-    LIBRARY_FORMAT_VERSION, LibraryExportOperation, LibraryExportRequest, LibraryImportOperation,
-    LibraryImportOutcome, LibraryImportRequest, LibraryImportResult, PortableLibraryDocument,
-    PortableLibraryEntry,
+    LIBRARY_FORMAT_VERSION, LibraryChangedField, LibraryEntry, LibraryExportOperation,
+    LibraryExportRequest, LibraryImportOperation, LibraryImportOutcome, LibraryImportRequest,
+    LibraryImportResult, LibraryMetadataChange, LibraryMetadataMutation,
+    LibraryMetadataStoreResult, LibraryMutationOperation, LibraryMutationOutcome,
+    LibraryTrustState, PortableLibraryDocument, PortableLibraryEntry,
 };
 pub use domain::source::{RefIntent, RefKind, ResolvedSkill, SourceIdentity};
 pub use error::{AppError, Conflict};
