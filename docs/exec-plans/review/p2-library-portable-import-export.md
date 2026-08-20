@@ -117,6 +117,8 @@ Revision 2 的 `SKL-CLI-004`、`SKL-CLI-005` 与 `SKL-CLI-012` 以 API-v2 curren
 - [x] (2026-08-20) 完整读取当前 PR #3 会话：14 条 top-level comment 都是 `@codex`，108 个 submitted review 为空或通用 automation，90 个 inline thread 中 83 个既有问题 source 仍由 Review Conversation Log 覆盖；7 个新增 open source 已按当前代码、产品规范与 thread state 分类。
 - [x] (2026-08-20) 已在本地完成六项 `review` 内 ordinary remediation：export serializer 完整 validation、existing-output exchange 后保留 publication replacement、Busy/schema display domain、non-array `entries` schema 分类、以及 per-root created-directory sync attribution；focused regressions 已通过，待完整 gates、preliminary commit/push、GitHub reply/closure。
 - [x] (2026-08-20) 六项 local remediation 的 focused regressions、`cargo fmt --all --check`、workspace Clippy `-D warnings`、locked workspace tests（11、12、107）、workspace build 与隔离 XDG CLI dry-run/import/export byte-identical round trip 均通过；`entries: null` CLI JSON error 为 `library_import_schema`。已审阅完整 diff 且 `git diff --check` 通过，待 preliminary commit/push。
+- [x] (2026-08-20) code/preliminary ledger commit `4ef1ba205eb323c702bceda830445f44feb4da46` 已推送；local、origin 与 ready PR #3 `headRefOid` 均为该 SHA。六项 fixed source 现有 commit/validation evidence，待重新获取会话、逐源回复并关闭。
+
 
 - [ ] (2026-08-20) `PRRC_kwDOT7YN2s7jlNzR` 加入 `PRRC_kwDOT7YN2s7jWsuw`、`PRRC_kwDOT7YN2s7jiT5X` 和 `PRRC_kwDOT7YN2s7jiT5i` 的 pending/blocked 集合：四个 thread 必须保持 open，直至人类选择 portable ownership/lock primitive 或调整相应产品保证。
 
@@ -1739,9 +1741,9 @@ Disposition: fixed
 
 Status: open
 
-Resolution: 已在 `crates/skilload-core/src/domain/library.rs` 令 transfer serializer 先对 clone 调用完整 `validate()`，再排序/编码；新增 `transfer_serialization_rejects_documents_import_would_reject` 覆盖错误 format version 与重复 canonical source。该修改将在本轮 preliminary remediation commit 中推送。
+Resolution: `crates/skilload-core/src/domain/library.rs` 的 transfer serializer 先对 clone 调用完整 `validate()`，再排序/编码；`transfer_serialization_rejects_documents_import_would_reject` 覆盖错误 format version 与重复 canonical source。该修改已由 `4ef1ba205eb323c702bceda830445f44feb4da46` 推送。
 
-Evidence: focused `transfer_serialization_rejects_documents_import_would_reject` 通过；`cargo fmt --all --check`、workspace Clippy、locked workspace tests（11、12、107）、workspace build、隔离 CLI smoke 与 `git diff --check` 均通过。实际 commit SHA 待 preliminary push 后写回。
+Evidence: pushed remediation commit `4ef1ba205eb323c702bceda830445f44feb4da46`；focused `transfer_serialization_rejects_documents_import_would_reject`、`cargo fmt --all --check`、workspace Clippy、locked workspace tests（11、12、107）、workspace build、隔离 CLI smoke 与 `git diff --check` 均通过。
 
 GitHub outcome: 尚未回复；本线程在 pushed evidence 后回复并关闭。
 
@@ -1771,9 +1773,9 @@ Disposition: fixed
 
 Status: open
 
-Resolution: 已从 `crates/skilload-core/src/adapters/portable_library.rs` 成功 exchange 路径移除 pathname-based publication unlink，保留该 entry；新增 `export_preserves_a_replaced_publication_entry_after_exchange` 在 exchange 后植入 foreign replacement，证明请求 output 仍写入新 document 且 replacement 保留。`docs/design-docs/application-and-persistence.md` 同步该跨平台 inode-bound unlink 限制。
+Resolution: `crates/skilload-core/src/adapters/portable_library.rs` 的 successful exchange 路径不再 pathname-based unlink publication entry，保留该 entry；`export_preserves_a_replaced_publication_entry_after_exchange` 在 exchange 后植入 foreign replacement，证明请求 output 仍写入新 document 且 replacement 保留。`docs/design-docs/application-and-persistence.md` 同步该跨平台 inode-bound unlink 限制；修改已由 `4ef1ba205eb323c702bceda830445f44feb4da46` 推送。
 
-Evidence: focused `export_preserves_a_replaced_publication_entry_after_exchange` 通过；`cargo fmt --all --check`、workspace Clippy、locked workspace tests（11、12、107）、workspace build、隔离 CLI smoke 与 `git diff --check` 均通过。实际 commit SHA 待 preliminary push 后写回。
+Evidence: pushed remediation commit `4ef1ba205eb323c702bceda830445f44feb4da46`；focused `export_preserves_a_replaced_publication_entry_after_exchange`、`cargo fmt --all --check`、workspace Clippy、locked workspace tests（11、12、107）、workspace build、隔离 CLI smoke 与 `git diff --check` 均通过。
 
 GitHub outcome: 尚未回复；本线程在 pushed evidence 后回复并关闭。
 
@@ -1787,9 +1789,9 @@ Disposition: fixed
 
 Status: open
 
-Resolution: 已在 `crates/skilload-core/src/error.rs` 将 Busy display 改为插值 `lock_domain`；新增 `display_uses_the_recorded_lock_and_schema_domains` 覆盖 database busy text。
+Resolution: `crates/skilload-core/src/error.rs` 的 Busy display 改为插值 `lock_domain`；`display_uses_the_recorded_lock_and_schema_domains` 覆盖 database busy text。修改已由 `4ef1ba205eb323c702bceda830445f44feb4da46` 推送。
 
-Evidence: focused `display_uses_the_recorded_lock_and_schema_domains` 通过；`cargo fmt --all --check`、workspace Clippy、locked workspace tests（11、12、107）、workspace build、隔离 CLI smoke 与 `git diff --check` 均通过。实际 commit SHA 待 preliminary push 后写回。
+Evidence: pushed remediation commit `4ef1ba205eb323c702bceda830445f44feb4da46`；focused `display_uses_the_recorded_lock_and_schema_domains`、`cargo fmt --all --check`、workspace Clippy、locked workspace tests（11、12、107）、workspace build、隔离 CLI smoke 与 `git diff --check` 均通过。
 
 GitHub outcome: 尚未回复；本线程在 pushed evidence 后回复并关闭。
 
@@ -1803,9 +1805,9 @@ Disposition: fixed
 
 Status: open
 
-Resolution: 已在 `crates/skilload-core/src/error.rs` 的两个 schema display 属性中插值 `domain`；`display_uses_the_recorded_lock_and_schema_domains` 同时覆盖 newer 与 migration 文本。
+Resolution: `crates/skilload-core/src/error.rs` 的 SchemaNewer/MigrationRequired display 属性改为插值 `domain`；`display_uses_the_recorded_lock_and_schema_domains` 同时覆盖 newer 与 migration 文本。修改已由 `4ef1ba205eb323c702bceda830445f44feb4da46` 推送。
 
-Evidence: focused `display_uses_the_recorded_lock_and_schema_domains` 通过；`cargo fmt --all --check`、workspace Clippy、locked workspace tests（11、12、107）、workspace build、隔离 CLI smoke 与 `git diff --check` 均通过。实际 commit SHA 待 preliminary push 后写回。
+Evidence: pushed remediation commit `4ef1ba205eb323c702bceda830445f44feb4da46`；focused `display_uses_the_recorded_lock_and_schema_domains`、`cargo fmt --all --check`、workspace Clippy、locked workspace tests（11、12、107）、workspace build、隔离 CLI smoke 与 `git diff --check` 均通过。
 
 GitHub outcome: 尚未回复；本线程在 pushed evidence 后回复并关闭。
 
@@ -1819,9 +1821,9 @@ Disposition: fixed
 
 Status: open
 
-Resolution: 已在 `crates/skilload-core/src/adapters/portable_library.rs` 只在 root `entries` value 真为 `[` 时启用 array entry ceiling scanner，否则使用 generic JSON value scanner；新增 `scanner_defers_non_array_entries_to_schema_validation`。
+Resolution: `crates/skilload-core/src/adapters/portable_library.rs` 仅在 root `entries` value 真为 `[` 时启用 array entry ceiling scanner，否则使用 generic JSON value scanner；`scanner_defers_non_array_entries_to_schema_validation` 覆盖 `entries: null`。修改已由 `4ef1ba205eb323c702bceda830445f44feb4da46` 推送。
 
-Evidence: focused `scanner_defers_non_array_entries_to_schema_validation` 与隔离 CLI `entries: null` error smoke 通过；`cargo fmt --all --check`、workspace Clippy、locked workspace tests（11、12、107）、workspace build 与 `git diff --check` 均通过。实际 commit SHA 待 preliminary push 后写回。
+Evidence: pushed remediation commit `4ef1ba205eb323c702bceda830445f44feb4da46`；focused `scanner_defers_non_array_entries_to_schema_validation`、隔离 CLI `entries: null` error smoke、`cargo fmt --all --check`、workspace Clippy、locked workspace tests（11、12、107）、workspace build 与 `git diff --check` 均通过。
 
 GitHub outcome: 尚未回复；本线程在 pushed evidence 后回复并关闭。
 
@@ -1835,9 +1837,9 @@ Disposition: fixed
 
 Status: open
 
-Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 将每个 `CreatedDirectory` 与其 owning XDG variable 一起记录，并按原 reverse creation order 分别 sync；新增 `first_import_sync_attributes_state_directory_failure_to_state_root`。
+Resolution: `crates/skilload-core/src/adapters/sqlite_library.rs` 将每个 `CreatedDirectory` 与 owning XDG variable 一起记录，并按原 reverse creation order 分别 sync；`first_import_sync_attributes_state_directory_failure_to_state_root` 覆盖 state-root failure attribution。修改已由 `4ef1ba205eb323c702bceda830445f44feb4da46` 推送。
 
-Evidence: focused `first_import_sync_attributes_state_directory_failure_to_state_root` 通过；`cargo fmt --all --check`、workspace Clippy、locked workspace tests（11、12、107）、workspace build、隔离 CLI smoke 与 `git diff --check` 均通过。实际 commit SHA 待 preliminary push 后写回。
+Evidence: pushed remediation commit `4ef1ba205eb323c702bceda830445f44feb4da46`；focused `first_import_sync_attributes_state_directory_failure_to_state_root`、`cargo fmt --all --check`、workspace Clippy、locked workspace tests（11、12、107）、workspace build、隔离 CLI smoke 与 `git diff --check` 均通过。
 
 GitHub outcome: 尚未回复；本线程在 pushed evidence 后回复并关闭。
 
