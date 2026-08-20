@@ -80,7 +80,7 @@ depends_on: [PLAN-0003]
 - [x] (2026-08-20 09:21Z) 已注册八个真实 CLI 叶子，完成 API-v2、人类输出、usage/not-found/conflict projection 与使用 `./target/debug/skilload` 的实际 CLI smoke。
 - [x] (2026-08-20 09:24Z) 已同步产品状态、架构和设计文档；focused、workspace、10,000-entry、portable ceiling、round-trip、actual CLI smoke 与 release timing 均通过并记录证据。
 - [x] (2026-08-20 09:26Z) 已推送实现提交 `9077b84747edf586ec803d7dfc318a10cd1a617c`，运行 `gh pr ready` 并观察 PR #4 `isDraft: false`、`headRefOid` 等于该实现 SHA；本 Plan 已移入 `review`，review-state commit `b83609f7841b5d126c2f4aa2e9e5678b19b0a3a6` 已推送，当前远端 PR head 与本地 HEAD 一致。
-- [x] (2026-08-20 10:30Z) 已完整重读 PR #4 的顶层评论、submitted review 和全部 resolved/unresolved inline threads；将三个新的有效 review 问题分类为本 Product Baseline 内的 fixed，先用 regression 重现，再完成实现、focused/full gates 和实际 debug-binary smoke；待推送 remediation commit 并回复、关闭三个线程。
+- [x] (2026-08-20 10:30Z) 已完整重读 PR #4 的顶层评论、submitted review 和全部 resolved/unresolved inline threads；将三个新的有效 review 问题分类为本 Product Baseline 内的 fixed，先用 regression 重现，再完成实现、focused/full gates 和实际 debug-binary smoke；remediation commit `3514a78266eb258725c3ecfc67633bd5c4ec1f0b` 已推送并与 PR head 一致，三个线程均已回复并 resolved，待推送本 Review Conversation Log 最终记录。
 - [ ] 后续收到明确 merge 提示后完成 preflight、进入 `completed`、通过 required checks、合并、更新 `main` 并删除本地交付分支。
 
 ## Surprises & Discoveries
@@ -156,7 +156,7 @@ depends_on: [PLAN-0003]
 
 2026-08-20 09:26Z review transition：PR #4 已由 Draft 转为 ready，GitHub 返回 `isDraft: false` 与 implementation SHA `9077b84747edf586ec803d7dfc318a10cd1a617c` 一致。本 review Plan 记录该证据、Product Baseline 的 Revision 1 完成范围和全部验收结果；后续 review conversation 依照 `address-pr-threads` 处理，只有收到明确 merge 授权才可进入 `completed`。
 
-2026-08-20 10:30Z 已处理 ready PR 的三个新 review concerns：parser 在真实 `--` positional 后保留 help-like metadata 值；shared conflict message 不再伪称 import；direct `TagValue` 防御性验证同时比较 normalized display 与 comparison key。三项 regression 均先在修复前失败，随后 focused tests、完整 Rust gates 与实际 `./target/debug/skilload` smoke 全部通过；本次 remediation commit、GitHub replies 和 thread resolution 仍待完成。
+2026-08-20 10:30Z 已处理 ready PR 的三个新 review concerns：parser 在真实 `--` positional 后保留 help-like metadata 值；shared conflict message 不再伪称 import；direct `TagValue` 防御性验证同时比较 normalized display 与 comparison key。三项 regression 均先在修复前失败，随后 focused tests、完整 Rust gates 与实际 `./target/debug/skilload` smoke 全部通过；remediation commit `3514a78266eb258725c3ecfc67633bd5c4ec1f0b` 已推送并验证为 PR head，三个 GitHub replies 已成功发布且对应 inline threads 均为 resolved。
 
 ## Review Conversation Log
 
@@ -195,51 +195,51 @@ GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/4#discussion_
 
 ### PRRT_kwDOT7YN2s6awdg0 — JSON 元数据值不得被误判为 meta option
 
-Source: 内联线程 `PRRT_kwDOT7YN2s6awdg0`，评论 `PRRC_kwDOT7YN2s7jtXAN`，https://github.com/bootids/skilload/pull/4#discussion_r3820318733（`chatgpt-codex-connector`；未过期；当前未解决）。
+Source: 内联线程 `PRRT_kwDOT7YN2s6awdg0`，评论 `PRRC_kwDOT7YN2s7jtXAN`，https://github.com/bootids/skilload/pull/4#discussion_r3820318733（`chatgpt-codex-connector`；未过期；最终已解决）。
 
 Problem: `rejects_json_meta_invocation` 在 Clap 解析前扫描全部原始参数，因而将 `--` 后合法的 alias/category/tag/note 值 `--help`、`--version`、`-h`、`-V` 或短选项 cluster 错当作文本 help/version invocation，违反 `SKL-LIB-008` 的 free-text 值空间。
 
 Disposition: fixed.
 
-Status: open.
+Status: resolved.
 
 Resolution: 已移除 `crates/skilload-cli/src/args.rs` 的 raw `rejects_json_meta_invocation`；`crates/skilload-cli/src/main.rs` 现在先让 Clap 解析，仅在实际返回 `DisplayHelp` 或 `DisplayVersion` 且请求 JSON 时拒绝。`crates/skilload-cli/tests/cli_contract.rs` 以 `--json library alias set <SOURCE> -- --help` 断言到达 `library.alias.set` 的 `not_found` application path。
 
-Evidence: 修复前真实 binary scenario 返回 exit 2；focused `json_meta_and_invalid_native_path_errors_are_safe` 修复后通过。`cargo fmt --check`、core library/SQLite tests、CLI all-feature tests、Clippy `-D warnings`、locked workspace tests/build 均通过；实际 debug-binary smoke 成功持久化并 export `--help`、`--version`、`-hV` 和 `-Vh`。待创建 remediation commit。
+Evidence: 推送 remediation commit `3514a78266eb258725c3ecfc67633bd5c4ec1f0b`；修复前真实 binary scenario 返回 exit 2，focused `json_meta_and_invalid_native_path_errors_are_safe` 修复后通过。`cargo fmt --check`、core library/SQLite tests、CLI all-feature tests、Clippy `-D warnings`、locked workspace tests/build 均通过；实际 debug-binary smoke 成功持久化并 export `--help`、`--version`、`-hV` 和 `-Vh`。
 
-GitHub outcome: 待回复；thread resolved: false。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/4#discussion_r3820746389；thread resolved: true。
 
 ### PRRT_kwDOT7YN2s6awdg_ — alias collision 的 conflict 文案必须与操作无关
 
-Source: 内联线程 `PRRT_kwDOT7YN2s6awdg_`，评论 `PRRC_kwDOT7YN2s7jtXAb`，https://github.com/bootids/skilload/pull/4#discussion_r3820318747（`chatgpt-codex-connector`；未过期；当前未解决）。
+Source: 内联线程 `PRRT_kwDOT7YN2s6awdg_`，评论 `PRRC_kwDOT7YN2s7jtXAb`，https://github.com/bootids/skilload/pull/4#discussion_r3820318747（`chatgpt-codex-connector`；未过期；最终已解决）。
 
 Problem: `library alias set` 的 alias collision 复用 `AppError::Conflict`，但该错误的 Display、API-v2 `error.message` 与 human renderer 均声称发生了 Library import，错误描述实际 operation。
 
 Disposition: fixed.
 
-Status: open.
+Status: resolved.
 
 Resolution: `crates/skilload-core/src/error.rs` 将 shared `AppError::Conflict` Display/API-v2 message 改为 `requested change conflicts with durable state`；`crates/skilload-cli/src/human.rs` 改为 `Requested change has … conflict(s)`。`crates/skilload-cli/tests/cli_contract.rs` 和 `human.rs` unit regression 分别锁定 JSON 与 human wording，同时保留 `conflict` code 和既有 `ConflictDetails`。
 
-Evidence: 修复前 metadata CLI regression 观察到 `library import conflicts with durable state`，human unit regression 也失败；两项 focused regression 修复后通过。`cargo fmt --check`、core library/SQLite tests、CLI all-feature tests、Clippy `-D warnings`、locked workspace tests/build 均通过。待创建 remediation commit。
+Evidence: 推送 remediation commit `3514a78266eb258725c3ecfc67633bd5c4ec1f0b`；修复前 metadata CLI regression 观察到 `library import conflicts with durable state`，human unit regression 也失败；两项 focused regression 修复后通过。`cargo fmt --check`、core library/SQLite tests、CLI all-feature tests、Clippy `-D warnings`、locked workspace tests/build 均通过。
 
-GitHub outcome: 待回复；thread resolved: false。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/4#discussion_r3820747569；thread resolved: true。
 
 ### PRRT_kwDOT7YN2s6awdhN — 直接构造的 TagValue 必须完整规范化
 
-Source: 内联线程 `PRRT_kwDOT7YN2s6awdhN`，评论 `PRRC_kwDOT7YN2s7jtXAr`，https://github.com/bootids/skilload/pull/4#discussion_r3820318763（`chatgpt-codex-connector`；未过期；当前未解决）。
+Source: 内联线程 `PRRT_kwDOT7YN2s6awdhN`，评论 `PRRC_kwDOT7YN2s7jtXAr`，https://github.com/bootids/skilload/pull/4#discussion_r3820318763（`chatgpt-codex-connector`；未过期；最终已解决）。
 
 Problem: public `LibraryMetadataChange::TagAdd`/`TagRemove` variants 可直接接收 `TagValue`；现有防御性 `validate` 只比较 comparison key，允许未 trim/NFC 的 display 被写入，随后 `load_tags` 会将同一持久状态判为损坏。
 
 Disposition: fixed.
 
-Status: open.
+Status: resolved.
 
 Resolution: `crates/skilload-core/src/domain/library.rs` 现在比较重新 `normalize_tag` 得到的 display 与 comparison key；任何直接构造的非 canonical `TagValue` 都在 `PortableLibraryEntry::apply_metadata_change` 进入 mutation 前以 `library_tag_display` 或 `library_tag_comparison_key` 拒绝。新增 regression 证明 malformed display 返回错误且 entry 未变。
 
-Evidence: 新 regression 在 pre-fix 状态失败、修复后通过；core library/SQLite tests、CLI all-feature tests、Clippy `-D warnings`、locked workspace tests/build 均通过。待创建 remediation commit。
+Evidence: 推送 remediation commit `3514a78266eb258725c3ecfc67633bd5c4ec1f0b`；新 regression 在 pre-fix 状态失败、修复后通过；core library/SQLite tests、CLI all-feature tests、Clippy `-D warnings`、locked workspace tests/build 均通过。
 
-GitHub outcome: 待回复；thread resolved: false。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/4#discussion_r3820748791；thread resolved: true。
 
 ## Context and Orientation
 
@@ -582,4 +582,4 @@ changed 时数组恰有对应一个字段，unchanged 时为空。Library adapte
 
 2026-08-20 09:26Z：实现提交 `9077b84747edf586ec803d7dfc318a10cd1a617c` 已推送后，PR #4 已成功转为 ready；已观察 GitHub ready state 与 implementation SHA 一致。按 transaction 将 Plan 移入 `review/` 并设置 `status: review`；review-state commit `b83609f7841b5d126c2f4aa2e9e5678b19b0a3a6` 已推送，后续 preflight 确认其为当前远端 PR head。
 
-2026-08-20 10:30Z：完整重新读取 ready PR conversation 后记录三个新的 unresolved inline review concerns。它们均属既定 baseline 的 ordinary remediation：将 JSON help/version guard 迁移到 Clap 的实际 parse result、使 shared conflict wording operation-neutral、并在 public direct `TagValue` 边界验证 normalized display。新增 regression 先失败后通过，required focused/full Rust gates 和 isolated actual debug-binary smoke 均成功；本提交记录 preliminary open ledger，待推送后填入 SHA 并同步 GitHub replies/thread resolution。
+2026-08-20 10:30Z：完整重新读取 ready PR conversation 后记录三个新的 unresolved inline review concerns。它们均属既定 baseline 的 ordinary remediation：将 JSON help/version guard 迁移到 Clap 的实际 parse result、使 shared conflict wording operation-neutral、并在 public direct `TagValue` 边界验证 normalized display。新增 regression 先失败后通过，required focused/full Rust gates 和 isolated actual debug-binary smoke 均成功；preliminary remediation commit `3514a78266eb258725c3ecfc67633bd5c4ec1f0b` 已推送并验证为 PR head。三个 inline threads 均已收到可追溯的 GitHub reply 并 resolved；本次 documentation commit 完成 durable Review Conversation Log。
