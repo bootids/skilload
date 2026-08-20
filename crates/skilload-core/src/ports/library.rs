@@ -1,6 +1,7 @@
 use crate::domain::configuration::NativePath;
 use crate::domain::library::{
-    LibraryImportOperation, LibraryMetadataMutation, LibraryMetadataStoreResult,
+    LibraryEntriesPage, LibraryEntry, LibraryImportOperation, LibraryMetadataMutation,
+    LibraryMetadataStoreResult, LibraryPage, LibrarySearchPage, LibrarySearchQuery,
     PortableLibraryDocument,
 };
 use crate::error::AppError;
@@ -15,6 +16,13 @@ pub trait LibraryTransferStore: Send + Sync {
 }
 
 pub trait LibraryRepository: Send + Sync {
+    fn list(&self, page: &LibraryPage) -> Result<LibraryEntriesPage, AppError>;
+    fn search(
+        &self,
+        query: &LibrarySearchQuery,
+        page: &LibraryPage,
+    ) -> Result<LibrarySearchPage, AppError>;
+    fn get(&self, selector: &str) -> Result<LibraryEntry, AppError>;
     fn export(&self) -> Result<PortableLibraryDocument, AppError>;
     fn import(
         &self,

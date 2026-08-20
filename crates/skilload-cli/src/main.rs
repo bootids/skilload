@@ -13,9 +13,10 @@ use skilload_core::adapters::configuration::FileConfigurationStore;
 use skilload_core::adapters::portable_library::PortableLibraryTransferStore;
 use skilload_core::adapters::sqlite_library::SqliteLibraryRepository;
 use skilload_core::{
-    AppError, Application, ConfigEntries, ConfigEntry, ConfigKey, LibraryExportRequest,
-    LibraryImportRequest, LibraryImportResult, LibraryMutationOperation, NativePath,
-    PortableLibraryDocument,
+    AppError, Application, ConfigEntries, ConfigEntry, ConfigKey, DoctorOperation,
+    LIBRARY_PAGE_DEFAULT_LIMIT, LibraryEntriesPage, LibraryEntry, LibraryExportRequest,
+    LibraryImportRequest, LibraryImportResult, LibraryMutationOperation, LibraryPage,
+    LibrarySearchPage, NativePath, PortableLibraryDocument,
 };
 use std::env;
 use std::ffi::OsString;
@@ -45,6 +46,18 @@ enum Projection {
         operation: &'static str,
         outcome: &'static str,
         data: Box<LibraryMutationOperation>,
+    },
+    LibraryEntries {
+        data: LibraryEntriesPage,
+    },
+    LibrarySearch {
+        data: LibrarySearchPage,
+    },
+    LibraryGet {
+        entry: LibraryEntry,
+    },
+    Doctor {
+        data: DoctorOperation,
     },
 }
 
@@ -84,10 +97,12 @@ fn run(arguments: Vec<OsString>) -> Result<(), u8> {
         write_stdout(args::top_level_help().as_bytes()).map_err(report_stdout_error)?;
         return Ok(());
     };
+    let repository = Arc::new(SqliteLibraryRepository::new());
     let application = Application::new(
         Arc::new(FileConfigurationStore::new()),
-        Arc::new(SqliteLibraryRepository::new()),
+        repository.clone(),
         Arc::new(PortableLibraryTransferStore::new()),
+        repository,
     );
     let projection = dispatch(&application, command);
     match projection {
@@ -167,6 +182,29 @@ fn dispatch(
                 .map_err(|error| ("config.list", error)),
         },
         Command::Library { command } => match command {
+            LibraryCommand::List { limit, offset } => {
+                let page = library_page(limit, offset).map_err(|error| ("library.list", error))?;
+                application
+                    .library_list(page)
+                    .map(|data| Projection::LibraryEntries { data })
+                    .map_err(|error| ("library.list", error))
+            }
+            LibraryCommand::Search {
+                query,
+                limit,
+                offset,
+            } => {
+                let page =
+                    library_page(limit, offset).map_err(|error| ("library.search", error))?;
+                application
+                    .library_search(query, page)
+                    .map(|data| Projection::LibrarySearch { data })
+                    .map_err(|error| ("library.search", error))
+            }
+            LibraryCommand::Get { source } => application
+                .library_get(source)
+                .map(|entry| Projection::LibraryGet { entry })
+                .map_err(|error| ("library.get", error)),
             LibraryCommand::Import { input, dry_run } => application
                 .library_import(LibraryImportRequest {
                     input: NativePath::new(input),
@@ -262,7 +300,18 @@ fn dispatch(
                     .map_err(|error| ("library.note.clear", error)),
             },
         },
+        Command::Doctor { fix } => application
+            .doctor(fix)
+            .map(|data| Projection::Doctor { data })
+            .map_err(|error| ("doctor", error)),
     }
+}
+
+fn library_page(limit: Option<u16>, offset: Option<u64>) -> Result<LibraryPage, AppError> {
+    LibraryPage::new(
+        limit.unwrap_or(LIBRARY_PAGE_DEFAULT_LIMIT),
+        offset.unwrap_or(0),
+    )
 }
 
 fn render_success(json_output: bool, projection: Projection) -> Result<(), u8> {
@@ -285,6 +334,14 @@ fn render_success(json_output: bool, projection: Projection) -> Result<(), u8> {
             json::library_export("library.export", document)
                 .map_err(|error| report_internal_serialization_error(error.to_string()))?
         }
+        Projection::LibraryEntries { data } if json_output => json::library_entries(data)
+            .map_err(|error| report_internal_serialization_error(error.to_string()))?,
+        Projection::LibrarySearch { data } if json_output => json::library_search(data)
+            .map_err(|error| report_internal_serialization_error(error.to_string()))?,
+        Projection::LibraryGet { entry } if json_output => json::library_get(entry)
+            .map_err(|error| report_internal_serialization_error(error.to_string()))?,
+        Projection::Doctor { data } if json_output => json::doctor(data)
+            .map_err(|error| report_internal_serialization_error(error.to_string()))?,
         Projection::LibraryMutation {
             operation,
             outcome,
@@ -320,6 +377,22 @@ fn render_success(json_output: bool, projection: Projection) -> Result<(), u8> {
                 human::render_library_mutation(operation, outcome, data.as_ref()).as_bytes(),
             )
             .map_err(report_stdout_error);
+        }
+        Projection::LibraryEntries { data } => {
+            return write_stdout(human::render_library_entries(&data).as_bytes())
+                .map_err(report_stdout_error);
+        }
+        Projection::LibrarySearch { data } => {
+            return write_stdout(human::render_library_search(&data).as_bytes())
+                .map_err(report_stdout_error);
+        }
+        Projection::LibraryGet { entry } => {
+            return write_stdout(human::render_library_get(&entry).as_bytes())
+                .map_err(report_stdout_error);
+        }
+        Projection::Doctor { data } => {
+            return write_stdout(human::render_doctor(&data).as_bytes())
+                .map_err(report_stdout_error);
         }
     };
     let mut bytes = bytes;

@@ -1,12 +1,12 @@
 # skilload Architecture
 
-Status: 0.1 CLI MVP 架构处于部分实现状态。`PLAN-0002` 建立 Rust workspace 与配置垂直切片；`PLAN-0003` 增加可移植 Library 导入/导出、受限 SQLite Library 元数据与本地 Unicode 15.1.0 规范化；`PLAN-0004` 在不改变 schema 或 ownership 的前提下增加八个显式、离线的 Library 元数据 mutation。来源解析、缓存内容、部署、manager 资产及其他产品域仍为 planned。
+Status: 0.1 CLI MVP 架构处于部分实现状态。`PLAN-0002` 建立 Rust workspace 与配置垂直切片；`PLAN-0003` 增加可移植 Library 导入/导出、受限 SQLite Library 元数据与本地 Unicode 15.1.0 规范化；`PLAN-0004` 在不改变 schema 或 ownership 的前提下增加八个显式、离线的 Library 元数据 mutation；`PLAN-0005` 增加 SQLite schema v2（`library_fts` FTS5 派生索引）、v1→v2 backup 优先的 transactional migration、`library list`/`search`/`get` 离线读取与当前 durable database 的 `doctor [--fix]`。来源解析、缓存内容、部署、manager 资产及其他产品域仍为 planned。
 
 Product behavior is authoritative in [`docs/product-specs/`](docs/product-specs/README.md). This file defines boundaries, dependency direction, state ownership, and invariants. Technical mechanisms and rationale live in [`docs/design-docs/`](docs/design-docs/).
 
 ## System Shape
 
-目标 0.1 系统是一个本地 Rust 二进制：它解析并验证 GitHub 托管的 Skill 目录，存储 durable metadata 与 desired state，在可移除 cache 中维护不可变外部内容，并将受管链接收敛到原生 Claude Code/Codex Skill roots；它绝不包装或启动 Agent。当前二进制实现配置切片、可移植 Library 导入/导出与显式 alias/category/tag/note 变更；它不解析网络来源、不创建 Trust、不缓存、部署或执行外部内容。
+目标 0.1 系统是一个本地 Rust 二进制：它解析并验证 GitHub 托管的 Skill 目录，存储 durable metadata 与 desired state，在可移除 cache 中维护不可变外部内容，并将受管链接收敛到原生 Claude Code/Codex Skill roots；它绝不包装或启动 Agent。当前二进制实现配置切片、可移植 Library 导入/导出、显式 alias/category/tag/note 变更、离线 `library list`/`search`/`get` 读取（FTS5 索引搜索）与当前 durable database 的 `doctor [--fix]`；它不解析网络来源、不创建 Trust、不缓存、部署或执行外部内容。
 
 The current Cargo workspace is:
 
@@ -24,7 +24,7 @@ The current Cargo workspace is:
       skilload-cli/
         src/
 
-已实现模块包括 `skilload-core` 的 configuration 与 Library domain/application/port/adapter 文件、`error.rs`，以及 `skilload-cli` 的参数、JSON、人类渲染和进程入口文件。P2/P3 Library adapter 只拥有 `data/skilload.db` 中的可移植来源元数据、alias/category/note、tags 与 semantic revision；它不拥有 Skill bytes、Trust、workspace、global 或 manager state。未实现的 ownership modules 与 manager assets 必须只在具有真实应用行为时加入。
+已实现模块包括 `skilload-core` 的 configuration 与 Library domain/application/port/adapter 文件、`domain/doctor.rs`、`ports/doctor.rs`、`application/doctor.rs`、`error.rs`，以及 `skilload-cli` 的参数、JSON、人类渲染和进程入口文件。P5 Library adapter 拥有 `data/skilload.db` 中的可移植来源元数据、alias/category/note、tags、semantic revision 与派生 `library_fts` FTS5 索引，并通过同一 `SqliteLibraryRepository` 提供 `DatabaseMaintenance`（只读 doctor 诊断、backup 优先的 v1→v2 migration 与 FTS-only rebuild）；它不拥有 Skill bytes、Trust、workspace、global 或 manager state。未实现的 ownership modules 与 manager assets 必须只在具有真实应用行为时加入。
 
 ## Dependency Direction
 
@@ -45,7 +45,7 @@ Dependencies point inward:
 
 * Domain values and rules do not import CLI, SQLite, HTTP, process, filesystem, clock, or Agent-specific code.
 * Application services coordinate domain rules through explicit ports. They own use-case transaction boundaries and return presentation-neutral results.
-* Adapters 在当前切片中实现 XDG/config 文件、受限可移植文件传输与 bundled SQLite Library repository；SQLite 的 FTS5 编译能力已被固定，但本切片不创建 FTS 表也不暴露 search。`skilload-core` 默认拒绝 unsafe code；唯一局部审计例外是在 first-import staging 与既有 database connection 的 SQLite main-file `HAS_MOVED` 检查中调用 bundled SQLite FFI，必须在任何 SQL 前返回 identity drift，不能成为一般 native I/O abstraction。immutable cache、system Git、GitHub metadata HTTP、time/randomness 和 Claude/Codex adapters 仍为 planned。
+* Adapters 在当前切片中实现 XDG/config 文件、受限可移植文件传输与 bundled SQLite Library repository；SQLite adapter 独占 schema v2 的 base/derived 两层维护：FTS5 索引在同一 transaction 中随 import/metadata mutation 显式更新，migration 与 doctor repair 从 base rows 完整重建，所有对已存在 database 的打开都先经 no-follow pre-open generation gate（main-file header journal-mode bytes 与 `-wal`/`-shm` sibling 盘点）拒绝外部 WAL generation。`skilload-core` 默认拒绝 unsafe code；唯一局部审计例外是在 first-import staging 与既有 database connection 的 SQLite main-file `HAS_MOVED` 检查中调用 bundled SQLite FFI，必须在任何 SQL 前返回 identity drift，不能成为一般 native I/O abstraction。immutable cache、system Git、GitHub metadata HTTP、time/randomness 和 Claude/Codex adapters 仍为 planned。
 * The CLI parses arguments, invokes one application command/query, and renders human or JSON output. It does not issue SQL, edit workspace files, run Git, or manage links directly.
 * Future TUI, Web, or other interfaces must call the same application layer. They may not bypass Trust, ownership, transaction, or network policies.
 
@@ -113,7 +113,7 @@ This is recoverable command atomicity, not a claim that unrelated filesystems an
 
 ## External Boundaries
 
-当前二进制不执行外部程序且不进行网络访问；它以 bundled SQLite（含 FTS5 编译能力）保存 P2 的可移植 Library 元数据，但不注册 FTS/search，也不链接 HTTP client。未来 source/deployment domains 需要 system `git` 用于 source object retrieval、仅在 SSH Git transport 时使用安全的 system `ssh`，以及 selected Agent CLI 用于 additive/repair/functional Agent 操作。exact-owned removal-only plan 不需要安装 Agent executable。`gh` 仍是可选 authenticated metadata-token source。未来 discovery（包括可接受的 direct 或 `/usr/bin/env` script interpreter）使用 `SKL-WSP-022` 的 shared trusted resolver；只有 `agents.claude.executable` 与 `agents.codex.executable` 可以覆盖 basename，且值必须绝对路径。
+当前二进制不执行外部程序且不进行网络访问；它以 bundled SQLite（含 FTS5）保存 Library 元数据与派生全文索引，通过 SQLite online backup API 生成 standalone migration backup（`data/backups/` 带 sibling manifest），但不注册 FTS/search 之外的 SQL surface，也不链接 HTTP client。`doctor` 默认只读（live 数据在线备份到内存副本后诊断），`doctor --fix` 才持有 durable lock 写 live database。未来 source/deployment domains 需要 system `git` 用于 source object retrieval、仅在 SSH Git transport 时使用安全的 system `ssh`，以及 selected Agent CLI 用于 additive/repair/functional Agent 操作。exact-owned removal-only plan 不需要安装 Agent executable。`gh` 仍是可选 authenticated metadata-token source。未来 discovery（包括可接受的 direct 或 `/usr/bin/env` script interpreter）使用 `SKL-WSP-022` 的 shared trusted resolver；只有 `agents.claude.executable` 与 `agents.codex.executable` 可以覆盖 basename，且值必须绝对路径。
 
 Network access is limited to the operations named by `SKL-OPS-008` and only GitHub.com is a content source. Agent directories and their version-sensitive behavior are isolated behind adapters and recorded in [the Agent discovery reference](docs/references/claude-and-codex-skill-discovery.md).
 

@@ -21,3 +21,4 @@ skilload-core = { path = "../skilload-core" }
 assert_cmd.workspace = true
 predicates.workspace = true
 tempfile.workspace = true
+rusqlite.workspace = true

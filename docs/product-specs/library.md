@@ -1,6 +1,6 @@
 # Library
 
-Status: 部分实现。`PLAN-0003` 实现了 Revision 4 的 `SKL-LIB-009` 与 Revision 5 的 `SKL-LIB-010`；`PLAN-0004` 实现了 Revision 1 的 `SKL-LIB-001` 与 `SKL-LIB-008`。`SKL-LIB-004` 已在 `PLAN-0005` 的规划基线中修订为 Revision 2 的纯文本 AND 查询，但仍未实现；其他 Library 行为同样仍为 skilload CLI MVP 的 planned 范围。
+Status: 部分实现。`PLAN-0003` 实现了 Revision 4 的 `SKL-LIB-009` 与 Revision 5 的 `SKL-LIB-010`；`PLAN-0004` 实现了 Revision 1 的 `SKL-LIB-001` 与 `SKL-LIB-008`；`PLAN-0005` 实现了 Revision 2 的 `SKL-LIB-004`、Revision 1 的 `SKL-LIB-005` 与 Revision 1 的 `SKL-LIB-011`（`library list`/`search`/`get` 离线读取、FTS5 索引搜索、确定性分页与 10,000-entry 规模证据）。其余 Library 行为仍为 skilload CLI MVP 的 planned 范围。
 
 The **Library** is the user's durable, searchable collection of source metadata. It is not a content store, Trust store, workspace manifest, or deployment list.
 

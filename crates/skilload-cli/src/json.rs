@@ -1,9 +1,9 @@
 use crate::human::display_path;
 use serde::Serialize;
 use skilload_core::{
-    AppError, ConfigEntries, ConfigEntry, ConfigValue, LibraryChangedField, LibraryEntry,
-    LibraryImportResult, LibraryMutationOperation, NativePath, PortableLibraryDocument,
-    SourceIdentity,
+    AppError, ConfigEntries, ConfigEntry, ConfigValue, DoctorOperation, LibraryChangedField,
+    LibraryEntriesPage, LibraryEntry, LibraryImportResult, LibraryMutationOperation,
+    LibrarySearchPage, NativePath, PortableLibraryDocument, SourceIdentity,
 };
 use std::os::unix::ffi::OsStrExt;
 
@@ -192,6 +192,62 @@ struct NetworkUse {
     used: bool,
     attempts: Vec<()>,
 }
+#[derive(Serialize)]
+struct LibraryEntriesData {
+    entries: Vec<LibraryEntry>,
+    offset: String,
+    limit: u16,
+    returned: u32,
+    total: String,
+}
+
+#[derive(Serialize)]
+struct LibrarySearchData {
+    query: String,
+    entries: Vec<LibraryEntry>,
+    offset: String,
+    limit: u16,
+    returned: u32,
+    total: String,
+}
+
+#[derive(Serialize)]
+struct TargetRefProjection {
+    scope: &'static str,
+    agent: Option<()>,
+    profile_id: Option<()>,
+    workspace_instance_id: Option<()>,
+    path: Option<PathValue>,
+}
+
+#[derive(Serialize)]
+struct DoctorFindingProjection {
+    severity: String,
+    code: String,
+    message: String,
+    source: Option<SourceIdentity>,
+    target: Option<TargetRefProjection>,
+    fixable_offline: bool,
+    fixed: bool,
+}
+
+#[derive(Serialize)]
+struct DoctorActionProjection {
+    kind: String,
+    target: TargetRefProjection,
+    source: Option<()>,
+    name: Option<()>,
+    before: Option<String>,
+    after: Option<String>,
+}
+
+#[derive(Serialize)]
+struct DoctorDataProjection {
+    fix_requested: bool,
+    findings: Vec<DoctorFindingProjection>,
+    actions: Vec<DoctorActionProjection>,
+    database_writable: bool,
+}
 
 pub fn entry(
     operation: &'static str,
@@ -277,6 +333,110 @@ pub fn library_metadata_mutation(
                 source_limits: None,
                 fetch_budget: None,
                 cache_quota: None,
+            },
+        },
+    })
+}
+pub fn library_entries(data: LibraryEntriesPage) -> serde_json::Result<Vec<u8>> {
+    let returned = data.entries.len() as u32;
+    serde_json::to_vec(&SuccessEnvelope {
+        api_version: API_VERSION,
+        operation: "library.list",
+        ok: true,
+        result: SuccessResult {
+            outcome: "observed",
+            data: LibraryEntriesData {
+                entries: data.entries,
+                offset: data.page.offset().to_string(),
+                limit: data.page.limit(),
+                returned,
+                total: data.total.to_string(),
+            },
+        },
+    })
+}
+
+pub fn library_search(data: LibrarySearchPage) -> serde_json::Result<Vec<u8>> {
+    let returned = data.entries.len() as u32;
+    serde_json::to_vec(&SuccessEnvelope {
+        api_version: API_VERSION,
+        operation: "library.search",
+        ok: true,
+        result: SuccessResult {
+            outcome: "observed",
+            data: LibrarySearchData {
+                query: data.original,
+                entries: data.entries,
+                offset: data.page.offset().to_string(),
+                limit: data.page.limit(),
+                returned,
+                total: data.total.to_string(),
+            },
+        },
+    })
+}
+
+pub fn library_get(entry: LibraryEntry) -> serde_json::Result<Vec<u8>> {
+    serde_json::to_vec(&SuccessEnvelope {
+        api_version: API_VERSION,
+        operation: "library.get",
+        ok: true,
+        result: SuccessResult {
+            outcome: "observed",
+            data: entry,
+        },
+    })
+}
+
+pub fn doctor(operation: DoctorOperation) -> serde_json::Result<Vec<u8>> {
+    serde_json::to_vec(&SuccessEnvelope {
+        api_version: API_VERSION,
+        operation: "doctor",
+        ok: true,
+        result: SuccessResult {
+            outcome: operation.outcome.as_str(),
+            data: DoctorDataProjection {
+                fix_requested: operation.data.fix_requested,
+                findings: operation
+                    .data
+                    .findings
+                    .iter()
+                    .map(|finding| DoctorFindingProjection {
+                        severity: finding.severity.as_str().to_owned(),
+                        code: finding.code.clone(),
+                        message: finding.message.clone(),
+                        source: finding.source.clone(),
+                        target: finding.target.as_ref().map(|path| TargetRefProjection {
+                            scope: "database",
+                            agent: None,
+                            profile_id: None,
+                            workspace_instance_id: None,
+                            path: Some(path_value(path)),
+                        }),
+                        fixable_offline: finding.fixable_offline,
+                        fixed: finding.fixed,
+                    })
+                    .collect(),
+                actions: operation
+                    .data
+                    .actions
+                    .iter()
+                    .map(|action| DoctorActionProjection {
+                        kind: action.kind.as_str().to_owned(),
+                        target: TargetRefProjection {
+                            scope: "database",
+                            agent: None,
+                            profile_id: None,
+                            workspace_instance_id: None,
+                            path: Some(path_value(&action.target)),
+                        },
+                        source: None,
+                        name: None,
+                        before: action.before.clone(),
+                        after: action.after.clone(),
+                    })
+                    .collect(),
+                database_writable: operation.data.database_writable,
             },
         },
     })

@@ -1,6 +1,6 @@
 # Cache and Local Operations
 
-Status: partially implemented. `PLAN-0002` implements Revision 1 of `SKL-OPS-006` in the development `0.0.1` configuration slice. All other behaviors in this document remain planned for the 0.1 CLI MVP.
+Status: partially implemented. `PLAN-0002` implements Revision 1 of `SKL-OPS-006` in the development `0.0.1` configuration slice. `PLAN-0005` implements Revision 1 of `SKL-OPS-003` (the backed-up v1→v2 forward migration), the durable-database portions of `SKL-OPS-004` (typed `database_corrupt` diagnostics with backup inventory and FTS-only rebuild), `SKL-OPS-005` for the new read/doctor leaves, and the offline read coverage of `SKL-OPS-008` for `library list`/`search`/`get` and `doctor`. Doctor's cross-domain inspection (`SKL-CACHE-006`) and its future repair surface (`SKL-CACHE-007` beyond database migration/FTS rebuild) remain planned for the 0.1 CLI MVP because Trust, cache, global, manager, and workspace state do not exist yet.
 
 The **cache** contains removable external Skill bytes. Durable metadata and desired state live elsewhere. Operational state contains journals and ownership records needed to recover managed mutations safely.
 

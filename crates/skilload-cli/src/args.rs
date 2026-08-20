@@ -18,7 +18,6 @@ pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Command>,
 }
-
 #[derive(Debug, Subcommand)]
 pub enum Command {
     Config {
@@ -28,6 +27,10 @@ pub enum Command {
     Library {
         #[command(subcommand)]
         command: LibraryCommand,
+    },
+    Doctor {
+        #[arg(long, help = "Apply the supported offline database repairs.")]
+        fix: bool,
     },
 }
 
@@ -58,6 +61,39 @@ pub enum LibraryCommand {
     Export {
         #[arg(long)]
         output: PathBuf,
+    },
+    List {
+        #[arg(
+            long,
+            value_parser = clap::value_parser!(u16).range(1..=1_000),
+            help = "Page size from 1 through 1000 (defaults to 100)."
+        )]
+        limit: Option<u16>,
+        #[arg(
+            long,
+            value_parser = clap::value_parser!(u64),
+            help = "Number of matches to skip (defaults to 0)."
+        )]
+        offset: Option<u64>,
+    },
+    Search {
+        #[arg(allow_hyphen_values = true)]
+        query: String,
+        #[arg(
+            long,
+            value_parser = clap::value_parser!(u16).range(1..=1_000),
+            help = "Page size from 1 through 1000 (defaults to 100)."
+        )]
+        limit: Option<u16>,
+        #[arg(
+            long,
+            value_parser = clap::value_parser!(u64),
+            help = "Number of matches to skip (defaults to 0)."
+        )]
+        offset: Option<u64>,
+    },
+    Get {
+        source: String,
     },
     Alias {
         #[command(subcommand)]
@@ -161,6 +197,9 @@ pub fn json_operation(arguments: &[OsString]) -> Option<&'static str> {
         value if value == OsStr::new("library") => match positionals.next()?.as_os_str() {
             value if value == OsStr::new("import") => Some("library.import"),
             value if value == OsStr::new("export") => Some("library.export"),
+            value if value == OsStr::new("list") => Some("library.list"),
+            value if value == OsStr::new("search") => Some("library.search"),
+            value if value == OsStr::new("get") => Some("library.get"),
             value if value == OsStr::new("alias") => match positionals.next()?.as_os_str() {
                 value if value == OsStr::new("set") => Some("library.alias.set"),
                 value if value == OsStr::new("clear") => Some("library.alias.clear"),
@@ -183,6 +222,7 @@ pub fn json_operation(arguments: &[OsString]) -> Option<&'static str> {
             },
             _ => None,
         },
+        value if value == OsStr::new("doctor") => Some("doctor"),
         _ => None,
     }
 }
@@ -211,7 +251,7 @@ mod tests {
             .get_subcommands()
             .map(|subcommand| subcommand.get_name())
             .collect();
-        assert_eq!(top_level, ["config", "library"]);
+        assert_eq!(top_level, ["config", "library", "doctor"]);
 
         let config = command
             .get_subcommands()
@@ -233,7 +273,9 @@ mod tests {
             .collect();
         assert_eq!(
             library_names,
-            ["import", "export", "alias", "category", "tag", "note"]
+            [
+                "import", "export", "list", "search", "get", "alias", "category", "tag", "note"
+            ]
         );
         for (group, leaves) in [
             ("alias", &["set", "clear"][..]),
@@ -346,6 +388,54 @@ mod tests {
                 "note".into(),
                 "unknown".into(),
             ]),
+            None
+        );
+    }
+
+    #[test]
+    fn json_operations_cover_indexed_reads_and_doctor() {
+        assert_eq!(
+            json_operation(&[
+                "skilload".into(),
+                "--json".into(),
+                "library".into(),
+                "list".into(),
+                "--limit".into(),
+                "5".into(),
+            ]),
+            Some("library.list")
+        );
+        assert_eq!(
+            json_operation(&[
+                "skilload".into(),
+                "--json".into(),
+                "library".into(),
+                "search".into(),
+                "OR NOT * name:review".into(),
+            ]),
+            Some("library.search")
+        );
+        assert_eq!(
+            json_operation(&[
+                "skilload".into(),
+                "--json".into(),
+                "library".into(),
+                "get".into(),
+                "github:owner/repository#skills/review@refs/heads/main".into(),
+            ]),
+            Some("library.get")
+        );
+        assert_eq!(
+            json_operation(&[
+                "skilload".into(),
+                "doctor".into(),
+                "--fix".into(),
+                "--json".into(),
+            ]),
+            Some("doctor")
+        );
+        assert_eq!(
+            json_operation(&["skilload".into(), "--json".into(), "cache".into(),]),
             None
         );
     }

@@ -1,12 +1,13 @@
 use crate::domain::configuration::NativePath;
 use crate::domain::source::{ResolvedSkill, SourceIdentity};
-use crate::domain::unicode_15_1::{TagValue, normalize_tag};
+use crate::domain::unicode_15_1::{TagValue, full_case_fold, is_white_space, normalize_tag};
 use crate::error::{AppError, Conflict};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
     io::{self, Write},
 };
+use unicode_normalization::UnicodeNormalization;
 
 pub const LIBRARY_FORMAT_VERSION: u64 = 1;
 
@@ -277,6 +278,101 @@ pub struct LibraryMutationOperation {
     pub source: SourceIdentity,
     pub entry: LibraryEntry,
     pub changed_fields: Vec<LibraryChangedField>,
+}
+
+pub const LIBRARY_PAGE_DEFAULT_LIMIT: u16 = 100;
+pub const MAX_LIBRARY_PAGE_LIMIT: u16 = 1_000;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LibraryPage {
+    limit: u16,
+    offset: u64,
+}
+
+impl LibraryPage {
+    pub fn new(limit: u16, offset: u64) -> Result<Self, AppError> {
+        if limit == 0 || limit > MAX_LIBRARY_PAGE_LIMIT {
+            return Err(AppError::validation("library_page_limit_range", None));
+        }
+        Ok(Self { limit, offset })
+    }
+
+    pub const fn default_page() -> Self {
+        Self {
+            limit: LIBRARY_PAGE_DEFAULT_LIMIT,
+            offset: 0,
+        }
+    }
+
+    pub const fn limit(&self) -> u16 {
+        self.limit
+    }
+
+    pub const fn offset(&self) -> u64 {
+        self.offset
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LibrarySearchTerm {
+    alternatives: Vec<String>,
+}
+
+impl LibrarySearchTerm {
+    pub fn alternatives(&self) -> &[String] {
+        &self.alternatives
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LibrarySearchQuery {
+    original: String,
+    terms: Vec<LibrarySearchTerm>,
+}
+
+impl LibrarySearchQuery {
+    pub fn new(original: String) -> Result<Self, AppError> {
+        let mut terms = Vec::new();
+        for word in original
+            .split(is_white_space)
+            .filter(|word| !word.is_empty())
+        {
+            let raw = word.nfc().collect::<String>();
+            let folded = full_case_fold(&raw).nfc().collect::<String>();
+            let mut alternatives = vec![raw];
+            if folded != alternatives[0] {
+                alternatives.push(folded);
+            }
+            terms.push(LibrarySearchTerm { alternatives });
+        }
+        if terms.is_empty() {
+            return Err(AppError::validation("library_search_query_empty", None));
+        }
+        Ok(Self { original, terms })
+    }
+
+    pub fn original(&self) -> &str {
+        &self.original
+    }
+
+    pub fn terms(&self) -> &[LibrarySearchTerm] {
+        &self.terms
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LibraryEntriesPage {
+    pub entries: Vec<LibraryEntry>,
+    pub page: LibraryPage,
+    pub total: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LibrarySearchPage {
+    pub original: String,
+    pub entries: Vec<LibraryEntry>,
+    pub page: LibraryPage,
+    pub total: u64,
 }
 
 impl PortableLibraryEntry {
@@ -840,5 +936,111 @@ mod tests {
             Err(AppError::Validation { constraint, .. }) if constraint == "library_tag_display"
         ));
         assert_eq!(entry, original);
+    }
+
+    #[test]
+    fn page_limits_enforce_the_product_range_and_full_u64_offsets() {
+        assert!(matches!(
+            LibraryPage::new(0, 0).unwrap_err(),
+            AppError::Validation { constraint, .. } if constraint == "library_page_limit_range"
+        ));
+        assert!(matches!(
+            LibraryPage::new(MAX_LIBRARY_PAGE_LIMIT + 1, 0).unwrap_err(),
+            AppError::Validation { constraint, .. } if constraint == "library_page_limit_range"
+        ));
+        assert_eq!(LibraryPage::new(1, u64::MAX).unwrap().offset(), u64::MAX);
+        assert_eq!(
+            LibraryPage::new(MAX_LIBRARY_PAGE_LIMIT, 0).unwrap().limit(),
+            1_000
+        );
+        assert_eq!(
+            LibraryPage::default_page(),
+            LibraryPage::new(100, 0).unwrap()
+        );
+    }
+
+    #[test]
+    fn search_query_splits_on_pinned_unicode_whitespace_only() {
+        let query =
+            LibrarySearchQuery::new("  Review\u{000b}code\u{0085}caf\u{e9}\u{2028}done".to_owned())
+                .unwrap();
+        assert_eq!(
+            query.original(),
+            "  Review\u{000b}code\u{0085}caf\u{e9}\u{2028}done"
+        );
+        let terms: Vec<_> = query
+            .terms()
+            .iter()
+            .map(|term| term.alternatives().to_vec())
+            .collect();
+        assert_eq!(
+            terms,
+            vec![
+                vec!["Review".to_owned(), "review".to_owned()],
+                vec!["code".to_owned()],
+                vec!["caf\u{e9}".to_owned()],
+                vec!["done".to_owned()],
+            ]
+        );
+
+        let ascii_split = LibrarySearchQuery::new("a b".to_owned()).unwrap();
+        assert_eq!(ascii_split.terms().len(), 2);
+    }
+
+    #[test]
+    fn search_query_folds_full_unicode_case_and_nfc_forms() {
+        let query = LibrarySearchQuery::new("Review CAFE\u{301} \u{1f600}".to_owned()).unwrap();
+        let terms: Vec<_> = query
+            .terms()
+            .iter()
+            .map(|term| term.alternatives().to_vec())
+            .collect();
+        assert_eq!(
+            terms,
+            vec![
+                vec!["Review".to_owned(), "review".to_owned()],
+                vec!["CAF\u{c9}".to_owned(), "caf\u{e9}".to_owned()],
+                vec!["\u{1f600}".to_owned()],
+            ]
+        );
+
+        let ligature = LibrarySearchQuery::new("\u{fb03}".to_owned()).unwrap();
+        assert_eq!(
+            ligature.terms()[0].alternatives(),
+            ["\u{fb03}".to_owned(), "ffi".to_owned()]
+        );
+
+        let turkish = LibrarySearchQuery::new("I ı".to_owned()).unwrap();
+        assert_eq!(
+            turkish.terms()[0].alternatives(),
+            &["I".to_owned(), "i".to_owned()]
+        );
+        assert_eq!(turkish.terms()[1].alternatives(), &["ı".to_owned()]);
+    }
+
+    #[test]
+    fn search_query_keeps_operators_and_quotes_as_plain_literals() {
+        let query =
+            LibrarySearchQuery::new("OR NOT * name:review a\"b (x) -y NEAR".to_owned()).unwrap();
+        let terms: Vec<_> = query
+            .terms()
+            .iter()
+            .map(|term| term.alternatives()[0].clone())
+            .collect();
+        assert_eq!(
+            terms,
+            ["OR", "NOT", "*", "name:review", "a\"b", "(x)", "-y", "NEAR"]
+        );
+    }
+
+    #[test]
+    fn search_query_rejects_empty_and_whitespace_only_queries() {
+        for raw in ["", " ", "\t\u{000b}\u{2028}"] {
+            assert!(matches!(
+                LibrarySearchQuery::new(raw.to_owned()).unwrap_err(),
+                AppError::Validation { constraint, .. }
+                    if constraint == "library_search_query_empty"
+            ));
+        }
     }
 }

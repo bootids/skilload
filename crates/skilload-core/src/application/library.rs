@@ -1,7 +1,8 @@
 use super::Application;
 use crate::domain::library::{
-    LibraryEntry, LibraryExportOperation, LibraryExportRequest, LibraryImportOperation,
-    LibraryImportRequest, LibraryMetadataChange, LibraryMetadataMutation, LibraryMutationOperation,
+    LibraryEntriesPage, LibraryEntry, LibraryExportOperation, LibraryExportRequest,
+    LibraryImportOperation, LibraryImportRequest, LibraryMetadataChange, LibraryMetadataMutation,
+    LibraryMutationOperation, LibraryPage, LibrarySearchPage, LibrarySearchQuery,
     LibraryTrustState,
 };
 use crate::error::AppError;
@@ -25,6 +26,22 @@ impl Application {
         Ok(LibraryExportOperation { document })
     }
 
+    pub fn library_list(&self, page: LibraryPage) -> Result<LibraryEntriesPage, AppError> {
+        self.library_repository.list(&page)
+    }
+
+    pub fn library_search(
+        &self,
+        query: String,
+        page: LibraryPage,
+    ) -> Result<LibrarySearchPage, AppError> {
+        let query = LibrarySearchQuery::new(query)?;
+        self.library_repository.search(&query, &page)
+    }
+
+    pub fn library_get(&self, selector: String) -> Result<LibraryEntry, AppError> {
+        self.library_repository.get(&selector)
+    }
     pub fn library_alias_set(
         &self,
         selector: String,

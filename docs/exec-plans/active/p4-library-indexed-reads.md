@@ -71,10 +71,10 @@ Read兼容性是显式边界。完整 v1 base rows可供 list/get/export只读�
 - [x] (2026-08-20 11:36Z) 以 `88eec453bbb7a08dea160601fa66093398be9c72` 提交并推送 planning baseline，创建 Draft PR https://github.com/bootids/skilload/pull/5；GitHub 已验证 `isDraft: true`、head/base 正确且 `headRefOid` 等于该提交。本 metadata update 将 canonical URL、Progress 与 publication evidence 作为第二个 planning commit 推送；随后等待明确 human execution trigger。
 - [x] (2026-08-20 12:03Z) 处理 PR #5 首轮规划评审的三个 inline 问题（FTS group 间显式 `AND`、base corruption 走 `database_corrupt` error、pre-open generation gate 防 sidecar）：修订本 Plan、`docs/design-docs/application-and-persistence.md` 与两个 reference 文档并推送；未改动任何运行时代码，Plan 保持 `plan`、PR 保持 Draft。
 - [x] (2026-08-20 12:20Z) 收到执行授权（human 触发 `execute-exec-plan`）：验证 `PLAN-0004` 在 `origin/main` 为 `completed`、PR #5 为 Draft（`isDraft: true`、head `0d1a97e66840ecdb91c79cf8aaa2dff37c31e386` 与本地 HEAD 一致、base `main`）、worktree clean；执行 `plan → active` 迁移并推送，随后开始实现 milestones。
-- [ ] 实现 domain query/page/doctor values与 focused ports/application operations。
-- [ ] 实现 schema v2 FTS、v1-compatible reads、transaction-maintained index与 list/search/get repository queries。
-- [ ] 实现 standalone backup、v1→v2 migration、read-only doctor snapshot与 FTS-only repair。
-- [ ] 实现 CLI parsing、API-v2/human projections、focused/unit/integration/fault/scale tests和实际 binary smoke；同步产品、架构、设计与本 Plan证据。
+- [x] (2026-08-20 13:36Z) Milestone 1：`domain/library.rs` 新增 `LibraryPage`/`LibrarySearchQuery`/`LibrarySearchTerm`/`LibraryEntriesPage`/`LibrarySearchPage`（pinned `is_white_space` 分词、NFC raw + full-case-fold alternatives、`library_search_query_empty`）；新增 `domain/doctor.rs`、`ports/doctor.rs`（`DatabaseMaintenance`）、`application/doctor.rs`；`LibraryRepository` 增加 `list`/`search`/`get`；`Application::new` 增加 `Arc<dyn DatabaseMaintenance>` 并迁移全部 caller（CLI composition 复用同一 `SqliteLibraryRepository`）。
+- [x] (2026-08-20 13:36Z) Milestone 2：`SCHEMA_VERSION=2`，`initialize_schema` 创建固定 SQL 的 `library_fts`；validation 拆为 base（含 domain rows）与 derived（fixed-SQL 比对 + 内容一一相等）两层；`open_existing_database` 先经 pre-open generation gate（header magic/journal-mode bytes (1,1)、`-wal`/`-shm` sibling 盘点）；list/get/export 接受 v1/newer（newer 仅 export），search 在 v1 返回 `migration_required`；list/search 用 CTE + 单次 LEFT JOIN 组装分页；`apply_additions`/`apply_metadata_change` 同事务维护 FTS。
+- [x] (2026-08-20 13:36Z) Milestone 3：workspace 为 `rusqlite 0.40.2` 启用 `backup` feature 并加入 `sha2 =0.11.0`；`SqliteLibraryRepository` 实现 `DatabaseMaintenance`（absent/healthy/v1/newer/FTS-drift 诊断、online backup 到 `:memory:` 后运行 FTS5 `integrity-check`）；`doctor --fix` 在 durable lock 下发布 `data/backups/` 的 standalone backup + completed manifest（SHA-256/size/source identity/epoch-ns，no-clobber linkat 发布）后执行单事务 v1→v2 migration，或对 FTS-only drift 做 rebuild；state revision 不变；保守 prune。
+- [x] (2026-08-20 13:36Z) Milestone 4：CLI 注册 `library list/search/get`（clap range parser 拒绝 limit 0/1001/负数，u64 parser 拒绝 offset 溢出）与 `doctor [--fix]`；json.rs 增加 `LibraryEntriesData`/`LibrarySearchData`/`LibraryEntry`/`DoctorData`（含 `TargetRef` projection、DecimalU64 strings）；human.rs 增加 terminal-safe 渲染；core adapter tests（13 个新增：分页/逐字段搜索/操作符 literal/v1 门控/migration+backup+manifest/FTS drift/doctor 惰性/WAL gate/迁移 failpoints/并发快照/newer/corrupt backups）与 cli_contract tests（4 个新增）全部通过；10,000-entry release 测量见 Artifacts；debug binary smoke 通过；产品/架构/设计文档已同步。
 - [ ] 在 implementation、acceptance、documentation和 retrospective全部 committed/pushed后运行 `gh pr ready`，验证 `isDraft: false`及 `headRefOid`等于 pushed implementation HEAD，再自动移入 `review`并推送 status commit。
 - [ ] 收到明确 merge prompt后执行完成态 preflight、合并、更新 `main`并删除本地 delivery branch。
 
@@ -95,6 +95,15 @@ Read兼容性是显式边界。完整 v1 base rows可供 list/get/export只读�
   Evidence: 2026-08-20 planning 实验（SQLite 3.53.4）：`"code" "review"` 正常；`("Review" OR "review") "code"` 返回 `fts5: syntax error near ""code""`；`("Review" OR "review") AND "code"` 正常命中。原 implicit AND 组合在任何 raw≠folded 词项上会违反 `SKL-LIB-004` Revision 2 “不触发 FTS grammar error” 的 acceptance。
 - Observation: read-only SQLite connection打开 WAL-mode generation会在可写目录创建并保留 `-shm`（header 为 (2,2) 且无 sidecar 时连 `-wal` 也一并创建）；`immutable=1` 不创建 sidecar 但忽略 WAL 内容，会产生错误诊断。
   Evidence: 2026-08-20 planning 实验证实三种情形的 sidecar 文件清单变化与 `immutable=1` 的 “no such table” 误读；结论已固化到 `docs/references/sqlite-backup-and-corruption-recovery.md`。
+
+- Observation: rusqlite 0.40.2 的 `Backup::run_to_completion` 以 `assert!(pages_per_step > 0)` 拒绝负值；SQLite 文档允许 -1 表示单步复制，但该 Rust 封装不支持。
+  Evidence: `rusqlite-0.40.2/src/backup.rs:299` 的 panic "pages_per_step must be positive"；实现固定为 512 pages/step。
+- Observation: SQLite 在 `sqlite_master.sql` 中逐字保存 `CREATE VIRTUAL TABLE` 语句文本，使 fixed-SQL 相等比对成为可靠的 derived-shape 校验，无需解析 FTS5 内部表。
+  Evidence: 诊断输出 `stored sql: "CREATE VIRTUAL TABLE library_fts USING fts5(canonical_source UNINDEXED, … tokenize = 'unicode61 remove_diacritics 0')"` 与创建常量逐字节相等。
+- Observation: macOS 上 `tempdir()` 返回 `/var/folders/...` 而 XDG resolver 通过 symlink canonicalize 为 `/private/var/folders/...`；测试对 doctor action target 的路径断言必须比较 canonicalize 后的路径。
+  Evidence: 断言失败输出 left `/private/var/...` right `/var/...`；改用 `database.canonicalize()` 后通过。
+- Observation: 测试夹具中把 skill name 改成与 path basename 不一致的值会被 import 接受（struct 构造绕过 `ResolvedSkill::new`），随后读取按 domain-invariant 违反归类为 `database_corrupt`——这正是外部篡改行应得的分类，但夹具本身必须用合法条目。
+  Evidence: 同名共存夹具改用共享 basename `skills/one/review` 与 `skills/two/review` 后通过；`same_name_sources_coexist_and_search_orders_by_source` 断言两者 name 相等。
 
 ## Decision Log
 
@@ -136,10 +145,25 @@ Read兼容性是显式边界。完整 v1 base rows可供 list/get/export只读�
   Rationale: 2026-08-20 规划评审（PRRT_kwDOT7YN2s6ay0rD、PRRT_kwDOT7YN2s6ay0rJ）指出并经实验证实：read-only 打开 WAL-mode generation会创建并保留 `-shm`/`-wal`，`immutable=1` 则忽略 WAL 内容；同时 `SKL-OPS-004`、`docs/product-specs/database-recovery.md` 第1步与 API-v2 catalog都要求 doctor 以 `database_corrupt` details报告 base corruption，`DoctorFinding`（severity/code/message）无法携带 backup list、recoverable exports或 `database-corruption-v1`。skilload 只发布 DELETE-journal database，此类 generation只能来自外部，按 P2 既有 sidecar-hygiene 先例归入 corruption class。
   Date/Author: 2026-08-20 / Codex
 
+- Decision: FTS-only drift 在读取/写入路径上按 typed `invalid_state`（`library_fts_invalid`，exit 4）报告，而不是 `database_corrupt`；只有 base 层失败（schema shape、integrity/foreign-key、domain rows）与 pre-open gate 失败才返回 `database_corrupt`。list/get/export 只要求 base 验证，search 与所有 writes 额外要求 derived 一致。
+  Rationale: `SKL-OPS-004` 把 `database_corrupt` 限定为 base records 不能证明完整的情形；派生索引可由 `doctor --fix` 修复，把它报告为 corruption 会错误阻止 operator 使用 doctor 修复路径，也会错误触发 database-corruption-v1。
+  Date/Author: 2026-08-20 / Codex
+- Decision: `library_fts` 的 `repository` 列索引 `skill.source.repository_display`（verified fresh spelling），而不是 canonical lowercase repository。
+  Rationale: 用户按显示拼写搜索；对 ASCII 而言 unicode61 tokenizer 的大小写折叠使两种拼写产生相同 token，仅非 ASCII display 差异会有区别，而该差异正是 verified display 的可见内容。tag 的 display/key 双列已覆盖规范化等价需求。
+  Date/Author: 2026-08-20 / Codex
+- Decision: migration backup staging 使用 tempfile，最终以 no-clobber `linkat`（link 失败即保留 foreign entry 并报错）发布 `skilload-db-v1-to-v2-<epoch_ns>.db` 与 `.manifest.json`，随后仅 unlink 仍匹配 held descriptor identity 的 staging 名。
+  Rationale: 与 first-import 的 linkat 发布先例一致且跨 macOS/Linux 可用（`RenameFlags::NOREPLACE` 是 Linux-only）；identity 比对防止误删外部替换。
+  Date/Author: 2026-08-20 / Codex
+- Decision: 所有 list/search/get/export/doctor 入口对错误路径统一执行 `enrich_database_corruption`：`DatabaseCorrupt` 若无 backups，则重新枚举 `data/backups/` 的完整 manifest pair 填充 details。
+  Rationale: gate 与 base 校验在远离 roots 的代码路径抛出空 backups 的错误；`DatabaseCorruptDetails` 契约要求列出已知 backups，单点 enrichment 保证每条路径完整。
+  Date/Author: 2026-08-20 / Codex
+- Decision: 测试用 v1 fixture 由 v2 `initialize_schema` + `DROP TABLE library_fts` + `UPDATE schema_info SET version = 1` 生成；CLI 契约测试通过 `rusqlite` dev-dependency 直接执行 v1 DDL。
+  Rationale: base 表结构在 v1/v2 完全相同，drop-then-downgrade 得到与 P2/P3 二进制产出逐字节同构的 v1 database，避免维护两份 DDL（core 内）且让 CLI 级迁移 smoke 使用真实 binary。
+  Date/Author: 2026-08-20 / Codex
 ## Outcomes & Retrospective
 
 
-当前只完成规划：选定 independently acceptable scope、取得搜索产品决定、建立 delivery branch并同步 Revision 2产品/技术/reference baseline。没有运行时代码、schema、command或用户 database被修改。Initial planning commit `88eec453bbb7a08dea160601fa66093398be9c72` 与 Draft PR https://github.com/bootids/skilload/pull/5 已发布；本 metadata update 是第二个 planning commit。进入 review前必须记录最终行为、schema migration SHA/backup evidence、10,000-entry measurements、实际 smoke和与 Product Baseline的逐项对照。
+实现已完成（2026-08-20 13:36Z），全部 Product Baseline 行为已交付并验证。`SKL-LIB-004` Revision 2：嵌入式 FTS5 索引八类字段（含 tag display/key 双列），纯文本词项 AND 查询经 pinned Unicode 15.1.0 分词 + NFC/case-fold alternatives + 完整 FTS5 string quoting 编码（同词项括号 OR group、跨词项显式 `AND`），操作符/引号/列过滤全部保持 literal，空查询在 SQLite 前以 `validation_failed/library_search_query_empty` 拒绝。`SKL-LIB-005` Revision 1：`library list/search/get` 离线读取 canonical-source binary order、确定性分页（limit 1..=1000 默认 100、全量 u64 offset 默认 0、offset≥total 返回空页）、不创建任何 root、不改变 database bytes/mtime。`SKL-LIB-011` Revision 1：10,000-entry release 实测 exact get 0.06s、first list page 0.06s、full-text search 0.12s、deep-offset search 0.12s（Apple M4 Pro，预算各 10 秒），count/order 确定性由永久 tests 断言。`SKL-OPS-003` Revision 1：v1→v2 migration 在任何 live write 前发布 standalone online-backup pair（`data/backups/` + completed manifest：SHA-256/size/source identity/epoch-ns）并验证 digest/schema/base/revision，随后单事务创建+填充 FTS+更新 schema version，state revision 前后不变；failpoint 证据区分"v1+完整 backup"与"durable v2 但命令报错"；unknown newer schema 与 downgrade 保持拒绝。Doctor：默认只读（online backup 到 `:memory:` 运行 FTS5 integrity-check，filesystem 完全惰性，覆盖 absent/healthy/v1/FTS-drift/corrupt/WAL fixtures），`--fix` 交付 migrate/repair action 并可重复（healthy 重复 fix 返回 unchanged 且不产生第二个 backup）。Base corruption 与 WAL/sidecar generation 返回 typed `database_corrupt`（含已验证 backups 与 `database-corruption-v1`）；FTS-only drift 是 fixable finding。验证：`cargo test --workspace` 135 core + 28 CLI（11 bin + 17 contract）全部通过；focused 过滤覆盖 domain query（`library_search`）、repository/migration（`sqlite_library`）与 CLI（`library_reads`、`doctor`）；debug binary smoke 与 10k release 测量记录于 Artifacts。遗留：无——本计划范围内的所有 acceptance 均已满足；跨产品尚未满足的行为（`SKL-CLI-001` 完整 50 leaves、`SKL-OPS-002` 完整 ownership、`SKL-CACHE-006/007` 跨域 doctor）保持 planned 且未被误报为完成。
 
 ## Review Conversation Log
 
@@ -423,6 +447,62 @@ Ready/review transaction严格遵守`docs/PLANS.md`。若`gh pr ready`失败，P
 
 执行时在此追加：planning commits、Draft PR URL/head、migration backup manifest示例、failpoint summary、focused/full validation、actual smoke输出、10,000-entry release timings、implementation SHA、ready verification与review-state commit。只保留证明行为所需的短摘录，不粘贴完整test logs。
 
+执行证据（2026-08-20 13:36Z，机器 Apple M4 Pro / darwin 25.6.0 / arm64）：
+
+Focused/full validation（`mise exec -- cargo … --locked`）：
+
+    cargo test -p skilload-core                      -> 135 passed, 0 failed（含 13 个新增 sqlite_library tests）
+    cargo test -p skilload-cli --bin skilload        -> 11 passed（含 json_operations_cover_indexed_reads_and_doctor）
+    cargo test -p skilload-cli --test cli_contract   -> 17 passed（含 library_reads / read_commands_never_mutate /
+                                                         doctor_observes_and_fixes_a_v1_database_end_to_end /
+                                                         absent_reads_and_doctor_stay_offline）
+    cargo build --workspace --all-features --locked  -> exit 0
+
+Debug binary smoke（isolated XDG roots，`./target/debug/skilload`）：
+
+    library import --input library.json --json          -> changed
+    library list --limit 1 --offset 0 --json            -> skills/other（total 2）
+    library list --limit 1 --offset 1 --json            -> skills/review（total 2）
+    library note set 'github:…#skills/review@…' 'code quality review' --json -> changed
+    library search 'code review' --json                 -> total 1，命中 note 中不相邻词项
+    library search 'OR NOT * name:review' --json        -> total 0，无 FTS grammar error
+    library get 'github:…#skills/review@…' --json       -> entry（name "review"）
+    library export --output export.json --json          -> format_version 1
+    doctor --json                                       -> findings 0，database_writable true
+
+v1 migration smoke（真实 binary + rusqlite 生成的 v1 fixture，见 cli_contract
+`doctor_observes_and_fixes_a_v1_database_end_to_end`）：list/get/export 成功；search 返回
+`migration_required`（details found_version 1 / supported_version 2）；默认 doctor 报
+`library_database_migration_required`（fixable，database_writable false）且 database
+bytes/mtime 不变；`doctor --fix` 返回 changed + migrate action（before schema_1 / after
+schema_2，target scope database）；`data/backups/` 出现 1 个 standalone db + completed
+manifest（source_schema 1 / target_schema 2 / database_bytes 与实际相等）；第二次 doctor
+healthy（writable true）；search 成功；重复 fix unchanged 且 backups 数量仍为 1。
+
+Migration backup manifest 示例（core test `doctor_fix_migrates_v1_after_a_validated_backup`
+校验全部字段并重算 SHA-256）：
+
+    {"format_version":1,"source_schema":1,"target_schema":2,
+     "created_at_epoch_ns":…,"database_bytes":…,"sha256":"sha256:<64 hex>",
+     "source_device":…,"source_inode":…,"complete":true}
+
+Failpoint summary（`migration_failpoints_leave_a_coherent_state`）：backup copy 失败 ->
+live 保持 v1、无 complete pair、state revision 不变；pre-commit migration 失败 -> v1 +
+1 个 complete backup 保留；post-commit sync 前失败 -> v2 durable、命令报
+internal_invariant、下一次 doctor healthy（不声称 v1 仍在）；FTS rebuild post-commit
+失败 -> base 与 state revision 不变、索引已提交、下一次 doctor healthy。
+
+10,000-entry release measurement（fixture 6,296,601 bytes，一次 import 后逐项计时）：
+
+    exact get  github:owner/repo-042#skills/skill-00042@refs/heads/main  real 0.06s
+    first list page  --limit 100 --offset 0    total 10000 returned 100  real 0.06s
+    full-text search 'code review'             total 910  returned 100   real 0.12s
+    deep-offset search 'Review' --offset 3200  total 10000 returned 100  real 0.12s
+    last list page    --limit 1000 --offset 9900  returned 100           real 0.06s
+
+全部远低于 Product Baseline 的 10 秒预算；语义（counts/order/分页）由永久 tests 断言，
+不依赖 wall clock。
+
 ## Interfaces and Dependencies
 
 
@@ -462,3 +542,5 @@ Backup manifest是private versioned serde record，不进入API-v2或portable ex
 2026-08-20 12:03Z：处理 PR #5 首轮规划评审。三个 inline 问题（FTS group 间显式 `AND`、base corruption 走 `database_corrupt` error、pre-open generation gate 防 WAL sidecar）均按 planning 边界以文档修订处置：更新本 Plan 的 Design Inputs、Milestone 2/3、Validation、Product Baseline 可观察路径、Surprises & Discoveries、Decision Log、Progress 与 Review Conversation Log，同步 `docs/design-docs/application-and-persistence.md`、`docs/references/sqlite-fts5-library-search.md` 与 `docs/references/sqlite-backup-and-corruption-recovery.md`。产品语义（`SKL-LIB-004` Revision 2）不变；未改动任何运行时代码，Plan 保持 `plan`、PR 保持 Draft。
 
 2026-08-20 12:20Z：进入执行。前置验证全部通过（依赖 completed、PR Draft、branch/HEAD 一致）；本文件移入 `docs/exec-plans/active/`，`status` 改为 `active`。未改动其他内容。
+
+2026-08-20 13:36Z：完成全部四个 milestones 的实现与验收。运行时代码变更：`crates/skilload-core`（domain library/doctor、ports library/doctor、application library/doctor、adapters/sqlite_library、application/configuration 的 `Application::new` 签名）与 `crates/skilload-cli`（args/main/json/human/tests）；依赖仅按既定 Decision 增加 `rusqlite` `backup` feature 与 `sha2 =0.11.0`。同步 `docs/product-specs/README.md`、`docs/product-specs/library.md`、`docs/product-specs/cache-and-operations.md`、`ARCHITECTURE.md`、两个 design docs 的实现状态；Progress、Surprises & Discoveries、Decision Log、Outcomes & Retrospective 与 Artifacts 已记录实现证据。实现中的低风险决策（FTS drift 的 `invalid_state` 分类、`repository_display` 列、linkat backup 发布、corruption details enrichment、v1 测试 fixture 生成方式）均已记录在 Decision Log。

@@ -1,6 +1,7 @@
 use skilload_core::{
-    AppError, ConfigEntries, ConfigEntry, ConfigValue, LibraryImportResult,
-    LibraryMutationOperation, NativePath, PortableLibraryDocument, SourceIdentity,
+    AppError, ConfigEntries, ConfigEntry, ConfigValue, DoctorOperation, LibraryEntriesPage,
+    LibraryEntry, LibraryImportResult, LibraryMutationOperation, LibrarySearchPage, NativePath,
+    PortableLibraryDocument, SourceIdentity,
 };
 use std::fmt::Write as _;
 use std::os::unix::ffi::OsStrExt;
@@ -92,6 +93,119 @@ pub fn render_library_mutation(
         let _ = writeln!(output, "  - {}", quote_string(tag));
     }
     output
+}
+
+pub fn render_library_entries(data: &LibraryEntriesPage) -> String {
+    let mut output = format!(
+        "library.list: observed\ntotal: {}\noffset: {}\nlimit: {}\nreturned: {}\n",
+        data.total,
+        data.page.offset(),
+        data.page.limit(),
+        data.entries.len(),
+    );
+    append_library_entries(&mut output, &data.entries);
+    output
+}
+
+pub fn render_library_search(data: &LibrarySearchPage) -> String {
+    let mut output = format!(
+        "library.search: observed\nquery: {}\ntotal: {}\noffset: {}\nlimit: {}\nreturned: {}\n",
+        quote_string(&data.original),
+        data.total,
+        data.page.offset(),
+        data.page.limit(),
+        data.entries.len(),
+    );
+    append_library_entries(&mut output, &data.entries);
+    output
+}
+
+pub fn render_library_get(entry: &LibraryEntry) -> String {
+    let mut output = String::from("library.get: observed\n");
+    append_library_entry(&mut output, entry);
+    output
+}
+
+pub fn render_doctor(operation: &DoctorOperation) -> String {
+    let mut output = format!(
+        "doctor: {}\nfix_requested: {}\ndatabase_writable: {}\n",
+        operation.outcome.as_str(),
+        operation.data.fix_requested,
+        operation.data.database_writable,
+    );
+    let _ = writeln!(output, "findings: {}", operation.data.findings.len());
+    for finding in &operation.data.findings {
+        let target = finding
+            .target
+            .as_ref()
+            .map(quote_path)
+            .unwrap_or_else(|| "null".to_owned());
+        let _ = writeln!(
+            output,
+            "  - severity: {}\n    code: {}\n    message: {}\n    target: {target}\n    fixable_offline: {}\n    fixed: {}",
+            finding.severity.as_str(),
+            quote_string(&finding.code),
+            quote_string(&finding.message),
+            finding.fixable_offline,
+            finding.fixed,
+        );
+    }
+    let _ = writeln!(output, "actions: {}", operation.data.actions.len());
+    for action in &operation.data.actions {
+        let before = action
+            .before
+            .as_deref()
+            .map(quote_string)
+            .unwrap_or_else(|| "null".to_owned());
+        let after = action
+            .after
+            .as_deref()
+            .map(quote_string)
+            .unwrap_or_else(|| "null".to_owned());
+        let _ = writeln!(
+            output,
+            "  - kind: {}\n    target: {}\n    before: {before}\n    after: {after}",
+            action.kind.as_str(),
+            quote_path(&action.target),
+        );
+    }
+    output
+}
+
+fn append_library_entries(output: &mut String, entries: &[LibraryEntry]) {
+    for entry in entries {
+        output.push_str("  - ");
+        append_library_entry(output, entry);
+    }
+}
+
+fn append_library_entry(output: &mut String, entry: &LibraryEntry) {
+    let alias = entry
+        .alias
+        .as_deref()
+        .map(quote_string)
+        .unwrap_or_else(|| "null".to_owned());
+    let category = entry
+        .category
+        .as_deref()
+        .map(quote_string)
+        .unwrap_or_else(|| "null".to_owned());
+    let note = entry
+        .note
+        .as_deref()
+        .map(quote_string)
+        .unwrap_or_else(|| "null".to_owned());
+    let _ = writeln!(
+        output,
+        "source: {}\nname: {}\nalias: {alias}\ncategory: {category}\ntags: {}\nnote: {note}\ntrust_state: {}",
+        quote_string(&entry.skill.source.canonical),
+        quote_string(&entry.skill.name),
+        entry.tags.len(),
+        entry.trust_state.as_str(),
+    );
+    for tag in &entry.tags {
+        let _ = writeln!(output, "  tag: {}", quote_string(tag));
+    }
 }
 
 pub fn render_error(error: &AppError) -> String {
