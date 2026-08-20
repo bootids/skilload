@@ -199,6 +199,8 @@ number scanner 在每次推进 integer、fraction 或 exponent byte 时检查 12
 `linkat` 的 target-exists failure 仍保留 foreign database，但其 source 参数是 staging pathname 而非 held file descriptor；在 macOS/Linux 当前安全接口中，同账号若在最终 verify 后替换该 source，adapter 只能在 link 后检测 drift 并保留 foreign target，不能证明 publication source 一定是 held inode。这个 source-identity gap 是明确记录的 review/product decision，不能以“descriptor-relative”措辞掩盖。正常成功会按 held identity 删除原 staging link。
 
 Library export 在创建 staging 文件前比较 no-follow output target 与有效 Library database generation（database、WAL、SHM）及 database lock，拒绝任何碰撞。其他 target 使用同目录 staging、file sync 与 parent-directory sync；父目录以 no-follow descriptor 打开并绑定 device/inode。export 对既有 regular output 记录 identity，以 held publication link 和 `RenameFlags::EXCHANGE` 做可逆替换；对 absent output 不在 requested name 创建 zero-byte guard，而是在 hidden publication link 已验证为 held staging inode 后以 descriptor-relative `RenameFlags::NOREPLACE` 发布。该 no-clobber rename 使完整 document ready 前 requested path 保持 absent；target collision 保留 foreign entry。parent sync 后仍须比较 held staging FD 与 output entry。若检测到父目录、publication link 或 output identity drift，命令返回错误而不报告成功，且不删除未知 replacement。rename 前失败保留旧 target 或无 target并清理已证明所有权的 staging，rename 后 parent sync failure 不假称旧 target 尚在。
+对既有 target 的成功 exchange，P2 不会 unlink 随机 publication entry 中的旧 output。POSIX/Darwin/Linux 没有“仅当 pathname 仍绑定 held inode 才 unlink”的原语；先 identity check 再 `unlinkat` 的同账号替换窗口会删除未知 replacement。保留该 entry 虽留下旧 document，但保持请求 output 的新 document 与任何后来出现的 foreign entry 都不被误删。
+
 
 有效 generation 的 protected members 同时包括 SQLite DELETE-mode 的 `skilload.db-journal`；export 在 staging 前以与 database/WAL/SHM/lock 相同的 identity guard 拒绝它，避免干预活动 writer 的 rollback recovery。
 

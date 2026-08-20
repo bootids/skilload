@@ -352,18 +352,17 @@ impl SqliteLibraryRepository {
         let lock_path = roots.state.effective.join("locks/database.lock");
         let mut cleanup = FirstImportCleanup::new();
         (|| {
-            cleanup
-                .created_directories
-                .extend(ensure_restrictive_directory(
-                    &roots.state.effective,
-                    "XDG_STATE_HOME",
-                )?);
-            cleanup
-                .created_directories
-                .extend(ensure_restrictive_directory(
+            cleanup.record_created_directories(
+                ensure_restrictive_directory(&roots.state.effective, "XDG_STATE_HOME")?,
+                "XDG_STATE_HOME",
+            );
+            cleanup.record_created_directories(
+                ensure_restrictive_directory(
                     &roots.state.effective.join("locks"),
                     "XDG_STATE_HOME",
-                )?);
+                )?,
+                "XDG_STATE_HOME",
+            );
             self.hooks.before_first_lock()?;
             let lock = acquire_restrictive_lock(roots, "database.lock", "database")?;
             self.hooks.after_first_lock_acquired()?;
@@ -375,12 +374,10 @@ impl SqliteLibraryRepository {
                     cleanup.committed = true;
                     return self.import_existing_with_lock(&roots, document);
                 }
-                cleanup
-                    .created_directories
-                    .extend(ensure_restrictive_directory(
-                        &roots.data.effective,
-                        "XDG_DATA_HOME",
-                    )?);
+                cleanup.record_created_directories(
+                    ensure_restrictive_directory(&roots.data.effective, "XDG_DATA_HOME")?,
+                    "XDG_DATA_HOME",
+                );
                 let roots = self.root_resolver.revalidate(&roots)?;
                 let database = Self::database_path(&roots);
                 if Self::database_exists(&database)? {
@@ -494,7 +491,7 @@ impl SqliteLibraryRepository {
                     database_sync_error(&database, "sync published database directory", error)
                 })?;
                 data_directory.revalidate()?;
-                sync_created_directory_entries(&cleanup.created_directories, "XDG_DATA_HOME")?;
+                cleanup.sync_created_directories()?;
                 self.hooks
                     .after_first_publish_sync_before_success(&database)?;
                 data_directory.revalidate()?;
@@ -665,8 +662,13 @@ struct ImportPlan {
     result: LibraryImportResult,
 }
 
+struct FirstImportCreatedDirectory {
+    directory: CreatedDirectory,
+    variable: &'static str,
+}
+
 struct FirstImportCleanup {
-    created_directories: Vec<CreatedDirectory>,
+    created_directories: Vec<FirstImportCreatedDirectory>,
     committed: bool,
 }
 
@@ -676,6 +678,32 @@ impl FirstImportCleanup {
             created_directories: Vec::new(),
             committed: false,
         }
+    }
+
+    fn record_created_directories(
+        &mut self,
+        directories: Vec<CreatedDirectory>,
+        variable: &'static str,
+    ) {
+        self.created_directories
+            .extend(
+                directories
+                    .into_iter()
+                    .map(|directory| FirstImportCreatedDirectory {
+                        directory,
+                        variable,
+                    }),
+            );
+    }
+
+    fn sync_created_directories(&self) -> Result<(), AppError> {
+        for created in self.created_directories.iter().rev() {
+            sync_created_directory_entries(
+                std::slice::from_ref(&created.directory),
+                created.variable,
+            )?;
+        }
+        Ok(())
     }
 }
 
@@ -1432,8 +1460,9 @@ fn metadata_identity(metadata: &fs::Metadata) -> (u64, u64) {
     (metadata.dev(), metadata.ino())
 }
 
-fn cleanup_first_import(created_directories: &[CreatedDirectory]) {
-    for directory in created_directories.iter().rev() {
+fn cleanup_first_import(created_directories: &[FirstImportCreatedDirectory]) {
+    for created in created_directories.iter().rev() {
+        let directory = &created.directory;
         if current_entry_matches_created_identity(
             &directory.path,
             directory.identity,
@@ -1559,6 +1588,46 @@ mod tests {
             format_version: 1,
             entries,
         }
+    }
+
+    #[test]
+    fn first_import_sync_attributes_state_directory_failure_to_state_root() {
+        let temporary = tempdir().unwrap();
+        let state_root = temporary.path().join("state");
+        let state_locks = state_root.join("skilload/locks");
+        let data_directory = temporary.path().join("data/skilload");
+        fs::create_dir_all(&state_locks).unwrap();
+        fs::create_dir_all(&data_directory).unwrap();
+
+        let capture = |path: &Path| {
+            let handle = File::open(path).unwrap();
+            CreatedDirectory {
+                path: path.to_path_buf(),
+                identity: metadata_identity(&handle.metadata().unwrap()),
+                handle,
+            }
+        };
+        let cleanup = FirstImportCleanup {
+            created_directories: vec![
+                FirstImportCreatedDirectory {
+                    directory: capture(&state_locks),
+                    variable: "XDG_STATE_HOME",
+                },
+                FirstImportCreatedDirectory {
+                    directory: capture(&data_directory),
+                    variable: "XDG_DATA_HOME",
+                },
+            ],
+            committed: true,
+        };
+        fs::rename(&state_root, temporary.path().join("state-displaced")).unwrap();
+
+        let error = cleanup.sync_created_directories().unwrap_err();
+
+        assert!(matches!(
+            error,
+            AppError::InvalidEnvironment { variable, .. } if variable == "XDG_STATE_HOME"
+        ));
     }
 
     #[test]

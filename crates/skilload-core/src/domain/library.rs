@@ -180,8 +180,7 @@ impl PortableLibraryDocument {
     }
 
     pub fn serialize_for_transfer(&self) -> Result<Vec<u8>, AppError> {
-        self.ensure_entry_count()?;
-        let mut document = self.clone();
+        let mut document = self.clone().validate()?;
         document.sort_deterministically()?;
         document
             .encode_with_limit(MAX_PORTABLE_LIBRARY_DOCUMENT_BYTES, true)?
@@ -345,6 +344,27 @@ mod tests {
             document.serialize_for_transfer(),
             Err(AppError::Validation { constraint, .. })
                 if constraint == "library_tag_forbidden_character"
+        ));
+    }
+
+    #[test]
+    fn transfer_serialization_rejects_documents_import_would_reject() {
+        let invalid_version = PortableLibraryDocument {
+            format_version: LIBRARY_FORMAT_VERSION + 1,
+            entries: vec![entry("skills/review")],
+        };
+        assert!(matches!(
+            invalid_version.serialize_for_transfer(),
+            Err(AppError::Validation { constraint, .. }) if constraint == "library_format_version"
+        ));
+
+        let duplicate_sources = PortableLibraryDocument {
+            format_version: LIBRARY_FORMAT_VERSION,
+            entries: vec![entry("skills/review"), entry("skills/review")],
+        };
+        assert!(matches!(
+            duplicate_sources.serialize_for_transfer(),
+            Err(AppError::Conflict { .. })
         ));
     }
 

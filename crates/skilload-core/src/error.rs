@@ -37,19 +37,15 @@ pub enum AppError {
         path: Option<NativePath>,
         reason: String,
     },
-    #[error("configuration lock is busy")]
+    #[error("{lock_domain} lock is busy")]
     Busy { lock_domain: String, waited_ms: u64 },
-    #[error(
-        "configuration schema {found_version} is newer than supported schema {supported_version}"
-    )]
+    #[error("{domain} schema {found_version} is newer than supported schema {supported_version}")]
     SchemaNewer {
         domain: String,
         found_version: u64,
         supported_version: u64,
     },
-    #[error(
-        "configuration schema {found_version} requires migration to schema {supported_version}"
-    )]
+    #[error("{domain} schema {found_version} requires migration to schema {supported_version}")]
     MigrationRequired {
         domain: String,
         found_version: u64,
@@ -203,6 +199,44 @@ impl AppError {
             Self::Busy { .. } => 5,
             Self::SchemaNewer { .. } | Self::MigrationRequired { .. } | Self::Internal { .. } => 6,
             Self::DatabaseCorrupt { .. } => 6,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn display_uses_the_recorded_lock_and_schema_domains() {
+        let messages = [
+            (
+                AppError::Busy {
+                    lock_domain: "database".to_owned(),
+                    waited_ms: 2_000,
+                },
+                "database lock is busy",
+            ),
+            (
+                AppError::SchemaNewer {
+                    domain: "library".to_owned(),
+                    found_version: 2,
+                    supported_version: 1,
+                },
+                "library schema 2 is newer than supported schema 1",
+            ),
+            (
+                AppError::MigrationRequired {
+                    domain: "library".to_owned(),
+                    found_version: 0,
+                    supported_version: 1,
+                },
+                "library schema 0 requires migration to schema 1",
+            ),
+        ];
+
+        for (error, expected) in messages {
+            assert_eq!(error.to_string(), expected);
         }
     }
 }

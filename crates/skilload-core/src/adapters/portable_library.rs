@@ -129,6 +129,10 @@ impl PortableLibraryTransferStore {
                     self.write_hooks
                         .after_publication_identity_check_before_exchange(&parent.path)
                 },
+                after_existing_output_exchange_before_cleanup: || {
+                    self.write_hooks
+                        .after_existing_output_exchange_before_cleanup(&parent.path)
+                },
             },
         )?;
         self.write_hooks.after_rename_before_parent_sync()?;
@@ -196,6 +200,13 @@ trait TransferWriteHooks: Send + Sync {
     }
 
     fn after_publication_identity_check_before_exchange(
+        &self,
+        _output_parent: &Path,
+    ) -> Result<(), AppError> {
+        Ok(())
+    }
+
+    fn after_existing_output_exchange_before_cleanup(
         &self,
         _output_parent: &Path,
     ) -> Result<(), AppError> {
@@ -430,47 +441,50 @@ impl<'parent> OutputPublicationGuard<'parent> {
                     && (entry.st_dev as u64, entry.st_ino) == self.identity
             })
     }
-
-    fn remove_published_entry(
-        &self,
-        publication_name: &std::ffi::OsStr,
-        output: &NativePath,
-    ) -> Result<(), AppError> {
-        if !self.matches(publication_name) {
-            return Err(AppError::validation(
-                "library_export_publication_identity_drift",
-                Some(output.clone()),
-            ));
-        }
-        unlinkat(&self.parent.directory, publication_name, AtFlags::empty())
-            .map_err(|error| export_io(output, "remove replaced export output", error.into()))
-    }
 }
 
-struct PublishStagingHooks<AfterIdentityCheck, AfterPublicationLink, AfterPublicationIdentity> {
+struct PublishStagingHooks<
+    AfterIdentityCheck,
+    AfterPublicationLink,
+    AfterPublicationIdentity,
+    AfterExistingOutputExchange,
+> {
     after_identity_check: AfterIdentityCheck,
     after_publication_link_before_rename: AfterPublicationLink,
     after_publication_identity_check_before_exchange: AfterPublicationIdentity,
+    after_existing_output_exchange_before_cleanup: AfterExistingOutputExchange,
 }
 
-fn publish_staging<AfterIdentityCheck, AfterPublicationLink, AfterPublicationIdentity>(
+fn publish_staging<
+    AfterIdentityCheck,
+    AfterPublicationLink,
+    AfterPublicationIdentity,
+    AfterExistingOutputExchange,
+>(
     staging: &mut NamedTempFile,
     parent: &ValidatedOutputParent,
     roots: &ResolvedRoots,
     expected_output: OutputTargetIdentity,
     output_path: &Path,
     output: &NativePath,
-    hooks: PublishStagingHooks<AfterIdentityCheck, AfterPublicationLink, AfterPublicationIdentity>,
+    hooks: PublishStagingHooks<
+        AfterIdentityCheck,
+        AfterPublicationLink,
+        AfterPublicationIdentity,
+        AfterExistingOutputExchange,
+    >,
 ) -> Result<(), AppError>
 where
     AfterIdentityCheck: FnOnce() -> Result<(), AppError>,
     AfterPublicationLink: FnOnce() -> Result<(), AppError>,
     AfterPublicationIdentity: FnOnce() -> Result<(), AppError>,
+    AfterExistingOutputExchange: FnOnce() -> Result<(), AppError>,
 {
     let PublishStagingHooks {
         after_identity_check,
         after_publication_link_before_rename,
         after_publication_identity_check_before_exchange,
+        after_existing_output_exchange_before_cleanup,
     } = hooks;
     let staging_name = staging
         .path()
@@ -594,7 +608,7 @@ where
                 )),
             };
         }
-        if let Err(error) = output_guard.remove_published_entry(&publication_name, output) {
+        if let Err(error) = after_existing_output_exchange_before_cleanup() {
             cleanup_staging_if_owned(staging, parent, &staging_name);
             return Err(error);
         }
@@ -945,7 +959,12 @@ impl<'input, R: Read> JsonScanner<'input, R> {
             self.skip_whitespace()?;
             self.expect_byte(b':')?;
             if root && key == "entries" {
-                self.parse_entries_array(depth + 1)?;
+                self.skip_whitespace()?;
+                if self.peek()? == Some(b'[') {
+                    self.parse_entries_array(depth + 1)?;
+                } else {
+                    self.parse_value(depth)?;
+                }
             } else {
                 self.parse_value(depth)?;
             }
@@ -1357,6 +1376,22 @@ mod tests {
         let store = PortableLibraryTransferStore::new();
         let error = store.read_import(&input).unwrap_err();
         assert_eq!(error.code(), "validation_failed");
+    }
+
+    #[test]
+    fn scanner_defers_non_array_entries_to_schema_validation() {
+        let temporary = tempdir().unwrap();
+        let input = NativePath::new(temporary.path().join("input.json"));
+        fs::write(input.as_path(), br#"{"format_version":1,"entries":null}"#).unwrap();
+
+        let error = PortableLibraryTransferStore::new()
+            .read_import(&input)
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            AppError::Validation { constraint, .. } if constraint == "library_import_schema"
+        ));
     }
 
     #[test]
@@ -1852,6 +1887,62 @@ mod tests {
         assert_eq!(error.code(), "validation_failed");
         assert_eq!(fs::read(output.as_path()).unwrap(), b"old output");
         assert_eq!(fs::read(&replacement).unwrap(), b"replacement bytes");
+    }
+
+    struct PublicationEntryReplacementAfterExchange {
+        replacement: PathBuf,
+    }
+
+    impl TransferWriteHooks for PublicationEntryReplacementAfterExchange {
+        fn after_existing_output_exchange_before_cleanup(
+            &self,
+            output_parent: &Path,
+        ) -> Result<(), AppError> {
+            let publication = fs::read_dir(output_parent)
+                .unwrap()
+                .map(|entry| entry.unwrap().path())
+                .find(|path| {
+                    path.file_name().is_some_and(|name| {
+                        name.to_string_lossy().starts_with(".skilload-publish-")
+                    })
+                })
+                .unwrap();
+            fs::remove_file(&publication).unwrap();
+            fs::hard_link(&self.replacement, publication).unwrap();
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn export_preserves_a_replaced_publication_entry_after_exchange() {
+        let temporary = tempdir().unwrap();
+        let output_parent = temporary.path().join("output");
+        let output = NativePath::new(output_parent.join("library.json"));
+        let replacement = temporary.path().join("replacement.json");
+        fs::create_dir(&output_parent).unwrap();
+        fs::write(output.as_path(), b"old output").unwrap();
+        fs::write(&replacement, b"replacement bytes").unwrap();
+        let expected = document().serialize_for_transfer().unwrap();
+        let store = PortableLibraryTransferStore::with_write_hooks(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(XdgRootResolver),
+            Arc::new(PublicationEntryReplacementAfterExchange {
+                replacement: replacement.clone(),
+            }),
+        );
+
+        store.write_export(&output, &document()).unwrap();
+
+        assert_eq!(fs::read(output.as_path()).unwrap(), expected);
+        let publication = fs::read_dir(&output_parent)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .find(|path| {
+                path.file_name()
+                    .is_some_and(|name| name.to_string_lossy().starts_with(".skilload-publish-"))
+            })
+            .unwrap();
+        assert_eq!(fs::read(publication).unwrap(), b"replacement bytes");
     }
 
     #[test]
