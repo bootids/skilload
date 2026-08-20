@@ -1,7 +1,7 @@
 ---
 plan_id: PLAN-0005
 branch: codex/p4-library-indexed-reads
-pull_request: pending
+pull_request: https://github.com/bootids/skilload/pull/5
 status: plan
 depends_on: [PLAN-0004]
 ---
@@ -20,7 +20,7 @@ depends_on: [PLAN-0004]
 
 本计划直接依赖 `PLAN-0004`。该前置计划已在默认分支的 `docs/exec-plans/completed/p3-library-metadata-mutations.md` 中完成，并通过传递依赖取得 `PLAN-0003` 的 portable Library、SQLite schema v1、API-v2 producer、Unicode 15.1.0 tag 规则和 `PLAN-0002` 的 Rust/configuration 基础；本计划不重复列出传递依赖。
 
-交付只增加 Library 的三个离线读取叶子、支持它们的 FTS5 schema v2、一次 v1→v2 forward migration，以及对当前 durable database 的真实 `doctor [--fix]` 路径。它不实现 `library add|remove|refresh`、GitHub resolution、Trust mutation、cache、workspace、global、manager、deployment、HTTP、TUI、Web 或完整未来 doctor domain inventory。未实现命令继续是 usage error，不能注册 placeholder。首次推送后创建 Draft PR，把 frontmatter 的 `pull_request: pending` 改为 canonical HTTPS URL，再独立提交推送；在后续明确执行授权前，Plan 必须保持 `plan` 且 PR 必须保持 Draft。
+交付只增加 Library 的三个离线读取叶子、支持它们的 FTS5 schema v2、一次 v1→v2 forward migration，以及对当前 durable database 的真实 `doctor [--fix]` 路径。它不实现 `library add|remove|refresh`、GitHub resolution、Trust mutation、cache、workspace、global、manager、deployment、HTTP、TUI、Web 或完整未来 doctor domain inventory。未实现命令继续是 usage error，不能注册 placeholder。Planning baseline 已关联 Draft PR https://github.com/bootids/skilload/pull/5；初始提交 `88eec453bbb7a08dea160601fa66093398be9c72` 已推送且 GitHub 返回同一 `headRefOid`、`isDraft: true`、head `codex/p4-library-indexed-reads`、base `main`。在后续明确执行授权前，Plan 必须保持 `plan` 且 PR 必须保持 Draft。
 
 ## Product Baseline
 
@@ -68,7 +68,7 @@ Read兼容性是显式边界。完整 v1 base rows可供 list/get/export只读�
 - [x] (2026-08-20 11:26Z) 从 clean、updated `main` 建立 `codex/p4-library-indexed-reads`；核对所有四个 completed Plans、产品规格、架构、设计、references与当前 Rust实现；确认没有现有 PLAN-0005、同名 branch或 Draft PR。
 - [x] (2026-08-20 11:26Z) 取得产品决定：`library search`采用纯文本词项 AND，不采用完整短语或 raw FTS5 language；将 `SKL-LIB-004`提升为 Revision 2并同步规划设计/reference。
 - [x] (2026-08-20 11:26Z) 创建本 `plan`-status ExecPlan；当前尚未提交、推送或创建 Draft PR。
-- [ ] 提交并推送 planning baseline，创建 Draft PR，写回 canonical URL与 publication evidence，再提交推送 metadata update；随后等待明确 human execution trigger。
+- [x] (2026-08-20 11:36Z) 以 `88eec453bbb7a08dea160601fa66093398be9c72` 提交并推送 planning baseline，创建 Draft PR https://github.com/bootids/skilload/pull/5；GitHub 已验证 `isDraft: true`、head/base 正确且 `headRefOid` 等于该提交。本 metadata update 将 canonical URL、Progress 与 publication evidence 作为第二个 planning commit 推送；随后等待明确 human execution trigger。
 - [ ] 收到执行授权后，用 `execute-exec-plan`验证 `PLAN-0004`已在默认分支 completed、PR仍为 Draft，进入 `active`并实现所有 milestones。
 - [ ] 实现 domain query/page/doctor values与 focused ports/application operations。
 - [ ] 实现 schema v2 FTS、v1-compatible reads、transaction-maintained index与 list/search/get repository queries。
@@ -128,7 +128,7 @@ Read兼容性是显式边界。完整 v1 base rows可供 list/get/export只读�
 ## Outcomes & Retrospective
 
 
-当前只完成规划：选定 independently acceptable scope、取得搜索产品决定、建立 delivery branch并同步 Revision 2产品/技术/reference baseline。没有运行时代码、schema、command或用户 database被修改；`pull_request`仍为 `pending`。首次发布后补充两个 planning commits与 Draft PR证据；进入 review前必须记录最终行为、schema migration SHA/backup evidence、10,000-entry measurements、实际 smoke和与 Product Baseline的逐项对照。
+当前只完成规划：选定 independently acceptable scope、取得搜索产品决定、建立 delivery branch并同步 Revision 2产品/技术/reference baseline。没有运行时代码、schema、command或用户 database被修改。Initial planning commit `88eec453bbb7a08dea160601fa66093398be9c72` 与 Draft PR https://github.com/bootids/skilload/pull/5 已发布；本 metadata update 是第二个 planning commit。进入 review前必须记录最终行为、schema migration SHA/backup evidence、10,000-entry measurements、实际 smoke和与 Product Baseline的逐项对照。
 
 ## Review Conversation Log
 
@@ -391,4 +391,4 @@ Backup manifest是private versioned serde record，不进入API-v2或portable ex
 ## Plan Revision Note
 
 
-2026-08-20：创建PLAN-0005 planning baseline。基于completed PLAN-0004与当前实现选择indexed offline Library reads；经用户决定把`SKL-LIB-004`提升到Revision 2并固定纯文本词项AND；固定schema v2 content-bearing FTS、explicit doctor migration/repair、v1 read compatibility、10,000-entry预算和dependency边界。创建Draft PR并写回URL后，在本节记录publication metadata变化；在获得后续明确execution prompt前不实现runtime行为。
+2026-08-20：创建PLAN-0005 planning baseline。基于completed PLAN-0004与当前实现选择indexed offline Library reads；经用户决定把`SKL-LIB-004`提升到Revision 2并固定纯文本词项AND；固定schema v2 content-bearing FTS、explicit doctor migration/repair、v1 read compatibility、10,000-entry预算和dependency边界。11:36Z 将 initial commit `88eec453bbb7a08dea160601fa66093398be9c72` 推送到 delivery branch，创建 Draft PR https://github.com/bootids/skilload/pull/5，并写回 canonical URL、Progress 与 publication evidence。该修订只更新delivery metadata；在获得后续明确execution prompt前不实现runtime行为。
