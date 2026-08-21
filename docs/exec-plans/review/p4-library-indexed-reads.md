@@ -91,7 +91,7 @@ DELETE-mode `-journal` 同样不能与 descriptor-bound open 分离：SQLite 官
 - [x] (2026-08-21) 第七轮 final-review 的两个 inline 问题已由 `0a1cad3897588623b77c69b0fe90279a9d770257` 修复并推送：read-only generation gate 现绑定已解析 `data/skilload` directory descriptor并用 relative nonblocking no-follow open 验证 main file；FIFO race 被拒绝而不等待 writer。新增两项 adapter regressions与既有 ABA/WAL regressions通过，workspace fmt/clippy/test/locked build 通过；两个 GitHub replies 已写入并 resolve，final conversation reconciliation 已记录。
 - [x] (2026-08-21) 第八轮 final-review remediation 完成：backup companion rejection、snapshot-bound live-sidecar recheck 与 corruption recovery inventory root binding 已由 `8a0d84dc1e6de9959c0423f99273aa214c4f38b8` 推送；三个 GitHub replies 已写入，三个 inline threads 均 resolved。最终完整 reconciliation 读取为 9 个 top-level comments、40 个 reviews、32 个 threads；所有 actual inline source 都有本 Log 条目、reply 与 resolved state，无 pending 或 blocked source。finalized Review Conversation Log 由当前 documentation commit 提交。
 - [x] (2026-08-21) 第九轮 final-review 的三个 inline 问题已由 `a140aad0f9fa85c0a9cb74f433793e4644bd2ce4` 修复并推送：三个新 regression 已由 red→green 证明，workspace fmt/clippy/test/build 全部通过；三个 GitHub reply 已写入、对应 thread 均 resolved，最终 complete conversation reconciliation 无未记录或 blocked actual problem。
-- [ ] (2026-08-21) 第十轮 final-review 的两个 inline defect 已分类并在 worktree 处置：共享 FTS projection 为 non-NFC free-text 保留 raw 加 NFC alternative，read snapshot 在 callback 返回 error 前重验 generation；两项新增 adapter regression 均 red→green。待运行 workspace gates、提交/推送 preliminary evidence、回复并 resolve threads，再完成最终 reconciliation。
+- [x] (2026-08-21) 第十轮 final-review 的两个 inline defect 已由 `9dc0fd058d54cf67f4d9e3edea5e9d7cdabc34f0` 推送：共享 FTS projection 为 non-NFC free-text 保留 raw 加 NFC alternative，read snapshot 在 callback 返回 error 前重验 generation；两项新增 adapter regression red→green，workspace fmt/clippy/test/locked build 均通过。两个 GitHub reply 已成功写入且 threads 均 resolved；最终 reconciliation 无未记录、未回答或 blocked source，final Review Conversation Log documentation commit 已推送。
 
 ## Surprises & Discoveries
 
@@ -294,6 +294,8 @@ DELETE-mode `-journal` 同样不能与 descriptor-bound open 分离：SQLite 官
 2026-08-21 第八轮 final-review remediation 已完成：`8a0d84dc1e6de9959c0423f99273aa214c4f38b8` 在 Product Baseline 内修复 backup pair companion、descriptor-read sidecar race 与 corruption error-path root mixing。`backup_inventory_rejects_pairs_with_sqlite_sidecars`、`read_snapshot_rejects_a_journal_created_after_generation_gate`、`corruption_details_reject_a_replaced_data_directory` 通过；workspace fmt、clippy、test（13 + 17 + 158）与 locked build 均通过。三条 GitHub 回复 URL 与 `thread resolved: true` 已逐项写入本 Log。最终完整会话读取为 9 个 top-level comments、40 个 review bodies 与 32 个 threads；全部 32 个 actual inline sources 已记录、回复并 resolved，top-level trigger/notification 与 automated wrapper 未提出独立问题。Plan 保持 `review`、PR 保持 ready。
 
 2026-08-21 第九轮 final-review remediation 已完成。runtime/design/reference/preliminary-log commit `a140aad0f9fa85c0a9cb74f433793e4644bd2ce4` 使 version 9 的 replaced-base fixture按 `schema_newer`/`library_schema_newer` 分类、共用 absence probe 拒绝 resolved root replacement，并将 FTS repair 拆为 detach commit、`VACUUM` 和 rebuild transaction；damaged-shadow repair 后整库 integrity 为 `ok`。三项 focused regression 先 red 后 green，workspace fmt check、clippy、13+17+160 tests 与 locked build 通过。三个 reply URLs 与 resolved state 已逐项记录；最终完整会话读取为 10 个 top-level comments、44 个 reviews 与 35 个 threads，全部 thread resolved、所有 35 个 actual inline source 已记录；新增三个空 review containers 无独立问题。Plan 保持 `review`、PR 保持 ready。
+2026-08-21 第十轮 final-review remediation 已完成：`9dc0fd058d54cf67f4d9e3edea5e9d7cdabc34f0` 让 non-NFC free-text FTS row 同时保存 raw/NFC search projection，并在任何 read snapshot callback error 返回前重验 held generation。`search_matches_nfc_forms_of_normalizable_free_text_fields` 与 `failed_read_revalidates_database_generation_before_returning_error` 都完成 red→green；workspace fmt、clippy、test（13 + 17 + 162）与 locked build 通过。两条 reply URL 和 resolved state 已逐项记录。最终完整会话读取为 11 个 top-level comments、47 个 reviews 与 37 个 threads；全部 thread resolved、所有 actual inline source 已在本 Log 记录，top-level trigger/notification 与十个同一自动化 wrapper body 不含独立问题。Plan 保持 `review`、PR 保持 ready。
+
 
 ## Review Conversation Log
 
@@ -857,13 +859,13 @@ Problem: `LibrarySearchQuery` 已把每个词项规范为 NFC，但 `fts_row_val
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 增加共享 `fts_free_text_projection`：非 NFC value保留原始 indexed text并以 newline-separated NFC projection补充搜索；helper由 import、metadata mutation、migration、doctor rebuild 与 derived validation复用。它应用到 name、description、alias、category、note 与 repository；当前 source grammar使 name/repository display只能是 ASCII，regression因此覆盖实际可接受的 description/alias/category/note。已同步澄清 `docs/product-specs/library.md`、`docs/design-docs/application-and-persistence.md` 和本 Plan。
 
-Evidence: `search_matches_nfc_forms_of_normalizable_free_text_fields` pre-fix 对 composed `café` 返回空集，修复后对 composed/decomposed query均返回四个 preserved-raw entries；focused tests、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace`（13 + 17 + 162）与 `cargo build --workspace --locked` 均通过。待以 `fix(library): preserve indexed read invariants` 提交并推送。
+Evidence: `search_matches_nfc_forms_of_normalizable_free_text_fields` pre-fix 对 composed `café` 返回空集，修复后对 composed/decomposed query均返回四个 preserved-raw entries；focused tests、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace`（13 + 17 + 162）与 `cargo build --workspace --locked` 均通过。preliminary remediation commit `9dc0fd058d54cf67f4d9e3edea5e9d7cdabc34f0` 已推送。
 
-GitHub outcome: pending reply; thread resolved: false.
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/5#discussion_r3830978897；thread resolved: true。
 
 ### PRRT_kwDOT7YN2s6bKUK8 - read error 返回前必须重验 generation
 
@@ -873,13 +875,15 @@ Problem: `run_read_snapshot` 在 callback 返回 `not_found`、`migration_requir
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 的 `run_read_snapshot` 保留 snapshot callback 的 `Result`，先执行 generation revalidation，再传播原结果；successful read 的 commit 前后 revalidation 保持不变。新增 callback-error 与 same-account replacement race regression，断言 identity drift 优先于原 `not_found`。
 
-Evidence: `failed_read_revalidates_database_generation_before_returning_error` pre-fix 返回 callback 的 `not_found`，修复后返回 `library_database/database_identity_drift`；focused tests、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace`（13 + 17 + 162）与 `cargo build --workspace --locked` 均通过。待以 `fix(library): preserve indexed read invariants` 提交并推送。
+Evidence: `failed_read_revalidates_database_generation_before_returning_error` pre-fix 返回 callback 的 `not_found`，修复后返回 `library_database/database_identity_drift`；focused tests、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace`（13 + 17 + 162）与 `cargo build --workspace --locked` 均通过。preliminary remediation commit `9dc0fd058d54cf67f4d9e3edea5e9d7cdabc34f0` 已推送。
 
-GitHub outcome: pending reply; thread resolved: false.
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/5#discussion_r3830980524；thread resolved: true。
+
+2026-08-21 第十轮 final reconciliation：PR #5 有 11 个 top-level comments、47 个 submitted reviews 与 37 个 review threads。37 个 thread ID 全部有本 Log heading，current `isResolved` 均为 true；PRRT_kwDOT7YN2s6bKUKq 的回复为 https://github.com/bootids/skilload/pull/5#discussion_r3830978897，PRRT_kwDOT7YN2s6bKUK8 的回复为 https://github.com/bootids/skilload/pull/5#discussion_r3830980524。十个 nonempty review body 是同一 automated wrapper template，top-level comments均为 `@codex` trigger/notification，没有 pending、blocked 或未记录 source。
 
 ## Context and Orientation
 
@@ -1271,3 +1275,5 @@ GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/5#discussion_
 2026-08-21：第八轮 final-review remediation 与 reconciliation。PRRT_kwDOT7YN2s6bD4zc、PRRT_kwDOT7YN2s6bD4zh 与 PRRT_kwDOT7YN2s6bD4zj 分别修复 standalone backup companion inventory、descriptor-bound live read 的 pre-open/snapshot 双重 census，以及 corruption diagnostics 的 held-root binding。运行时代码、产品 clarification、持久化设计、SQLite reference 与 preliminary Review Conversation Log 由 `8a0d84dc1e6de9959c0423f99273aa214c4f38b8` 推送；三个 reply URL 和 resolved state 已逐项记录。最终完整会话读取为 9 个 top-level comments、40 个 reviews 与 32 个 threads，所有 actual inline sources 都有 Log entry/reply/resolution，无 pending 或 blocked source。本次 revision 完成最终 Plan log evidence，Plan 保持 `review`、PR 保持 ready。
 
 2026-08-21：第九轮 final-review reconciliation。PRRT_kwDOT7YN2s6bF0oA、PRRT_kwDOT7YN2s6bF0oG 与 PRRT_kwDOT7YN2s6bF0oR 的 `a140aad0f9fa85c0a9cb74f433793e4644bd2ce4` 修复证据、workspace validation、reply URLs 与 resolved states 已逐项写入 Review Conversation Log。最终完整会话读取为 10 个 top-level comments、44 个 reviews 与 35 个 threads；所有 thread 均为 resolved，三个新增 empty review containers 无独立问题，未发现 pending、blocked 或未记录 source。Plan 保持 `review`、PR 保持 ready。
+
+2026-08-21：第十轮 final-review reconciliation。将 PRRT_kwDOT7YN2s6bKUKq 与 PRRT_kwDOT7YN2s6bKUK8 的 `9dc0fd058d54cf67f4d9e3edea5e9d7cdabc34f0` 修复、workspace validation、两个 GitHub reply URL 与 resolved states 写入 Review Conversation Log；同时澄清 `SKL-LIB-004` Revision 2 的既有 NFC query-term 行为而不改变 revision。最终完整会话读取为 11 个 top-level comments、47 个 reviews 与 37 个 threads，所有 source 均已记录或无独立问题，Plan 保持 `review`、PR 保持 ready。
