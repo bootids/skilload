@@ -81,7 +81,7 @@ DELETE-mode `-journal` 同样不能与 descriptor-bound open 分离：SQLite 官
 - [x] (2026-08-20 14:39Z) 处理 PR #5 第二轮实现评审的 7 个 inline 问题（FTS shadow 分类、backups 目录项同步、backup digest/symlink 校验、prune 保护当前 backup、mutation 路径 corruption 补全、锁内 FTS 重诊断、doctor identity 重验）并回复/resolve 全部 thread。
 - [x] (2026-08-21) final review 第三轮的 4 个 inline 问题已在 Product Baseline 边界内实现并通过 focused 与 workspace validation：只读 descriptor-bound SQLite open、保守保留 migration backups、MATCH-derived corruption mapping、no-follow backup validation；修复与 preliminary Review Conversation Log 已以 `7e5a7bda7ce2dc3804a687a4e7249944a7908980` 推送，四个 GitHub replies 已成功写入且 threads 均 resolved；final log reconciliation 已推送，完整会话读取未发现未记录、未回答或 blocked 的实际问题。
 - [x] (2026-08-21) 第四轮 remediation 已以 `648fb40323f2d35ac1dba6331501d0e03f7ecc6a` 推送：backup inventory 现验证 manifest/schema/standalone base、migration lock 后重新诊断、manifest 读取受 4 KiB 上限约束、orphaned FTS shadow tables 可重建；focused 70 tests 与 workspace fmt/clippy/test/build 已通过。四个 GitHub replies 已写入且 inline threads 均 resolved，最终 Review Conversation Log 记录如下。
-- [ ] (2026-08-21) PR #5 第五轮 final-review 的 4 个 inline 问题已实现并通过 focused/workspace validation：rollback journal generation gate、schema version 下界、human `LibraryEntry` 完整投影、派生 FTS validation 的 operational error 透传；待将 preliminary remediation commit 推送、回复/resolve 4 个 thread，并完成最终 Plan/GitHub reconciliation。
+- [x] (2026-08-21) PR #5 第五轮 final-review 的 4 个 inline 问题已由 `ffeea3a7e850712db8b4b89c19dd6bfddf84136b` 修复并通过 focused/workspace validation；4 个 GitHub replies 已成功写入、对应 threads 均 resolved，最终会话 reconciliation 与本 Review Conversation Log 已同步。
 
 ## Surprises & Discoveries
 
@@ -221,6 +221,8 @@ DELETE-mode `-journal` 同样不能与 descriptor-bound open 分离：SQLite 官
 2026-08-21 第四轮 review remediation 已完成：PRRT_kwDOT7YN2s6bAVQR、PRRT_kwDOT7YN2s6bAVQT、PRRT_kwDOT7YN2s6bAVQV 与 PRRT_kwDOT7YN2s6bAVQX 由 `648fb40323f2d35ac1dba6331501d0e03f7ecc6a` 修复。四个 inline replies 均写入并 resolved；新的 coverage 验证 backup compatibility/size cap、migration stale diagnosis 和 orphaned FTS shadow rebuild，完整 validation 为 focused 70 tests、workspace fmt/clippy/test（11+17+146）和 locked build。
 
 最终 reconciliation 读取确认 PR #5 有 5 个 top-level comments、22 个 submitted reviews 与 18 个 review threads；所有 18 inline threads 都 resolved。五个 top-level source（`IC_kwDOT7YN2s8AAAABPzQF5Q`、`IC_kwDOT7YN2s8AAAABPz7oxg`、`IC_kwDOT7YN2s8AAAABPz_YTg`、`IC_kwDOT7YN2s8AAAABP1xCTg`、`IC_kwDOT7YN2s8AAAABP7Xvuw`）均是 bot trigger/notification，无独立问题；review body 的实际问题全部由本 Log 的 18 个 inline entries 覆盖。
+
+2026-08-21 第五轮 review remediation 已完成：`ffeea3a7e850712db8b4b89c19dd6bfddf84136b` 修复 rollback journal generation gate、zero schema version classification、complete human `LibraryEntry` projection 与 derived validation operational-error propagation；`53aac2f625ca246fcaf00fc2865f636a60bab5e7` 推送预备 Plan evidence。四个 inline replies 均已写入并 resolved。final complete conversation read 观察到 6 个 top-level comments、27 个 submitted reviews、22 个 review threads；22 个实际 inline problem source 均有本 Plan entry、reply URL 与 resolved state，top-level trigger/notification、自动化 review wrapper 与 empty reply containers 不含独立问题。Plan 保持 `review`，PR 保持 ready。
 
 ## Review Conversation Log
 
@@ -535,7 +537,7 @@ GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/5#discussion_
 
 2026-08-21 最终完整会话读取：PR #5 当前有 5 个 top-level comments、22 个 submitted reviews 与 18 个 review threads，所有 threads 均为 resolved。新出现的空 `@bootids` `COMMENTED` review containers `PRR_kwDOT7YN2s8AAAABKV1igQ`（https://github.com/bootids/skilload/pull/5#pullrequestreview-4988953217）、`PRR_kwDOT7YN2s8AAAABKV1lHg`（https://github.com/bootids/skilload/pull/5#pullrequestreview-4988953886）、`PRR_kwDOT7YN2s8AAAABKV1n1Q`（https://github.com/bootids/skilload/pull/5#pullrequestreview-4988954581）和 `PRR_kwDOT7YN2s8AAAABKV1qmg`（https://github.com/bootids/skilload/pull/5#pullrequestreview-4988955290）仅为本轮 inline reply containers，body 为空且无独立问题；不需 GitHub reply 或 disposition。全部 18 个实际 inline source 均有本 Log entry、成功 reply 和 resolved state。
 
-2026-08-21 第五轮完整会话读取：PR #5 当前有 6 个 top-level comments、23 个 submitted reviews 与 22 个 review threads；既有 18 个 threads 仍为 resolved。新增 top-level trigger `IC_kwDOT7YN2s8AAAABP7uOKg` 与自动化 review body `PRR_kwDOT7YN2s8AAAABKV_Hcg` 均未提出独立问题；本轮 4 个 inline 问题如下，均已按 final-review 边界分类为 `fixed`，在本 Plan 中保持 `open`，直到修复提交、验证、GitHub reply 与 resolve 完成。
+2026-08-21 第五轮最终完整会话读取：PR #5 当前有 6 个 top-level comments、27 个 submitted reviews 与 22 个 review threads；所有 22 个 threads 均为 resolved。新增 top-level trigger `IC_kwDOT7YN2s8AAAABP7uOKg`、自动化 review body `PRR_kwDOT7YN2s8AAAABKV_Hcg` 与四个 `@bootids` empty reply containers 均未提出独立问题；本轮 4 个 inline 问题均以 `fixed`、`resolved` 完成，以下条目记录代码提交、验证与 GitHub outcome。
 
 ### PRRT_kwDOT7YN2s6bA7j1 - descriptor-bound read 前拒绝 rollback journal
 
@@ -545,13 +547,13 @@ Problem: 已有 `skilload.db-journal` 的 DELETE-mode generation 未被 `pre_ope
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 的 `pre_open_generation_gate` 使用完整 `DATABASE_SIDECAR_SUFFIXES`（`-journal`、`-wal`、`-shm`）拒绝 descriptor-bound read 前的 non-standalone generation；新增 `rollback_journal_generation_is_rejected_before_sqlite_opens` 覆盖 export/list/search/get/default doctor 的 typed error、bytes 不变，且将既有 concurrent-writer regression 改为 `reads_reject_live_rollback_journals_before_descriptor_opens`，明确 active journal 的保守拒绝。同步 `SKL-OPS-004` clarification、`ARCHITECTURE.md`、persistence design 与 SQLite reference。修复提交已推送：`ffeea3a7e850712db8b4b89c19dd6bfddf84136b`。
 
-Evidence: 所有四个 focused regressions 已通过；`mise exec -- cargo fmt --all -- --check`、`mise exec -- cargo clippy --quiet --workspace --all-targets --all-features -- -D warnings`、`mise exec -- cargo test --quiet --workspace --all-features --locked`（12 CLI binary + 17 contract + 149 core）及 `mise exec -- cargo build --quiet --workspace --all-features --locked` 已通过；`git diff --check`无输出。
+Evidence: 代码提交 `ffeea3a7e850712db8b4b89c19dd6bfddf84136b`；`rollback_journal_generation_is_rejected_before_sqlite_opens` 与 `reads_reject_live_rollback_journals_before_descriptor_opens` 通过；`mise exec -- cargo fmt --all -- --check`、`mise exec -- cargo clippy --quiet --workspace --all-targets --all-features -- -D warnings`、`mise exec -- cargo test --quiet --workspace --all-features --locked`（12 CLI binary + 17 contract + 149 core）、`mise exec -- cargo build --quiet --workspace --all-features --locked` 与 `git diff --check`均通过。
 
-GitHub outcome: 未回复；thread resolved: false。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/5#discussion_r3826859410；thread resolved: true。
 
 ### PRRT_kwDOT7YN2s6bA7j5 - schema version 零是 base corruption
 
@@ -561,13 +563,13 @@ Problem: `read_schema_generation` 接受 version `0` 并错误分类为 `SchemaG
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 将 `read_schema_generation` 的范围从 `0..=API_V1_UINT_MAX` 收紧为 `1..=API_V1_UINT_MAX`；新增 `schema_version_zero_is_database_corrupt`，以 SQLite `ignore_check_constraints` 夹具构造外部损坏值并验证 export/list/search/get/default doctor/fix 均走 typed `database_corrupt`。修复提交已推送：`ffeea3a7e850712db8b4b89c19dd6bfddf84136b`。
 
-Evidence: `schema_version_zero_is_database_corrupt` 与完整 focused/workspace validation 均通过；完整 gate 和 `git diff --check` 证据同上。
+Evidence: 代码提交 `ffeea3a7e850712db8b4b89c19dd6bfddf84136b`；`schema_version_zero_is_database_corrupt` 覆盖 export/list/search/get/default doctor/fix；完整 focused/workspace validation 与 `git diff --check`均通过。
 
-GitHub outcome: 未回复；thread resolved: false。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/5#discussion_r3826860071；thread resolved: true。
 
 ### PRRT_kwDOT7YN2s6bA7j7 - human read 输出完整 LibraryEntry
 
@@ -577,13 +579,13 @@ Problem: `library list`、`library search` 与 `library get` 的 human renderer 
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: 已在 `crates/skilload-cli/src/human.rs` 的共享 `append_library_entry` 投影 canonical 与全部 `SourceIdentity` 字段、repository ID、commit、integrity、name、description、entry/byte counts、metadata/tags/trust state；所有字符串继续复用 `quote_string`。新增 `library_read_renderers_project_complete_terminal_safe_entries`，同时断言 list/search/get 输出完整字段且 description control newline 被转义。修复提交已推送：`ffeea3a7e850712db8b4b89c19dd6bfddf84136b`。
 
-Evidence: `library_read_renderers_project_complete_terminal_safe_entries` 与完整 focused/workspace validation 均通过；完整 gate 和 `git diff --check` 证据同上。
+Evidence: 代码提交 `ffeea3a7e850712db8b4b89c19dd6bfddf84136b`；`library_read_renderers_project_complete_terminal_safe_entries` 覆盖 list/search/get 的完整字段与 control newline escaping；完整 focused/workspace validation 与 `git diff --check`均通过。
 
-GitHub outcome: 未回复；thread resolved: false。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/5#discussion_r3826860831；thread resolved: true。
 
 ### PRRT_kwDOT7YN2s6bA7j- - 派生 FTS validation 保留 operational error
 
@@ -593,13 +595,13 @@ Problem: 搜索与 doctor 将 `validate_derived_database` 的全部错误无条�
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 添加 `map_derived_validation_error`：仅 `AppError::DatabaseCorrupt` 转为 `library_fts_invalid`；search 与 `validate_database` 复用该映射，doctor 的 `derived_index_is_consistent` 对 operational error 返回原 error、仅 corruption/content mismatch 返回 false finding。新增 `derived_validation_preserves_busy_errors`，以即时 busy locked reader 证明 doctor 不再产生假修复 finding。修复提交已推送：`ffeea3a7e850712db8b4b89c19dd6bfddf84136b`。
 
-Evidence: `derived_validation_preserves_busy_errors` 与完整 focused/workspace validation 均通过；完整 gate 和 `git diff --check` 证据同上。
+Evidence: 代码提交 `ffeea3a7e850712db8b4b89c19dd6bfddf84136b`；`derived_validation_preserves_busy_errors` 证明 default doctor 传播 `AppError::Busy` 而非产生 drift finding；完整 focused/workspace validation 与 `git diff --check`均通过。
 
-GitHub outcome: 未回复；thread resolved: false。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/5#discussion_r3826861427；thread resolved: true。
 
 ## Context and Orientation
 
@@ -942,3 +944,5 @@ Backup manifest是private versioned serde record，不进入API-v2或portable ex
 2026-08-21：第四轮 final-review remediation。PRRT_kwDOT7YN2s6bAVQR、PRRT_kwDOT7YN2s6bAVQT、PRRT_kwDOT7YN2s6bAVQV 与 PRRT_kwDOT7YN2s6bAVQX 的 recovery/repair 缺陷均在 Product Baseline 内修复：兼容 standalone backup inventory、锁后 migration re-diagnosis、4 KiB bounded manifest read 与 orphaned FTS shadow separation。实现与回归测试、`docs/design-docs/application-and-persistence.md` 和 preliminary Plan evidence 由 `648fb40323f2d35ac1dba6331501d0e03f7ecc6a` 推送；四个 replies 的 URLs 和 resolved state 已逐项记录到 Review Conversation Log。focused 70 tests、workspace fmt/clippy/test（11+17+146）、locked build与`git diff --check`均通过；Plan 保持 `review`、PR 保持 ready。
 
 2026-08-21：第四轮最终 reconciliation 读取并记录五个 top-level sources、22 个 review bodies 与 18 个 threads；新增四个 empty review containers 不含实际问题。所有 18 个 inline problem source 都有 Plan entry、reply URL 和 `thread resolved: true`，PR head 与本地/remote 均为 ready `review` 状态；本次 Plan revision 专门补齐该 source-complete evidence。
+
+2026-08-21：第五轮 final-review remediation 与 reconciliation。PRRT_kwDOT7YN2s6bA7j1、PRRT_kwDOT7YN2s6bA7j5、PRRT_kwDOT7YN2s6bA7j7 与 PRRT_kwDOT7YN2s6bA7j- 均在 Product Baseline 内完成：rollback-journal descriptor gate、zero-version corruption、complete human `LibraryEntry` 及 operational FTS error propagation。实现/测试/架构、设计、product clarification 与 SQLite reference 由 `ffeea3a7e850712db8b4b89c19dd6bfddf84136b` 推送；预备 Plan evidence 为 `53aac2f625ca246fcaf00fc2865f636a60bab5e7`。四个 GitHub reply URLs 和 resolved states 已逐项记录，final conversation read 为 6 top-level comments、27 reviews、22 threads（均 resolved），无未记录、未回答或 blocked 的实际问题；Plan 继续保持 `review`、PR 保持 ready。
