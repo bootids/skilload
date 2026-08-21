@@ -92,7 +92,7 @@ DELETE-mode `-journal` 同样不能与 descriptor-bound open 分离：SQLite 官
 - [x] (2026-08-21) 第八轮 final-review remediation 完成：backup companion rejection、snapshot-bound live-sidecar recheck 与 corruption recovery inventory root binding 已由 `8a0d84dc1e6de9959c0423f99273aa214c4f38b8` 推送；三个 GitHub replies 已写入，三个 inline threads 均 resolved。最终完整 reconciliation 读取为 9 个 top-level comments、40 个 reviews、32 个 threads；所有 actual inline source 都有本 Log 条目、reply 与 resolved state，无 pending 或 blocked source。finalized Review Conversation Log 由当前 documentation commit 提交。
 - [x] (2026-08-21) 第九轮 final-review 的三个 inline 问题已由 `a140aad0f9fa85c0a9cb74f433793e4644bd2ce4` 修复并推送：三个新 regression 已由 red→green 证明，workspace fmt/clippy/test/build 全部通过；三个 GitHub reply 已写入、对应 thread 均 resolved，最终 complete conversation reconciliation 无未记录或 blocked actual problem。
 - [x] (2026-08-21) 第十轮 final-review 的两个 inline defect 已由 `9dc0fd058d54cf67f4d9e3edea5e9d7cdabc34f0` 推送：共享 FTS projection 为 non-NFC free-text 保留 raw 加 NFC alternative，read snapshot 在 callback 返回 error 前重验 generation；两项新增 adapter regression red→green，workspace fmt/clippy/test/locked build 均通过。两个 GitHub reply 已成功写入且 threads 均 resolved；最终 reconciliation 无未记录、未回答或 blocked source，final Review Conversation Log documentation commit 已推送。
-- [x] (2026-08-22) 第十一轮 final-review 的三个 inline defect 已在现有 Product Baseline 内完成 remediation：portable export 对不可完整枚举的 migration backup inventory fail closed、writable SQLite connection 在最终 generation revalidation 后再次执行 `SQLITE_FCNTL_HAS_MOVED`、FTS reference 记录 detach commit → `VACUUM` → fresh rebuild transaction。两项新增 regression、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace`（13+17+164）与 `cargo build --workspace --locked` 已通过；预备 remediation commit `f032f9c1f087fa72b7ca55666e8b5d92e3149f27` 已推送，待回复并 resolve 三个 thread。
+- [x] (2026-08-22) 第十一轮 final-review 的三个 inline defect 已在现有 Product Baseline 内完成 remediation：portable export 对不可完整枚举的 migration backup inventory fail closed、writable SQLite connection 在最终 generation revalidation 后再次执行 `SQLITE_FCNTL_HAS_MOVED`、FTS reference 记录 detach commit → `VACUUM` → fresh rebuild transaction。两项新增 regression、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace`（13+17+164）与 `cargo build --workspace --locked` 已通过；预备 remediation commit `f032f9c1f087fa72b7ca55666e8b5d92e3149f27`、preliminary evidence `b6c0410` 已推送，三个 GitHub reply 已写入且 inline threads 均 resolved，Plan 保持 `review`、PR 保持 ready。
 
 ## Surprises & Discoveries
 
@@ -308,6 +308,8 @@ DELETE-mode `-journal` 同样不能与 descriptor-bound open 分离：SQLite 官
 2026-08-21 第九轮 final-review remediation 已完成。runtime/design/reference/preliminary-log commit `a140aad0f9fa85c0a9cb74f433793e4644bd2ce4` 使 version 9 的 replaced-base fixture按 `schema_newer`/`library_schema_newer` 分类、共用 absence probe 拒绝 resolved root replacement，并将 FTS repair 拆为 detach commit、`VACUUM` 和 rebuild transaction；damaged-shadow repair 后整库 integrity 为 `ok`。三项 focused regression 先 red 后 green，workspace fmt check、clippy、13+17+160 tests 与 locked build 通过。三个 reply URLs 与 resolved state 已逐项记录；最终完整会话读取为 10 个 top-level comments、44 个 reviews 与 35 个 threads，全部 thread resolved、所有 35 个 actual inline source 已记录；新增三个空 review containers 无独立问题。Plan 保持 `review`、PR 保持 ready。
 2026-08-21 第十轮 final-review remediation 已完成：`9dc0fd058d54cf67f4d9e3edea5e9d7cdabc34f0` 让 non-NFC free-text FTS row 同时保存 raw/NFC search projection，并在任何 read snapshot callback error 返回前重验 held generation。`search_matches_nfc_forms_of_normalizable_free_text_fields` 与 `failed_read_revalidates_database_generation_before_returning_error` 都完成 red→green；workspace fmt、clippy、test（13 + 17 + 162）与 locked build 通过。两条 reply URL 和 resolved state 已逐项记录。最终完整会话读取为 11 个 top-level comments、47 个 reviews 与 37 个 threads；全部 thread resolved、所有 actual inline source 已在本 Log 记录，top-level trigger/notification 与十个同一自动化 wrapper body 不含独立问题。Plan 保持 `review`、PR 保持 ready。
 
+
+2026-08-22 第十一轮 final-review remediation 已完成：`f032f9c1f087fa72b7ca55666e8b5d92e3149f27` 将 export recovery inventory 改为 fail closed、在 writable connection 最终 generation revalidation 后重新验证 SQLite handle，并将 physical FTS detach 的 commit → `VACUUM` → rebuild sequence 写回 reusable reference；`b6c0410` 已记录 preliminary evidence。两项新增 focused regressions及 workspace fmt/clippy/test（13+17+164）/locked build 全部通过。三个 GitHub reply URL 与 resolved state 已逐项记录；最终完整会话读取为 12 个 top-level comments、51 个 reviews 与 40 个 threads，全部 threads resolved、无 pending、blocked 或未记录 actual problem。Plan 保持 `review`、PR 保持 ready。
 
 ## Review Conversation Log
 
@@ -941,13 +943,13 @@ Problem: `crates/skilload-core/src/adapters/portable_library.rs` 的 `protected_
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: 已在 `crates/skilload-core/src/adapters/portable_library.rs` 将 `protected_paths` 改为 fallible inventory：仅 absent `data/backups` 返回空集合，目录打开或 iterator entry error 返回 `library_export_protected_inventory_unavailable` validation error；初始与最终 export protection、publication guard 共享该结果。新增 `output_rejects_an_unreadable_migration_backup_inventory_before_staging`，证明拒绝发生在 staging 前且 recovery file 未变。预备 remediation commit `f032f9c1f087fa72b7ca55666e8b5d92e3149f27` 已推送。
 
 Evidence: focused regression 通过；`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace`（13+17+164）和 `cargo build --workspace --locked` 均通过。修复 SHA：`f032f9c1f087fa72b7ca55666e8b5d92e3149f27`。
 
-GitHub outcome: 未回复；thread unresolved。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/5#discussion_r3832024138；thread resolved: true。
 
 ### PRRT_kwDOT7YN2s6bN3d2 - writable SQLite handle 必须在最终 generation revalidation 后重验
 
@@ -957,13 +959,13 @@ Problem: writable `open_existing_database` 在 `SQLITE_FCNTL_HAS_MOVED` 检查�
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 保留 writable open 后的早期 `SQLITE_FCNTL_HAS_MOVED`，并在 held data-directory entry/path identity 都重验后再次执行，以拒绝 restoration ABA。`open_existing_database` 是 import、metadata mutation、v1 migration 与 FTS repair 的共享 writable gate；新增受控 `writable_open_rejects_an_aba_generation_restored_after_initial_handle_check`，在初次 handle check 后恢复原 pathname 时要求 `database_identity_drift`。预备 remediation commit `f032f9c1f087fa72b7ca55666e8b5d92e3149f27` 已推送。
 
 Evidence: focused regression 通过；`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace`（13+17+164）和 `cargo build --workspace --locked` 均通过。修复 SHA：`f032f9c1f087fa72b7ca55666e8b5d92e3149f27`。
 
-GitHub outcome: 未回复；thread unresolved。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/5#discussion_r3832025764；thread resolved: true。
 
 ### PRRT_kwDOT7YN2s6bN3d7 - FTS detach 后必须在 rebuild 前 VACUUM
 
@@ -973,13 +975,15 @@ Problem: `docs/references/sqlite-fts5-library-search.md` 描述 physical FTS sha
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: 已更新 `docs/references/sqlite-fts5-library-search.md` 的 verified recovery sequence 与 cautions：physical shadow corruption 必须先 commit writable-schema detach，在无 transaction 的 held writable connection 执行 `VACUUM`、重验 generation，随后以 fresh transaction recreate/fill/validate FTS；这与 `repair_fts_locked` 和 whole-database integrity regression 一致。预备 remediation commit `f032f9c1f087fa72b7ca55666e8b5d92e3149f27` 已推送。
 
 Evidence: `fts_shadow_corruption_stays_doctor_fixable` 的既有 whole-database integrity contract仍适用；`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace`（13+17+164）和 `cargo build --workspace --locked` 均通过。修复 SHA：`f032f9c1f087fa72b7ca55666e8b5d92e3149f27`。
 
-GitHub outcome: 未回复；thread unresolved。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/5#discussion_r3832027255；thread resolved: true。
+
+2026-08-22 第十一轮 final reconciliation：PR #5 当前有 12 个 top-level comments、51 个 submitted reviews 与 40 个 review threads；40 个 thread 的 current `isResolved` 均为 true。新 top-level `IC_kwDOT7YN2s8AAAABQDWwtw` 是 `@codex` trigger，`PRR_kwDOT7YN2s8AAAABKbzRzA` 是 automated wrapper，均无独立问题；三个新 empty `@bootids` review containers `PRR_kwDOT7YN2s8AAAABKcDnuw`、`PRR_kwDOT7YN2s8AAAABKcDvsA`、`PRR_kwDOT7YN2s8AAAABKcD3lQ` 仅承载本轮 inline replies。PRRT_kwDOT7YN2s6bN3dy、PRRT_kwDOT7YN2s6bN3d2、PRRT_kwDOT7YN2s6bN3d7 的 `f032f9c1f087fa72b7ca55666e8b5d92e3149f27` evidence、reply URL 和 resolved state 已完整记录；无 pending、blocked 或未记录 actual problem。
 
 ## Context and Orientation
 
@@ -1341,3 +1345,5 @@ Backup manifest是private versioned serde record，不进入API-v2或portable ex
 2026-08-21：第十轮 final-review reconciliation。将 PRRT_kwDOT7YN2s6bKUKq 与 PRRT_kwDOT7YN2s6bKUK8 的 `9dc0fd058d54cf67f4d9e3edea5e9d7cdabc34f0` 修复、workspace validation、两个 GitHub reply URL 与 resolved states 写入 Review Conversation Log；同时澄清 `SKL-LIB-004` Revision 2 的既有 NFC query-term 行为而不改变 revision。最终完整会话读取为 11 个 top-level comments、47 个 reviews 与 37 个 threads，所有 source 均已记录或无独立问题，Plan 保持 `review`、PR 保持 ready。
 
 2026-08-22：第十一轮 final-review preliminary remediation。完整会话读取确认新 top-level trigger `IC_kwDOT7YN2s8AAAABQDWwtw` 与 automated wrapper `PRR_kwDOT7YN2s8AAAABKbzRzA` 无独立问题；三个 inline defects PRRT_kwDOT7YN2s6bN3dy、PRRT_kwDOT7YN2s6bN3d2、PRRT_kwDOT7YN2s6bN3d7 均在 Product Baseline 内。`f032f9c1f087fa72b7ca55666e8b5d92e3149f27` 已推送 fail-closed backup inventory、writable connection post-revalidation identity check、FTS detach/VACUUM reference 与本初步 Review Conversation Log；focused regressions与 workspace fmt/clippy/test/locked build 全部通过。下一步回复/resolve threads 并写入最终 SHA/URLs。
+
+2026-08-22：第十一轮 final-review reconciliation。`f032f9c1f087fa72b7ca55666e8b5d92e3149f27` 的三项 remediation、`b6c0410` 的 preliminary evidence、三个 GitHub reply URL 和 `thread resolved: true` 已写入 Review Conversation Log。最新完整会话读取确认 12 个 top-level comments、51 个 reviews、40 个 threads；新 trigger/wrapper 与三个 empty reply containers 无独立问题，全部 thread resolved，Plan 继续保持 `review`、PR 保持 ready。
