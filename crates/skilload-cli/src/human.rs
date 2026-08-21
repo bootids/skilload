@@ -339,11 +339,24 @@ pub fn render_error(error: &AppError) -> String {
             found_version,
             supported_version
         ),
-        AppError::DatabaseCorrupt { database, .. } => format!(
-            "error [{}]: database {} requires database-corruption-v1 recovery\n",
-            error.code(),
-            quote_path(database)
-        ),
+        AppError::DatabaseCorrupt {
+            database,
+            backups,
+            recoverable_exports,
+        } => {
+            let mut output = format!(
+                "error [{}]: database {} requires database-corruption-v1 recovery\n",
+                error.code(),
+                quote_path(database)
+            );
+            for backup in backups {
+                let _ = writeln!(output, "  backup: {}", quote_path(backup));
+            }
+            for export in recoverable_exports {
+                let _ = writeln!(output, "  recoverable_export: {}", quote_string(export));
+            }
+            output
+        }
         AppError::InvalidState {
             domain,
             state,
@@ -647,5 +660,20 @@ mod tests {
         assert!(rendered.contains(
             "kind: \"internal_duplicate\"; name: null; source: \"github:owner/repository#skills/review@refs/heads/main\""
         ));
+    }
+    #[test]
+    fn database_corruption_renderer_lists_terminal_safe_recovery_assets() {
+        let database = NativePath::new(PathBuf::from("/tmp/live.db"));
+        let backup = NativePath::new(PathBuf::from(OsString::from_vec(vec![
+            b'/', b't', b'm', b'p', b'/', 0xff,
+        ])));
+        let rendered = render_error(&AppError::DatabaseCorrupt {
+            database,
+            backups: vec![backup],
+            recoverable_exports: vec!["library.export\n".to_owned()],
+        });
+
+        assert!(rendered.contains("backup: \"/tmp/\\xFF\""));
+        assert!(rendered.contains("recoverable_export: \"library.export\\n\""));
     }
 }

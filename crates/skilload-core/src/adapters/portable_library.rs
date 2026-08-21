@@ -809,15 +809,28 @@ fn reject_protected_output(
     Ok(())
 }
 
-fn protected_paths(roots: &ResolvedRoots) -> [PathBuf; 5] {
+fn protected_paths(roots: &ResolvedRoots) -> Vec<PathBuf> {
     let database = roots.data.effective.join("skilload.db");
-    [
+    let mut protected = vec![
         database.clone(),
         database.with_file_name("skilload.db-journal"),
         database.with_file_name("skilload.db-wal"),
         database.with_file_name("skilload.db-shm"),
         roots.state.effective.join("locks/database.lock"),
-    ]
+    ];
+    // Migration backups are recovery assets, not ordinary export targets.
+    // Preserve every published pair entry so aliases are rejected by the
+    // same pathname and inode checks as the live generation.
+    if let Ok(entries) = fs::read_dir(roots.data.effective.join("backups")) {
+        protected.extend(entries.flatten().filter_map(|entry| {
+            let name = entry.file_name();
+            let name = name.to_str()?;
+            (name.starts_with("skilload-db-v1-to-v2-")
+                && (name.ends_with(".db") || name.ends_with(".manifest.json")))
+            .then(|| entry.path())
+        }));
+    }
+    protected
 }
 
 fn resolved_existing_path(path: &Path) -> Option<PathBuf> {
@@ -1468,6 +1481,39 @@ mod tests {
             assert_eq!(error.code(), "validation_failed");
             assert_eq!(fs::read(target).unwrap(), b"protected generation");
         }
+    }
+
+    #[test]
+    fn output_refuses_published_migration_backup_pair_before_staging() {
+        let temporary = tempdir().unwrap();
+        let backups = temporary.path().join("data/skilload/backups");
+        fs::create_dir_all(&backups).unwrap();
+        let backup = backups.join("skilload-db-v1-to-v2-1.db");
+        let manifest = backups.join("skilload-db-v1-to-v2-1.manifest.json");
+        fs::write(&backup, b"recovery database").unwrap();
+        fs::write(&manifest, b"recovery manifest").unwrap();
+        let alias = temporary.path().join("backup-alias.db");
+        fs::hard_link(&backup, &alias).unwrap();
+
+        let store = PortableLibraryTransferStore::with_environment(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(XdgRootResolver),
+        );
+        for target in [&backup, &manifest, &alias] {
+            let before = fs::read(target).unwrap();
+            let error = store
+                .write_export(&NativePath::new(target.clone()), &document())
+                .unwrap_err();
+            assert_eq!(error.code(), "validation_failed");
+            assert_eq!(fs::read(target).unwrap(), before);
+        }
+        assert!(fs::read_dir(&backups).unwrap().all(|entry| {
+            !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".skilload-library-")
+        }));
     }
 
     #[test]

@@ -123,6 +123,7 @@ Exit categories are stable but callers use JSON `error.code` for detail:
     6  integrity, schema, recovery, or internal invariant failure
 
 Human errors use the same code internally, an English message, relevant paths/sources, and actionable next command where one exists. Never suggest destructive ownership bypass.
+对 `database_corrupt`，human renderer 必须逐项 terminal-safe 地显示 validated backup `NativePath` 与每个 recoverable export identifier；它与 JSON `DatabaseCorruptDetails` 提供同一 recovery asset 集合，但不复制 JSON envelope。
 
 ## Command/Query Network Policy
 

@@ -31,6 +31,7 @@ depends_on: [PLAN-0004]
 * 同一文件中 `SKL-LIB-005` Revision 1：`library list`、`library search` 和 `library get` 只读本地 durable metadata且不联网、不刷新、不写 derived state。List/search 在分页前按 canonical source binary order 排序；仅二者接受 limit 1..=1,000（默认 100）与完整 `u64` offset（默认 0），并返回 requested page、returned count 和 pre-page total。
 * 同一文件中 `SKL-LIB-011` Revision 1：完成已有 import/export/metadata mutation 与本交付 list/indexed-search/get 的 10,000-entry 组合证据。代表性 release-build exact get、第一页 list 和 full-text search 各使用 10 秒本地验收预算；fixture 构造和 schema migration 不计入单次 query 计时，永久 CI tests 验证语义而不使用容易抖动的 wall-clock assertion。
 * `docs/product-specs/cache-and-operations.md` 中 `SKL-OPS-003` Revision 1：当前唯一 forward migration 在任何 live schema write 前生成 standalone、durable、带 manifest 的 online backup，再以一个 SQLite transaction 从 v1 升到 v2；失败留下 prior readable v1 加完整 backup，或完整 durable v2，绝不留下被报告为成功的部分 schema。Unknown newer schema 和 downgrade 保持 write refusal。
+* `docs/product-specs/library.md` 中 `SKL-LIB-009` Revision 5：portable export 在创建 staging 前必须拒绝任何已发布 v1→v2 migration backup 的 `.db`、sibling `.manifest.json` 或同一 inode alias，保持 recovery asset 不受后续 JSON export 覆盖。该安全收紧由本轮 final-review 发现并在同一 Plan 的 Product Baseline 内验证。
 
 以下行为约束本切片，但本计划不把跨产品尚未满足的 acceptance 误报为完成项。
 
@@ -41,9 +42,10 @@ depends_on: [PLAN-0004]
 * `SKL-OPS-004`、`SKL-CACHE-006` 与 `SKL-CACHE-007` 仍未完成，因为完整 corruption restore、cache/deployment/workspace/manager inspection和所有 future repair 尚不可达。本切片只实现 real current-database doctor：只读 schema/base/FTS diagnosis、v1 migration和 FTS-only rebuild。Base corruption继续返回 `database_corrupt`并指向既有 `database-corruption-v1` operator procedure；不得增加隐藏 reset/restore 命令。
 
 完成时的可观察路径是：在 isolated XDG roots 中导入两个条目；list 按 source 排序并分页；search 通过每个索引字段命中且把 `OR`、`NOT`、`*`、引号和 `name:...` 当普通文本；get 对 canonical source返回 entry、对 missing source返回 `not_found`。默认 doctor在 absent/healthy/v1/FTS-drift/corrupt/WAL-sidecar fixtures 上不改变 filesystem bytes或 timestamps；corrupt与 WAL-sidecar generation返回 typed `database_corrupt` error而不是成功 DoctorData。对 v1 fixture运行 `doctor --fix` 后，可看到一对验证通过的 backup/manifest和 `migrate` action，schema成为 v2、base rows与 `state_revision` 不变、search开始工作；对 FTS-only drift运行 fix只产生 `repair` action且不改 base metadata。
+当前 review remediation 还必须证明：仅 `library_fts` schema SQL malformed 时，base-only list/get/export 保持可读、search/write 以 `library_fts_invalid` 拒绝且 `doctor --fix` 可重建；仅 operational metadata 损坏而 portable entries/tags 完整时，`database_corrupt` details 列出 `library.export`，该 export 成功返回 deterministic document；所有 import/metadata mutation 在 product write 前运行 FTS5 special integrity check；human corruption error 显示 validated backups 与 recovery export。
 `SKL-OPS-004` Revision 1 的本轮澄清：已存在 current database 的 `-journal`、`-wal`、`-shm` sibling 都是 observed generation 的成员；read/default doctor 在 SQLite open 前保守返回含 recovery details 的 `database_corrupt`，不混读或改写 member。此处只明确既有 corruption/recovery 边界，不改变 behavior revision。
 
-规划基线已经把 Revision 2 query semantics同步到 `docs/product-specs/README.md`、`docs/product-specs/library.md`，把技术选择同步到 `docs/design-docs/application-and-persistence.md`、`docs/design-docs/cli-json-and-release.md`，并新增 `docs/references/sqlite-fts5-library-search.md`。执行完成时只更新这些文件、`ARCHITECTURE.md` 和本 Plan 的实现状态与实际证据；不得再次改变这里固定的产品语义，除非先按 repository rule取得新的产品决定并提升 behavior revision。
+规划基线已经把 Revision 2 query semantics同步到 `docs/product-specs/README.md`、`docs/product-specs/library.md`，把技术选择同步到 `docs/design-docs/application-and-persistence.md`、`docs/design-docs/cli-json-and-release.md`，并新增 `docs/references/sqlite-fts5-library-search.md`。本轮 final-review 将 `SKL-LIB-009` 从 Revision 4 提升至 Revision 5，且将 SQLite malformed-derived-schema research 同步到 `docs/references/sqlite-backup-and-corruption-recovery.md`；执行状态与实际证据必须持续写回这些文件、`ARCHITECTURE.md`（若边界变化）和本 Plan。
 
 ## Design and Architecture Inputs
 
@@ -55,6 +57,7 @@ depends_on: [PLAN-0004]
 FTS tokenizer固定为 bundled SQLite 的 `unicode61 remove_diacritics 0`。Domain 使用 `crates/skilload-core/src/domain/unicode_15_1.rs` 的固定 `is_white_space`、NFC与 `full_case_fold`生成逻辑词项；adapter只负责把每个 literal中的 `"`写成`""`并包围双引号，然后将同一词项的 raw/folded alternatives以括号内 OR组合成一个 group，不同词项的 group之间以显式 `AND` 连接。FTS5 的 implicit AND只存在于裸 quoted phrases之间；括号表达式与后续 phrase或另一个 group之间不存在隐式组合，`("Review" OR "review") "code"` 是 syntax error，因此组合必须显式。用户字符串永远不作为 FTS grammar拼接。Tag display strings与 comparison keys分别用 ASCII newline聚合到不同列；newline是 tokenizer separator，不改变 tag storage。
 
 `docs/references/sqlite-fts5-library-search.md` 记录 FTS5 string quoting、bare-phrase implicit AND的语法边界与显式 `AND` 组合、`unicode61`、content-bearing index、special `integrity-check`/`rebuild` 与 rusqlite backup API事实。`docs/references/sqlite-backup-and-corruption-recovery.md` 规定 live WAL generation不能靠复制 main file备份；migration必须用 SQLite online backup得到 standalone snapshot，并记录 read-only SQLite 打开 WAL-mode generation会创建 `-shm`/`-wal` sidecar、`immutable=1` 会忽略 WAL 内容的实验事实。为 `rusqlite 0.40.2` 启用 `backup` feature，并加入 `sha2 0.11.0`（`default-features = false`）流式计算 SHA-256；不得引入 async runtime、ORM、外部 search service或通用 migration framework。
+Review remediation 固定以下实现约束：`writable_schema=ON` 只在 descriptor-bound connection 上临时容忍 malformed derived schema，以验证 base/portable projection；任何 mutation 继续在 write 前执行 special `integrity-check` 并只将 confirmed derived drift 映射为 `library_fts_invalid`；repair 删除 FTS/shadow schema rows 后以 `RESET` reload schema；recovery export 不依赖 `schema_info`/`state_revision`，但必须验证 entries/tags schema、integrity、foreign keys 和 portable domain document。Published backup-pair target protection 属于 portable adapter，不把 SQLite backup validation helper 反向暴露给 CLI。
 
 Read兼容性是显式边界。完整 v1 base rows可供 list/get/export只读；search和所有 database writes返回现有 API-v2 `migration_required`，直到 `doctor --fix`。Default doctor从 identity-bound read-only source向内存 SQLite destination做 online backup，在副本上执行需要 writable connection的 FTS5 special check，因此 live XDG state保持不变。该不变性不能仅由 read-only flag推出：read-only SQLite connection打开 WAL-mode generation时会在可写 data directory创建并保留 `-shm`（header 为 WAL 而 sidecar缺失时连 `-wal` 一并创建），`immutable=1` 虽不创建 sidecar却忽略 WAL 内容。因此所有对已存在 live database的 read-only opens（list/get/search/export/doctor inspect）先经 pre-open generation gate：用 no-follow held descriptor读取 main file的 100-byte header并盘点 `-wal`/`-shm` sibling；journal-mode bytes（偏移18/19）非 (1,1) 或存在任一 WAL sibling的 generation不属于任何 skilload 二进制可能发布的 DELETE-journal state，不经 SQLite 打开，直接按 base corruption返回 `database_corrupt`。通过 gate 的 descriptor 必须存活至 SQLite 以 `/dev/fd/<fd>` 打开同一 inode，之后仍重验 pathname identity；replacement 因此只返回 `database_identity_drift`，不会得到 SQLite 创建的 sidecar。Unknown newer schema只报告并拒绝 fix/write。FTS-only drift在 base tables、foreign keys和每个 domain row均验证成功后才能重建；此后 count 或 paged `MATCH` 的 `SQLITE_CORRUPT`/`SQLITE_NOTADB` 同样归为可 doctor-fix 的 `library_fts_invalid`，而非 base corruption。schema migration和 derived repair都不推进 product `state_revision`。
 DELETE-mode `-journal` 同样不能与 descriptor-bound open 分离：SQLite 官方文档说明 active writer 的 RESERVED lock 与 hot journal 的 crash recovery 有不同含义，但 `/dev/fd/<fd>` 不能安全关联 pathname journal。当前 Plan 选择可证明 filesystem-inert 的保守边界：任意在 gate 时已观察到的 `-journal`、`-wal`、`-shm` 都在 SQLite 前按 `database_corrupt` 拒绝；这牺牲 active writer 期间的 read availability，避免误读可能未恢复的 main image。
@@ -82,6 +85,7 @@ DELETE-mode `-journal` 同样不能与 descriptor-bound open 分离：SQLite 官
 - [x] (2026-08-21) final review 第三轮的 4 个 inline 问题已在 Product Baseline 边界内实现并通过 focused 与 workspace validation：只读 descriptor-bound SQLite open、保守保留 migration backups、MATCH-derived corruption mapping、no-follow backup validation；修复与 preliminary Review Conversation Log 已以 `7e5a7bda7ce2dc3804a687a4e7249944a7908980` 推送，四个 GitHub replies 已成功写入且 threads 均 resolved；final log reconciliation 已推送，完整会话读取未发现未记录、未回答或 blocked 的实际问题。
 - [x] (2026-08-21) 第四轮 remediation 已以 `648fb40323f2d35ac1dba6331501d0e03f7ecc6a` 推送：backup inventory 现验证 manifest/schema/standalone base、migration lock 后重新诊断、manifest 读取受 4 KiB 上限约束、orphaned FTS shadow tables 可重建；focused 70 tests 与 workspace fmt/clippy/test/build 已通过。四个 GitHub replies 已写入且 inline threads 均 resolved，最终 Review Conversation Log 记录如下。
 - [x] (2026-08-21) PR #5 第五轮 final-review 的 4 个 inline 问题已由 `ffeea3a7e850712db8b4b89c19dd6bfddf84136b` 修复并通过 focused/workspace validation；4 个 GitHub replies 已成功写入、对应 threads 均 resolved，最终会话 reconciliation 与本 Review Conversation Log 已同步。
+- [x] (2026-08-21) 第六轮 final-review 的 5 个 inline 问题已在 current Product Baseline 内实现：malformed FTS schema 的 derived-only repair、recoverable Library export diagnostics、mutation special integrity gate、human recovery assets 与 backup-pair export protection；`SKL-LIB-009` 已提升至 Revision 5。focused tests、core 153 tests、CLI 13+17 tests 与 workspace fmt/clippy/test/build 已通过；fix 与 preliminary Review Conversation Log 已 staged，待创建并推送 commit 后回复 threads。
 
 ## Surprises & Discoveries
 
@@ -113,14 +117,16 @@ DELETE-mode `-journal` 同样不能与 descriptor-bound open 分离：SQLite 官
   Evidence: 2026-08-20 scratch 实验（`PRAGMA integrity_check('...')` 五组输出 + `library_fts_data` root page 尾部字节翻转后的整库/逐表对照）；回归测试 `fts_shadow_corruption_stays_doctor_fixable` 与 `corrupt_base_keeps_typed_details_with_known_backups`。
 - Observation: 物理 damaged 的 FTS5 shadow b-tree 无法用任何 SQL 清除——`DROP TABLE library_fts`、`DROP TABLE library_fts_data`、`DELETE FROM library_fts_data` 全部以 `SQLITE_CORRUPT` 失败，且失败发生在 schema-modifying 语句中途时会毒化整个 transaction（后续 commit 也失败）。
   Evidence: 2026-08-20 scratch probe 输出（drop/delete/commit 均 `Err(DatabaseCorrupt)`）；detected damage 必须在任何 DROP 尝试之前完成，因此 `rebuild_derived_index` 先检测再选择手术路径。
-- Observation: `writable_schema` schema-row 手术可以在同一 transaction 内完整重建：ON → DELETE 6 行 schema → OFF → `PRAGMA schema_version` +1 强制重解析 → CREATE VIRTUAL TABLE → 按 base rows 填充 → validate → FTS5 `integrity-check` → commit 全部成功；旧 shadow pages 成为 orphan pages。
-  Evidence: scratch probe 逐步输出（delete 6 行、create/insert/derived/icheck/commit 全 Ok）；`fts_shadow_corruption_stays_doctor_fixable` 经公开 `fix()` 路径复验。
+- Observation: `writable_schema` schema-row 手术可以在同一 transaction 内完整重建：ON → DELETE 6 行 schema → `RESET` reload → `PRAGMA schema_version` +1 → CREATE VIRTUAL TABLE → 按 base rows 填充 → validate → FTS5 `integrity-check` → commit；旧 shadow pages 成为 orphan pages。
+  Evidence: 2026-08-20 scratch probe 与 SQLite `writable_schema=RESET` 文档；`fts_shadow_corruption_stays_doctor_fixable`、`orphaned_fts_shadow_tables_are_doctor_fixable` 与 `malformed_fts_schema_stays_derived_and_doctor_fixable` 经公开 `fix()` 路径复验。
 - Observation: 使用仍持有的 `/dev/fd/<fd>` 打开 bundled SQLite connection 能使 gate 与实际读取的 inode 相同；在 hook 把 pathname 替换为 WAL generation 后，read 返回 `database_identity_drift` 且 replacement 未生成 `-wal`/`-shm`。
   Evidence: `read_only_open_never_creates_sidecars_for_a_replaced_wal_generation` 与 `export_uses_checked_generation_when_a_read_only_aba_is_restored` 均通过；后者还证明 replacement 被还原时 export 使用已检查 generation 而非短暂 ABA replacement。
 - Observation: 在跨 macOS/Linux 的可移植 API中，验证后的 pathname unlink 无法原子约束到已验证 inode；保留 backup pair 比删除可能被替换的 entry 安全。
   Evidence: `migration_retains_all_validated_backup_pairs` 预置三个排序更旧的 valid pairs 后仍观察到四个 complete pairs；旧 prune 实现会删除一个旧 pair。
 - Observation: SQLite 官方 locking 文档区分 active rollback journal（writer 持有 RESERVED lock，普通 pathname reader 可以共存）与 crash 留下的 hot journal（必须先 rollback）；但 descriptor-bound `/dev/fd/<fd>` open 无法安全使用 pathname 的 journal。
   Evidence: 2026-08-21 核验 [SQLite File Locking and Concurrency](https://www.sqlite.org/lockingv3.html) 与 [SQLite Database File Format](https://www.sqlite.org/fileformat2.html)；`reads_reject_live_rollback_journals_before_descriptor_opens` 证明当前 adapter 对 active journal 也保守拒绝，`rollback_journal_generation_is_rejected_before_sqlite_opens` 证明 hot/foreign journal 不会被 bypass。
+- Observation: 普通 SQLite schema load 会因单个 malformed `library_fts` SQL text 阻断完整 base proof；read-only connection 启用 `writable_schema=ON` 后可读取 base tables，而 `OFF` 保留当前 cache、`RESET` 则重新解析并在未删除 malformed row 时失败。
+  Evidence: 2026-08-21 isolated SQLite probe（ordinary/read-only）与 bundled `malformed_fts_schema_stays_derived_and_doctor_fixable` regression；结论已同步至 `docs/references/sqlite-backup-and-corruption-recovery.md`。
 
 ## Decision Log
 
@@ -208,6 +214,22 @@ DELETE-mode `-journal` 同样不能与 descriptor-bound open 分离：SQLite 官
   Date/Author: 2026-08-21 / Codex
 - Decision: schema version 只接受 `1..=API_V1_UINT_MAX`；derived validation 只将 `DatabaseCorrupt` 映射为 `library_fts_invalid`，其他 typed operational error 原样传播；human Library read 统一投影完整 `LibraryEntry`。
   Rationale: 零版本违反 durable schema CHECK 的基础不变量，不能伪装成 newer schema；busy/I/O/memory 不证明 derived drift，不能诱导 `doctor --fix`；架构要求 human 与 JSON 表达相同 application outcome，所有 repository/user text 必须继续 terminal-safe quoted。
+  Date/Author: 2026-08-21 / Codex
+
+- Decision: 对只含 malformed `library_fts` schema SQL 的 state 使用 connection-local `writable_schema=ON` 完成 base-only validation，并把特殊 FTS repair 限定为删除 FTS/shadow rows 后 `RESET` reload。
+  Rationale: PRRT_kwDOT7YN2s6bB2FR 证明普通 schema parser 会在 base proof 前失败，使可修复 derived failure误报为 base corruption；2026-08-21 SQLite probe 表明该 tolerance 可在 read-only connection 读取 intact base table，且不写 database。只有 base validation 通过才允许 repair，base rows 与 `state_revision` 始终不碰。
+  Date/Author: 2026-08-21 / Codex
+
+- Decision: 将 portable Library projection 与完整 operational base validation 分离；export/recovery diagnostics 只在 entries/tags schema、integrity、foreign keys 与 domain document 已证明完整时使用该 projection。
+  Rationale: PRRT_kwDOT7YN2s6bB2FX 指出 `state_revision` 或 `schema_info` 损坏不必然损失可移植 Library 数据，而 `SKL-OPS-004` 要求列出每个仍可读 export。分离后 list/get/write 仍受完整 base validation 约束，只有 recovery-oriented export 绕过无关 operational metadata。
+  Date/Author: 2026-08-21 / Codex
+
+- Decision: 将 `SKL-LIB-009` 提升到 Revision 5，拒绝将 portable export 发布到已发布 migration backup pair 或同 inode alias。
+  Rationale: PRRT_kwDOT7YN2s6bB2Fm 证明此前允许 JSON export 覆盖 `SKL-OPS-003` 必需 recovery asset，属于可观察但低风险的安全收紧；产品规格、Plan baseline、adapter tests 与 persistence design 同步为同一 revision。
+  Date/Author: 2026-08-21 / Codex
+
+- Decision: mutation precondition 复用 FTS5 special `integrity-check`，并让 human `database_corrupt` output 显示与 JSON 相同的 recovery assets。
+  Rationale: PRRT_kwDOT7YN2s6bB2Fb 证明 visible FTS projection 不能覆盖 docsize-shadow drift；已可写 transaction 可以在 product row mutation 前执行该 check。PRRT_kwDOT7YN2s6bB2Fg 指出只在 JSON 暴露 backup 时 human operator 无法安全执行 recovery procedure；两项均不改变 API-v2 shape。
   Date/Author: 2026-08-21 / Codex
 
 
@@ -603,6 +625,85 @@ Evidence: 代码提交 `ffeea3a7e850712db8b4b89c19dd6bfddf84136b`；`derived_val
 
 GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/5#discussion_r3826861427；thread resolved: true。
 
+### PRRT_kwDOT7YN2s6bB2FR - 修复 malformed FTS schema 的派生索引恢复
+
+Source: PRRT_kwDOT7YN2s6bB2FR / PRRC_kwDOT7YN2s7kHRhd（https://github.com/bootids/skilload/pull/5#discussion_r3827112029）
+
+Problem: 仅 `library_fts` 的 `sqlite_master` SQL 文本损坏时，普通 schema load 在 base validation 前以 `malformed database schema` 失败，错误归为 `database_corrupt`；base rows 完整的 FTS-only failure 因而不能由 `doctor --fix` 走现有 derived-index rebuild。
+
+Disposition: fixed
+
+Status: open
+
+Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 以 connection-local `writable_schema` tolerance 完成 base-only inspection，repair 在确认 base rows 后识别 malformed FTS SQL、分离 FTS/shadow schema rows并以 `RESET` reload。新增 `malformed_fts_schema_stays_derived_and_doctor_fixable`，覆盖 list/get/export、search invalid、default doctor finding 和 `doctor --fix` repair。变更已纳入待推送的 preliminary review-remediation commit。
+
+Evidence: `SKL-OPS-004` Revision 1 要求 base records 可证明完整时 FTS-only failure 可由 doctor rebuild；2026-08-21 local SQLite probe 证明 read-only `PRAGMA writable_schema=ON` 可读取 intact base table，而普通 schema load 失败。focused regression、`mise exec -- cargo test --quiet -p skilload-core --lib`（153 passed）以及 workspace fmt/clippy/test/build 均已通过；`git diff --check` clean。
+
+GitHub outcome: 未回复；thread resolved: false。
+
+### PRRT_kwDOT7YN2s6bB2FX - corruption diagnostics 列出仍可导出的 Library
+
+Source: PRRT_kwDOT7YN2s6bB2FX / PRRC_kwDOT7YN2s7kHRhj（https://github.com/bootids/skilload/pull/5#discussion_r3827112035）
+
+Problem: `database_corrupt_with_known_backups` 与 `enrich_database_corruption` 均把 `recoverable_exports` 固定为空；例如仅 `state_revision` 无效而 `library_entries`/`library_tags` 完整时，portable Library 仍可读，但 `doctor --json` 没有列出可保留的恢复导出。
+
+Disposition: fixed
+
+Status: open
+
+Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 用 descriptor-bound read-only connection 独立验证 portable Library projection（entry/tag schema、integrity、foreign keys 与 domain document），成功时将 `library.export` 加入 `DatabaseCorruptDetails.recoverable_exports`；同一 projection 已成为 `library export` 的 read path，不能证明完整时仍为空。新增 state-revision corruption regression；变更已纳入待推送的 preliminary review-remediation commit。
+
+Evidence: `SKL-OPS-004` Revision 1 明定 diagnostics MUST “name every still-readable export”；`database-recovery.md` 要求保留 details 指向的 export。focused regression、`mise exec -- cargo test --quiet -p skilload-core --lib`（153 passed）以及 workspace fmt/clippy/test/build 均已通过；`git diff --check` clean。
+
+GitHub outcome: 未回复；thread resolved: false。
+
+### PRRT_kwDOT7YN2s6bB2Fb - mutation 前验证 FTS special integrity-check
+
+Source: PRRT_kwDOT7YN2s6bB2Fb / PRRC_kwDOT7YN2s7kHRhp（https://github.com/bootids/skilload/pull/5#discussion_r3827112041）
+
+Problem: write validation 只比对 visible FTS projection；`library_fts_docsize` 等 logical shadow drift 可使 projection 与 ordinary MATCH 成功，但 FTS5 special `integrity-check` 失败，unrelated import/metadata mutation 仍会提交并报告成功。
+
+Disposition: fixed
+
+Status: open
+
+Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 将 FTS5 special `integrity-check` 纳入 writable `validate_database` 的 schema-v2 precondition；detected derived mismatch 映射为 `library_fts_invalid`，busy/I/O 等 operational error 原样保留。新增 docsize-shadow drift regression，验证 import 与 metadata mutation 均在任何 product-state write 前拒绝；变更已纳入待推送的 preliminary review-remediation commit。
+
+Evidence: Plan Design Inputs 要求 write path 先证明 derived index consistent，doctor 已用同一 FTS5 special command。focused regression、`mise exec -- cargo test --quiet -p skilload-core --lib`（153 passed）以及 workspace fmt/clippy/test/build 均已通过；`git diff --check` clean。
+
+GitHub outcome: 未回复；thread resolved: false。
+
+### PRRT_kwDOT7YN2s6bB2Fg - human doctor error 显示 validated backups
+
+Source: PRRT_kwDOT7YN2s6bB2Fg / PRRC_kwDOT7YN2s7kHRhv（https://github.com/bootids/skilload/pull/5#discussion_r3827112047）
+
+Problem: JSON `DatabaseCorruptDetails` 显示 validated backup paths，但 `human::render_error` 仅显示 database 与 procedure，终端 operator 看不到应保留的 recovery asset。
+
+Disposition: fixed
+
+Status: open
+
+Resolution: 已在 `crates/skilload-cli/src/human.rs` 为 `AppError::DatabaseCorrupt` terminal-safe 逐项渲染 backup paths 与 recoverable export identifiers，并加入 `database_corruption_renderer_lists_terminal_safe_recovery_assets`；API-v2 JSON 不变。变更已纳入待推送的 preliminary review-remediation commit。
+
+Evidence: `cli-json-and-release.md` 要求 human error 提供 relevant paths 且 terminal-safe；`SKL-OPS-004` 与 recovery procedure 要求 operators 保留 backups/exports。focused renderer regression、`mise exec -- cargo test --quiet -p skilload-cli`（13+17 passed）以及 workspace fmt/clippy/test/build 均已通过；`git diff --check` clean。
+
+GitHub outcome: 未回复；thread resolved: false。
+
+### PRRT_kwDOT7YN2s6bB2Fm - export 不得覆盖 migration backup pair
+
+Source: PRRT_kwDOT7YN2s6bB2Fm / PRRC_kwDOT7YN2s7kHRh1（https://github.com/bootids/skilload/pull/5#discussion_r3827112053）
+
+Problem: migration 发布的 `data/backups/*.db` 与 `.manifest.json` 不在 export protected-target inventory；用户可把 `library export --output` 指向其中任一条目并以 JSON 原子替换 recovery pair，破坏可能唯一的 pre-migration backup。
+
+Disposition: fixed
+
+Status: open
+
+Resolution: 已在 `crates/skilload-core/src/adapters/portable_library.rs` 将已发布 migration backup-pair entries 纳入 pathname、resolved-path 与 inode collision protection，并新增 pair DB、manifest与 hard-link alias regression；`SKL-LIB-009` 已同步至 Revision 5、Product Baseline 与 Design Inputs。变更已纳入待推送的 preliminary review-remediation commit。
+
+Evidence: `SKL-OPS-003` Revision 1 要求 backup 保持 recoverable，`ARCHITECTURE.md` 禁止替换不应由当前 operation 覆盖的 skilload-owned path。focused transfer regression、`mise exec -- cargo test --quiet -p skilload-core --lib`（153 passed）以及 workspace fmt/clippy/test/build 均已通过；`git diff --check` clean。
+
+GitHub outcome: 未回复；thread resolved: false。
 ## Context and Orientation
 
 

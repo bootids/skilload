@@ -63,6 +63,8 @@ const BASE_INTEGRITY_TABLES: [&str; 5] = [
     "library_entries",
     "library_tags",
 ];
+const RECOVERABLE_EXPORT_INTEGRITY_TABLES: [&str; 2] = ["library_entries", "library_tags"];
+
 const LIBRARY_FTS_SHADOW_TABLES: [&str; 5] = [
     "library_fts_data",
     "library_fts_idx",
@@ -236,6 +238,24 @@ impl SqliteLibraryRepository {
             .map_err(|error| database_error(path, error))?;
         validate_for_read(&transaction, path)?;
         let entries = load_validated_entries(&transaction, path)?;
+        Self::revalidate_database_identity(path, identity)?;
+        transaction
+            .commit()
+            .map_err(|error| database_error(path, error))?;
+        Self::revalidate_database_identity(path, identity)?;
+        Ok(entries)
+    }
+    /// Read the independently portable Library projection. Recovery exports
+    /// intentionally do not depend on `schema_info` or `state_revision`;
+    /// their own tables, foreign keys, domain values, and integrity still
+    /// have to be provably intact.
+    fn read_exportable_entries(&self, path: &Path) -> Result<Vec<PortableLibraryEntry>, AppError> {
+        let (mut connection, identity) =
+            self.open_existing_database(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        let transaction = connection
+            .transaction()
+            .map_err(|error| database_error(path, error))?;
+        let entries = load_recoverable_export_entries(&transaction, path)?;
         Self::revalidate_database_identity(path, identity)?;
         transaction
             .commit()
@@ -751,6 +771,13 @@ impl SqliteLibraryRepository {
             recoverable_exports: Vec::new(),
         }
     }
+    fn recoverable_library_exports(&self, path: &Path) -> Vec<String> {
+        if self.read_exportable_entries(path).is_ok() {
+            vec!["library.export".to_owned()]
+        } else {
+            Vec::new()
+        }
+    }
 
     fn known_validated_backups(roots: &ResolvedRoots) -> Vec<NativePath> {
         let backups_root = roots.data.effective.join("backups");
@@ -871,14 +898,19 @@ impl SqliteLibraryRepository {
         match error {
             AppError::DatabaseCorrupt {
                 database,
-                backups,
-                recoverable_exports,
-            } if backups.is_empty() => {
-                let backups = self
-                    .resolve_roots()
-                    .ok()
-                    .map(|roots| Self::known_validated_backups(&roots))
-                    .unwrap_or_default();
+                mut backups,
+                mut recoverable_exports,
+            } => {
+                if backups.is_empty() {
+                    backups = self
+                        .resolve_roots()
+                        .ok()
+                        .map(|roots| Self::known_validated_backups(&roots))
+                        .unwrap_or_default();
+                }
+                if recoverable_exports.is_empty() {
+                    recoverable_exports = self.recoverable_library_exports(database.as_path());
+                }
                 AppError::DatabaseCorrupt {
                     database,
                     backups,
@@ -900,8 +932,7 @@ impl SqliteLibraryRepository {
         let transaction = connection
             .transaction()
             .map_err(|error| database_error(&database, error))?;
-        let generation = read_schema_generation(&transaction, &database)?;
-        validate_base_database(&transaction, &database)?;
+        let generation = validate_for_read(&transaction, &database)?;
         let (classification, finding) = match generation {
             SchemaGeneration::V1 => (
                 Diagnosis::RequiresMigration,
@@ -1178,8 +1209,7 @@ impl SqliteLibraryRepository {
             let transaction = connection
                 .transaction()
                 .map_err(|error| database_error(&database, error))?;
-            let generation = read_schema_generation(&transaction, &database)?;
-            validate_base_database(&transaction, &database)?;
+            let generation = validate_base_for_fts_recovery(&transaction, &database)?;
             if generation != SchemaGeneration::V2 {
                 return Err(AppError::invalid_state(
                     "library_database",
@@ -1195,6 +1225,7 @@ impl SqliteLibraryRepository {
         // may have rebuilt the index after this process observed drift.
         // Rebuilding a healthy index would report a false `changed` result.
         if self.derived_index_is_consistent(&connection, &database)? {
+            disable_writable_schema(&connection, &database)?;
             Self::revalidate_database_identity(&database, identity)?;
             return Ok(None);
         }
@@ -1648,7 +1679,7 @@ impl LibraryRepository for SqliteLibraryRepository {
             return Ok(PortableLibraryDocument::empty());
         }
         let entries = self
-            .read_existing(&database)
+            .read_exportable_entries(&database)
             .map_err(|error| self.enrich_database_corruption(error))?;
         let mut document = PortableLibraryDocument {
             format_version: LIBRARY_FORMAT_VERSION,
@@ -2330,15 +2361,26 @@ fn read_schema_generation(
 /// integrity pass checks the schema table and the four base tables
 /// individually: FTS5 shadow-table damage must stay in the derived layer,
 /// where it is a doctor-fixable finding instead of base corruption.
-fn validate_base_database(connection: &Connection, path: &Path) -> Result<(), AppError> {
-    let state_revision = singleton_i64(connection, "SELECT revision FROM state_revision", path)?;
-    if state_revision < 0 {
-        return Err(AppError::database_corrupt(NativePath::new(
-            path.to_path_buf(),
-        )));
-    }
-    validate_library_tags_schema(connection, path)?;
-    for table in BASE_INTEGRITY_TABLES {
+fn enable_writable_schema(connection: &Connection, path: &Path) -> Result<(), AppError> {
+    // This is connection-local and permits inspection of intact base tables
+    // when only the derived FTS schema text is malformed.
+    connection
+        .execute_batch("PRAGMA writable_schema = ON;")
+        .map_err(|error| database_error(path, error))
+}
+
+fn disable_writable_schema(connection: &Connection, path: &Path) -> Result<(), AppError> {
+    connection
+        .execute_batch("PRAGMA writable_schema = OFF;")
+        .map_err(|error| database_error(path, error))
+}
+
+fn validate_table_integrity(
+    connection: &Connection,
+    path: &Path,
+    tables: &[&str],
+) -> Result<(), AppError> {
+    for table in tables {
         let integrity: Option<String> = connection
             .query_row(&format!("PRAGMA integrity_check('{table}')"), [], |row| {
                 row.get(0)
@@ -2351,6 +2393,10 @@ fn validate_base_database(connection: &Connection, path: &Path) -> Result<(), Ap
             )));
         }
     }
+    Ok(())
+}
+
+fn validate_foreign_keys(connection: &Connection, path: &Path) -> Result<(), AppError> {
     let foreign_key_issue: Option<String> = connection
         .query_row("PRAGMA foreign_key_check", [], |row| row.get(0))
         .optional()
@@ -2360,8 +2406,36 @@ fn validate_base_database(connection: &Connection, path: &Path) -> Result<(), Ap
             path.to_path_buf(),
         )));
     }
+    Ok(())
+}
+
+fn validate_base_database(connection: &Connection, path: &Path) -> Result<(), AppError> {
+    let state_revision = singleton_i64(connection, "SELECT revision FROM state_revision", path)?;
+    if state_revision < 0 {
+        return Err(AppError::database_corrupt(NativePath::new(
+            path.to_path_buf(),
+        )));
+    }
+    validate_library_tags_schema(connection, path)?;
+    validate_table_integrity(connection, path, &BASE_INTEGRITY_TABLES)?;
+    validate_foreign_keys(connection, path)?;
     load_validated_entries(connection, path)?;
     Ok(())
+}
+
+/// Validate the projection used by `library export` without relying on
+/// non-portable operational metadata such as schema generation or revision.
+fn load_recoverable_export_entries(
+    connection: &Connection,
+    path: &Path,
+) -> Result<Vec<PortableLibraryEntry>, AppError> {
+    enable_writable_schema(connection, path)?;
+    validate_library_tags_schema(connection, path)?;
+    validate_table_integrity(connection, path, &RECOVERABLE_EXPORT_INTEGRITY_TABLES)?;
+    validate_foreign_keys(connection, path)?;
+    let entries = load_validated_entries(connection, path)?;
+    disable_writable_schema(connection, path)?;
+    Ok(entries)
 }
 
 /// Derived validation proves the `library_fts` virtual table matches the
@@ -2434,11 +2508,24 @@ fn validate_derived_database(connection: &Connection, path: &Path) -> Result<(),
     Ok(())
 }
 
-/// Read-path validation for list/get/export: every generation gets full
-/// base validation including domain rows. Derived index state is not a read
-/// precondition here; callers that need the index (search) or doctor check
-/// it separately.
+/// Read-path validation proves the complete base state, but tolerates a
+/// malformed derived FTS schema so list/get can retain their base-only
+/// contract and search can return the typed derived-index error.
 fn validate_for_read(connection: &Connection, path: &Path) -> Result<SchemaGeneration, AppError> {
+    enable_writable_schema(connection, path)?;
+    let generation = read_schema_generation(connection, path)?;
+    validate_base_database(connection, path)?;
+    disable_writable_schema(connection, path)?;
+    Ok(generation)
+}
+
+/// FTS repair keeps writable-schema tolerance enabled through its later
+/// schema-row detach, which is the only path that may edit sqlite_master.
+fn validate_base_for_fts_recovery(
+    connection: &Connection,
+    path: &Path,
+) -> Result<SchemaGeneration, AppError> {
+    enable_writable_schema(connection, path)?;
     let generation = read_schema_generation(connection, path)?;
     validate_base_database(connection, path)?;
     Ok(generation)
@@ -2457,6 +2544,16 @@ fn map_derived_validation_error(error: AppError) -> AppError {
         AppError::DatabaseCorrupt { .. } => fts_index_invalid(),
         error => error,
     }
+}
+
+fn validate_fts_integrity(connection: &Connection, path: &Path) -> Result<(), AppError> {
+    connection
+        .execute(
+            "INSERT INTO library_fts(library_fts) VALUES('integrity-check')",
+            [],
+        )
+        .map(|_| ())
+        .map_err(|error| map_derived_validation_error(database_error(path, error)))
 }
 
 fn fts_match_error(path: &Path, error: SqlError) -> AppError {
@@ -2479,19 +2576,28 @@ fn fts_match_error(path: &Path, error: SqlError) -> AppError {
 /// `schema_newer`; neither is ever upgraded implicitly. Derived drift is a
 /// typed, doctor-fixable `invalid_state`, never base corruption.
 fn validate_database(connection: &Connection, path: &Path) -> Result<(), AppError> {
-    let generation = read_schema_generation(connection, path)?;
-    validate_base_database(connection, path)?;
-    match generation {
-        SchemaGeneration::V1 => Err(AppError::MigrationRequired {
-            domain: "library".to_owned(),
-            found_version: 1,
-            supported_version: SCHEMA_VERSION,
-        }),
-        SchemaGeneration::Newer(found) => Err(schema_newer(found)),
-        SchemaGeneration::V2 => {
-            validate_derived_database(connection, path).map_err(map_derived_validation_error)
+    enable_writable_schema(connection, path)?;
+    let result = (|| {
+        let generation = read_schema_generation(connection, path)?;
+        validate_base_database(connection, path)?;
+        match generation {
+            SchemaGeneration::V1 => Err(AppError::MigrationRequired {
+                domain: "library".to_owned(),
+                found_version: 1,
+                supported_version: SCHEMA_VERSION,
+            }),
+            SchemaGeneration::Newer(found) => Err(schema_newer(found)),
+            SchemaGeneration::V2 => {
+                validate_derived_database(connection, path)
+                    .map_err(map_derived_validation_error)?;
+                validate_fts_integrity(connection, path)
+            }
         }
+    })();
+    if result.is_ok() {
+        disable_writable_schema(connection, path)?;
     }
+    result
 }
 
 fn singleton_i64(connection: &Connection, query: &str, path: &Path) -> Result<i64, AppError> {
@@ -2750,14 +2856,22 @@ fn replace_fts_row(
 /// This includes damaged or partial virtual-table schema and orphaned shadow
 /// tables whose virtual-table row has already disappeared.
 fn fts_schema_requires_detach(connection: &Connection) -> bool {
-    let virtual_table_present = matches!(
-        connection.query_row(
-            "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'library_fts'",
+    let statement: Option<String> = match connection
+        .query_row(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'library_fts'",
             [],
-            |row| row.get::<_, i64>(0),
-        ),
-        Ok(1)
-    );
+            |row| row.get(0),
+        )
+        .optional()
+    {
+        Ok(statement) => statement,
+        Err(_) => return true,
+    };
+    let virtual_table_present = statement.is_some();
+    if virtual_table_present && statement.as_deref().map(str::trim) != Some(LIBRARY_FTS_CREATE_SQL)
+    {
+        return true;
+    }
     let mut orphaned_shadow_present = false;
     for shadow in LIBRARY_FTS_SHADOW_TABLES {
         let present = matches!(
@@ -2803,10 +2917,9 @@ fn detach_damaged_fts_schema(connection: &Connection, path: &Path) -> Result<(),
          'library_fts_idx', 'library_fts_content', 'library_fts_docsize', 'library_fts_config')",
         [],
     );
-    connection
-        .execute_batch("PRAGMA writable_schema = OFF;")
-        .map_err(|error| database_error(path, error))?;
+    let reset = connection.execute_batch("PRAGMA writable_schema = RESET;");
     removal.map_err(|error| database_error(path, error))?;
+    reset.map_err(|error| database_error(path, error))?;
     let schema_version: i64 = connection
         .query_row("PRAGMA schema_version", [], |row| row.get(0))
         .map_err(|error| database_error(path, error))?;
@@ -2822,6 +2935,7 @@ fn rebuild_derived_index(connection: &Connection, path: &Path) -> Result<(), App
     if fts_schema_requires_detach(connection) {
         detach_damaged_fts_schema(connection, path)?;
     } else {
+        disable_writable_schema(connection, path)?;
         connection
             .execute("DROP TABLE IF EXISTS library_fts", [])
             .map_err(|error| database_error(path, error))?;
@@ -3920,7 +4034,8 @@ mod tests {
             .execute("INSERT INTO state_revision (revision) VALUES (0)", [])
             .unwrap();
 
-        assert_eq!(repository.export().unwrap_err().code(), "database_corrupt");
+        assert_eq!(repository.inspect().unwrap_err().code(), "database_corrupt");
+        assert_eq!(repository.export().unwrap().entries.len(), 1);
     }
 
     struct BeforeFirstLockFailure;
@@ -4718,7 +4833,8 @@ mod tests {
             .execute("DELETE FROM schema_info", [])
             .unwrap();
 
-        assert_eq!(repository.export().unwrap_err().code(), "database_corrupt");
+        assert_eq!(repository.inspect().unwrap_err().code(), "database_corrupt");
+        assert_eq!(repository.export().unwrap().entries.len(), 1);
     }
 
     #[test]
@@ -4737,7 +4853,8 @@ mod tests {
             .execute("INSERT INTO schema_info (version) VALUES (1)", [])
             .unwrap();
 
-        assert_eq!(repository.export().unwrap_err().code(), "database_corrupt");
+        assert_eq!(repository.inspect().unwrap_err().code(), "database_corrupt");
+        assert_eq!(repository.export().unwrap().entries.len(), 1);
     }
 
     #[test]
@@ -4759,7 +4876,8 @@ mod tests {
             )
             .unwrap();
 
-        assert_eq!(repository.export().unwrap_err().code(), "database_corrupt");
+        assert_eq!(repository.inspect().unwrap_err().code(), "database_corrupt");
+        assert_eq!(repository.export().unwrap().entries.len(), 1);
     }
 
     #[test]
@@ -4782,8 +4900,8 @@ mod tests {
             )
             .unwrap();
         let query = Query::new("review".to_owned()).unwrap();
+        assert_eq!(repository.export().unwrap().entries.len(), 1);
         for error in [
-            repository.export().unwrap_err(),
             repository.list(&page(100, 0)).unwrap_err(),
             repository.search(&query, &page(100, 0)).unwrap_err(),
             repository
@@ -4794,6 +4912,32 @@ mod tests {
         ] {
             assert_eq!(error.code(), "database_corrupt", "{error:?}");
         }
+    }
+
+    #[test]
+    fn corruption_details_name_library_export_when_only_revision_is_invalid() {
+        let temporary = tempdir().unwrap();
+        let entry = entry("skills/review", None);
+        let repository = imported_repository(&temporary, vec![entry.clone()]);
+        let database = temporary.path().join("data/skilload/skilload.db");
+        Connection::open(&database)
+            .unwrap()
+            .execute_batch(
+                "PRAGMA ignore_check_constraints = ON;
+                 UPDATE state_revision SET revision = -1;
+                 PRAGMA ignore_check_constraints = OFF;",
+            )
+            .unwrap();
+
+        assert_eq!(repository.export().unwrap().entries, vec![entry]);
+        let error = repository.inspect().unwrap_err();
+        assert!(matches!(
+            error,
+            AppError::DatabaseCorrupt {
+                recoverable_exports,
+                ..
+            } if recoverable_exports == ["library.export"]
+        ));
     }
 
     #[test]
@@ -5570,6 +5714,45 @@ mod tests {
     }
 
     #[test]
+    fn mutations_reject_fts_special_integrity_drift_before_committing() {
+        let temporary = tempdir().unwrap();
+        let original = searchable_entry("skills/review");
+        let source = original.skill.source.canonical.clone();
+        let repository = imported_repository(&temporary, vec![original]);
+        let database = temporary.path().join("data/skilload/skilload.db");
+        Connection::open(&database)
+            .unwrap()
+            .execute("DELETE FROM library_fts_docsize", [])
+            .unwrap();
+        let before = fs::read(&database).unwrap();
+
+        let import_error = repository
+            .import(&document(vec![entry("skills/new", None)]), false)
+            .unwrap_err();
+        assert!(matches!(
+            import_error,
+            AppError::InvalidState { state, .. } if state == "library_fts_invalid"
+        ));
+        assert_eq!(fs::read(&database).unwrap(), before);
+
+        let mutation_error = repository
+            .mutate_metadata(&metadata_mutation(
+                &source,
+                LibraryMetadataChange::note_set("blocked".to_owned()).unwrap(),
+            ))
+            .unwrap_err();
+        assert!(matches!(
+            mutation_error,
+            AppError::InvalidState { state, .. } if state == "library_fts_invalid"
+        ));
+        assert_eq!(fs::read(&database).unwrap(), before);
+
+        let operation = repository.fix().unwrap();
+        assert_eq!(operation.outcome.as_str(), "changed");
+        assert!(repository.inspect().unwrap().findings.is_empty());
+    }
+
+    #[test]
     fn doctor_is_filesystem_inert_when_absent_or_healthy() {
         let temporary = tempdir().unwrap();
         let repository = SqliteLibraryRepository::with_environment(
@@ -5962,6 +6145,59 @@ mod tests {
         assert_eq!(operation.outcome.as_str(), "changed");
         assert_eq!(operation.data.actions.len(), 1);
         assert_eq!(operation.data.actions[0].kind.as_str(), "repair");
+        assert_eq!(search(&repository, "code review").len(), 1);
+        assert!(repository.inspect().unwrap().findings.is_empty());
+    }
+
+    #[test]
+    fn malformed_fts_schema_stays_derived_and_doctor_fixable() {
+        let temporary = tempdir().unwrap();
+        let database = temporary.path().join("data/skilload/skilload.db");
+        let entry = searchable_entry("skills/review");
+        let source = entry.skill.source.canonical.clone();
+        let repository = imported_repository(&temporary, vec![entry.clone()]);
+        let connection = Connection::open(&database).unwrap();
+        connection
+            .execute_batch("PRAGMA writable_schema = ON;")
+            .unwrap();
+        connection
+            .execute(
+                "UPDATE sqlite_master SET sql = ?1 WHERE type = 'table' AND name = 'library_fts'",
+                ["CREATE VIRTUAL TABLE library_fts USING fts5("],
+            )
+            .unwrap();
+        connection
+            .execute_batch("PRAGMA writable_schema = OFF;")
+            .unwrap();
+        let schema_version: i64 = connection
+            .query_row("PRAGMA schema_version", [], |row| row.get(0))
+            .unwrap();
+        connection
+            .pragma_update(None, "schema_version", schema_version + 1)
+            .unwrap();
+        drop(connection);
+        let before = fs::read(&database).unwrap();
+
+        let listed = repository.list(&page(100, 0)).unwrap();
+        assert_eq!(listed.total, 1);
+        assert_eq!(listed.entries[0].skill.source.canonical, source);
+        assert_eq!(
+            repository.get(&source).unwrap().skill.source.canonical,
+            source
+        );
+        assert_eq!(repository.export().unwrap().entries.len(), 1);
+        let query = Query::new("code review".to_owned()).unwrap();
+        assert!(matches!(
+            repository.search(&query, &page(100, 0)),
+            Err(AppError::InvalidState { state, .. }) if state == "library_fts_invalid"
+        ));
+        let diagnosis = repository.inspect().unwrap();
+        assert_eq!(diagnosis.findings.len(), 1);
+        assert_eq!(diagnosis.findings[0].code, "library_fts_invalid");
+        assert_eq!(fs::read(&database).unwrap(), before);
+
+        let operation = repository.fix().unwrap();
+        assert_eq!(operation.outcome.as_str(), "changed");
         assert_eq!(search(&repository, "code review").len(), 1);
         assert!(repository.inspect().unwrap().findings.is_empty());
     }
