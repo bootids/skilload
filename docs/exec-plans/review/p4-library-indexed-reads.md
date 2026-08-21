@@ -92,6 +92,7 @@ DELETE-mode `-journal` 同样不能与 descriptor-bound open 分离：SQLite 官
 - [x] (2026-08-21) 第八轮 final-review remediation 完成：backup companion rejection、snapshot-bound live-sidecar recheck 与 corruption recovery inventory root binding 已由 `8a0d84dc1e6de9959c0423f99273aa214c4f38b8` 推送；三个 GitHub replies 已写入，三个 inline threads 均 resolved。最终完整 reconciliation 读取为 9 个 top-level comments、40 个 reviews、32 个 threads；所有 actual inline source 都有本 Log 条目、reply 与 resolved state，无 pending 或 blocked source。finalized Review Conversation Log 由当前 documentation commit 提交。
 - [x] (2026-08-21) 第九轮 final-review 的三个 inline 问题已由 `a140aad0f9fa85c0a9cb74f433793e4644bd2ce4` 修复并推送：三个新 regression 已由 red→green 证明，workspace fmt/clippy/test/build 全部通过；三个 GitHub reply 已写入、对应 thread 均 resolved，最终 complete conversation reconciliation 无未记录或 blocked actual problem。
 - [x] (2026-08-21) 第十轮 final-review 的两个 inline defect 已由 `9dc0fd058d54cf67f4d9e3edea5e9d7cdabc34f0` 推送：共享 FTS projection 为 non-NFC free-text 保留 raw 加 NFC alternative，read snapshot 在 callback 返回 error 前重验 generation；两项新增 adapter regression red→green，workspace fmt/clippy/test/locked build 均通过。两个 GitHub reply 已成功写入且 threads 均 resolved；最终 reconciliation 无未记录、未回答或 blocked source，final Review Conversation Log documentation commit 已推送。
+- [x] (2026-08-22) 第十一轮 final-review 的三个 inline defect 已在现有 Product Baseline 内完成 remediation：portable export 对不可完整枚举的 migration backup inventory fail closed、writable SQLite connection 在最终 generation revalidation 后再次执行 `SQLITE_FCNTL_HAS_MOVED`、FTS reference 记录 detach commit → `VACUUM` → fresh rebuild transaction。两项新增 regression、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace`（13+17+164）与 `cargo build --workspace --locked` 已通过；待预备 commit/push 后回复并 resolve 三个 thread。
 
 ## Surprises & Discoveries
 
@@ -145,6 +146,9 @@ DELETE-mode `-journal` 同样不能与 descriptor-bound open 分离：SQLite 官
 
 - Observation: FTS5 `unicode61 remove_diacritics 0` 不会 canonical-normalize arbitrary free-text；query 已 NFC 而 index仅含 decomposed bytes 时，literal MATCH 不命中。读取 snapshot 的 callback error 也必须先完成 generation identity revalidation，否则旧 inode 的 `not_found`/migration/schema error会被错误地归属为 replacement pathname。
   Evidence: `search_matches_nfc_forms_of_normalizable_free_text_fields` pre-fix 对 composed `café` 查询返回空集而非四个含 decomposed description/alias/category/note 的 entries；`failed_read_revalidates_database_generation_before_returning_error` pre-fix 返回 callback 的 `not_found`，两者修复后均通过。
+
+- Observation: 缺失的 `data/backups` 目录代表尚未发布 recovery asset，可以视为空集合；已存在目录的打开或任一 iterator entry 失败则不能安全声称完整保护集合。另一个 writable SQLite pathname ABA gap 出现在首次 `SQLITE_FCNTL_HAS_MOVED` 与最终 held-root/main-entry revalidation 之间，必须在后者完成后再次验证 connection handle。
+  Evidence: `output_rejects_an_unreadable_migration_backup_inventory_before_staging` 以不可读 backup directory 返回 `validation_failed`、保留 recovery file 且不创建 staging；`writable_open_rejects_an_aba_generation_restored_after_initial_handle_check` 在 replacement 被首次 handle check 后替换回原路径时返回 `database_identity_drift`，原路径与 displaced replacement inode 不同。
 
 ## Decision Log
 
@@ -273,6 +277,14 @@ DELETE-mode `-journal` 同样不能与 descriptor-bound open 分离：SQLite 官
 - Decision: `run_read_snapshot` 保存 callback `Result`，在返回其成功或错误之前重验 held data-directory/main-file generation；successful path保留既有 commit 前后 revalidation。
   Rationale: descriptor-bound snapshot只有在结果归属的 pathname仍指向同一 generation时才可安全返回。若 callback 已得到 `not_found`、`migration_required` 或 `schema_newer` 后 pathname被替换，identity drift必须优先，不能向用户归因旧 inode的结果。
   Date/Author: 2026-08-21 / Codex
+
+- Decision: 将 `data/backups` 的 NotFound 作为空 recovery inventory，其他目录或 entry 枚举失败统一返回 `library_export_protected_inventory_unavailable` validation error；所有 export protection gate 复用这一个 fallible inventory。
+  Rationale: `SKL-LIB-009` Revision 5 要求绝不覆盖已发布 migration backup pair 或同 inode alias。不存在目录时无 asset 可保护，但 partial inventory 不足以作出安全覆盖决定，必须 fail closed。
+  Date/Author: 2026-08-22 / Codex
+
+- Decision: writable `open_existing_database` 保留 open 后的早期 `SQLITE_FCNTL_HAS_MOVED` 检查，并在 held directory entry/path identity revalidation 后重复同一 check。
+  Rationale: 早期检查快速拒绝 stable replacement；第二次检查覆盖 replacement 在第一次通过后被攻击者恢复原 pathname 的 ABA 窗口。所有 existing import、metadata mutation、migration 和 FTS repair 都通过此 helper，因此不新增调用方分支。
+  Date/Author: 2026-08-22 / Codex
 
 ## Outcomes & Retrospective
 
@@ -919,6 +931,56 @@ Evidence: `generation_gate_rejects_fifo_without_waiting` 通过，证明 regular
 
 GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/5#discussion_r3827813420；thread resolved: true。
 
+2026-08-21 16:08Z 第十一轮 final-review initial classification：top-level `IC_kwDOT7YN2s8AAAABQDWwtw` 仅为 `@codex` trigger，review body `PRR_kwDOT7YN2s8AAAABKbzRzA` 仅为自动化 wrapper，均无独立问题。以下三个未 resolved inline thread 均在现有 Product Baseline 内，按 `fixed` 处理；尚未回复或关闭。
+
+### PRRT_kwDOT7YN2s6bN3dy - 无法完整枚举 backup inventory 时必须 fail closed
+
+Source: PRRT_kwDOT7YN2s6bN3dy / PRRC_kwDOT7YN2s7kZJeW（https://github.com/bootids/skilload/pull/5#discussion_r3831797654）
+
+Problem: `crates/skilload-core/src/adapters/portable_library.rs` 的 `protected_paths` 对 `read_dir(data/backups)` 使用 `if let Ok`，并以 `entries.flatten()` 丢弃逐项错误。若已发布 migration backup 的目录无法打开或无法完整枚举，export 可能将它视为无受保护项并覆盖 recovery asset。
+
+Disposition: fixed
+
+Status: open
+
+Resolution: 已在 `crates/skilload-core/src/adapters/portable_library.rs` 将 `protected_paths` 改为 fallible inventory：仅 absent `data/backups` 返回空集合，目录打开或 iterator entry error 返回 `library_export_protected_inventory_unavailable` validation error；初始与最终 export protection、publication guard 共享该结果。新增 `output_rejects_an_unreadable_migration_backup_inventory_before_staging`，证明拒绝发生在 staging 前且 recovery file 未变。以上将随预备 `fix(library): harden recovery asset and writable generation guards` 提交推送。
+
+Evidence: focused regression 通过；`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace`（13+17+164）和 `cargo build --workspace --locked` 均通过。预备 commit/push 后补入 SHA。
+
+GitHub outcome: 未回复；thread unresolved。
+
+### PRRT_kwDOT7YN2s6bN3d2 - writable SQLite handle 必须在最终 generation revalidation 后重验
+
+Source: PRRT_kwDOT7YN2s6bN3d2 / PRRC_kwDOT7YN2s7kZJeg（https://github.com/bootids/skilload/pull/5#discussion_r3831797664）
+
+Problem: writable `open_existing_database` 在 `SQLITE_FCNTL_HAS_MOVED` 检查后、directory/main-entry identity revalidation 前可经历同账号 ABA pathname swap；攻击者恢复原 pathname 后，现有路径检查通过，但 connection 仍可能指向 replacement database，随后 migration、repair 或 mutation 会写错 generation。
+
+Disposition: fixed
+
+Status: open
+
+Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 保留 writable open 后的早期 `SQLITE_FCNTL_HAS_MOVED`，并在 held data-directory entry/path identity 都重验后再次执行，以拒绝 restoration ABA。`open_existing_database` 是 import、metadata mutation、v1 migration 与 FTS repair 的共享 writable gate；新增受控 `writable_open_rejects_an_aba_generation_restored_after_initial_handle_check`，在初次 handle check 后恢复原 pathname 时要求 `database_identity_drift`。以上将随预备 `fix(library): harden recovery asset and writable generation guards` 提交推送。
+
+Evidence: focused regression 通过；`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace`（13+17+164）和 `cargo build --workspace --locked` 均通过。预备 commit/push 后补入 SHA。
+
+GitHub outcome: 未回复；thread unresolved。
+
+### PRRT_kwDOT7YN2s6bN3d7 - FTS detach 后必须在 rebuild 前 VACUUM
+
+Source: PRRT_kwDOT7YN2s6bN3d7 / PRRC_kwDOT7YN2s7kZJem（https://github.com/bootids/skilload/pull/5#discussion_r3831797670）
+
+Problem: `docs/references/sqlite-fts5-library-search.md` 描述 physical FTS shadow corruption 时列出 schema-row detach 后立即 recreate，遗漏实现实际要求的 detach commit、non-transactional `VACUUM` 和随后独立 transaction rebuild；该遗漏会让维护者重引 orphan pages 与 full-database integrity failure。
+
+Disposition: fixed
+
+Status: open
+
+Resolution: 已更新 `docs/references/sqlite-fts5-library-search.md` 的 verified recovery sequence 与 cautions：physical shadow corruption 必须先 commit writable-schema detach，在无 transaction 的 held writable connection 执行 `VACUUM`、重验 generation，随后以 fresh transaction recreate/fill/validate FTS；这与 `repair_fts_locked` 和 whole-database integrity regression 一致。以上将随预备 `fix(library): harden recovery asset and writable generation guards` 提交推送。
+
+Evidence: `fts_shadow_corruption_stays_doctor_fixable` 的既有 whole-database integrity contract仍适用；`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace`（13+17+164）和 `cargo build --workspace --locked` 均通过。预备 commit/push 后补入 SHA。
+
+GitHub outcome: 未回复；thread unresolved。
+
 ## Context and Orientation
 
 
@@ -1277,3 +1339,5 @@ Backup manifest是private versioned serde record，不进入API-v2或portable ex
 2026-08-21：第九轮 final-review reconciliation。PRRT_kwDOT7YN2s6bF0oA、PRRT_kwDOT7YN2s6bF0oG 与 PRRT_kwDOT7YN2s6bF0oR 的 `a140aad0f9fa85c0a9cb74f433793e4644bd2ce4` 修复证据、workspace validation、reply URLs 与 resolved states 已逐项写入 Review Conversation Log。最终完整会话读取为 10 个 top-level comments、44 个 reviews 与 35 个 threads；所有 thread 均为 resolved，三个新增 empty review containers 无独立问题，未发现 pending、blocked 或未记录 source。Plan 保持 `review`、PR 保持 ready。
 
 2026-08-21：第十轮 final-review reconciliation。将 PRRT_kwDOT7YN2s6bKUKq 与 PRRT_kwDOT7YN2s6bKUK8 的 `9dc0fd058d54cf67f4d9e3edea5e9d7cdabc34f0` 修复、workspace validation、两个 GitHub reply URL 与 resolved states 写入 Review Conversation Log；同时澄清 `SKL-LIB-004` Revision 2 的既有 NFC query-term 行为而不改变 revision。最终完整会话读取为 11 个 top-level comments、47 个 reviews 与 37 个 threads，所有 source 均已记录或无独立问题，Plan 保持 `review`、PR 保持 ready。
+
+2026-08-22：第十一轮 final-review preliminary remediation。完整会话读取确认新 top-level trigger `IC_kwDOT7YN2s8AAAABQDWwtw` 与 automated wrapper `PRR_kwDOT7YN2s8AAAABKbzRzA` 无独立问题；三个 inline defects PRRT_kwDOT7YN2s6bN3dy、PRRT_kwDOT7YN2s6bN3d2、PRRT_kwDOT7YN2s6bN3d7 均在 Product Baseline 内。已在 worktree 实现 fail-closed backup inventory、writable connection post-revalidation identity check并同步 FTS detach/VACUUM reference；focused regressions与 workspace fmt/clippy/test/locked build 全部通过。预备 `fix(library): harden recovery asset and writable generation guards` commit 将携带代码、reference 与本初步 Review Conversation Log；推送后才回复/resolve threads 并写入最终 SHA/URLs。

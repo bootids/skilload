@@ -420,7 +420,7 @@ impl<'parent> OutputPublicationGuard<'parent> {
                 Some(output.clone()),
             ));
         }
-        if protected_paths(roots).iter().any(|protected| {
+        if protected_paths(roots, output)?.iter().any(|protected| {
             fs::symlink_metadata(protected)
                 .ok()
                 .is_some_and(|metadata| metadata_identity(&metadata) == guard.identity)
@@ -774,7 +774,7 @@ fn reject_protected_output(
         })?;
     let output_metadata = fs::symlink_metadata(output_path).ok();
 
-    for protected in protected_paths(roots) {
+    for protected in protected_paths(roots, output)? {
         let protected_absolute = absolute_path(&protected).map_err(|error| {
             AppError::invalid_state(
                 "library_export",
@@ -809,7 +809,7 @@ fn reject_protected_output(
     Ok(())
 }
 
-fn protected_paths(roots: &ResolvedRoots) -> Vec<PathBuf> {
+fn protected_paths(roots: &ResolvedRoots, output: &NativePath) -> Result<Vec<PathBuf>, AppError> {
     let database = roots.data.effective.join("skilload.db");
     let mut protected = vec![
         database.clone(),
@@ -820,17 +820,38 @@ fn protected_paths(roots: &ResolvedRoots) -> Vec<PathBuf> {
     ];
     // Migration backups are recovery assets, not ordinary export targets.
     // Preserve every published pair entry so aliases are rejected by the
-    // same pathname and inode checks as the live generation.
-    if let Ok(entries) = fs::read_dir(roots.data.effective.join("backups")) {
-        protected.extend(entries.flatten().filter_map(|entry| {
-            let name = entry.file_name();
-            let name = name.to_str()?;
-            (name.starts_with("skilload-db-v1-to-v2-")
-                && (name.ends_with(".db") || name.ends_with(".manifest.json")))
-            .then(|| entry.path())
-        }));
+    // same pathname and inode checks as the live generation. An absent
+    // backups directory has no published recovery asset; every other
+    // enumeration failure must reject the export rather than omit protection.
+    let backup_directory = roots.data.effective.join("backups");
+    let entries = match fs::read_dir(&backup_directory) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(protected),
+        Err(_) => {
+            return Err(AppError::validation(
+                "library_export_protected_inventory_unavailable",
+                Some(output.clone()),
+            ));
+        }
+    };
+    for entry in entries {
+        let entry = entry.map_err(|_| {
+            AppError::validation(
+                "library_export_protected_inventory_unavailable",
+                Some(output.clone()),
+            )
+        })?;
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        if name.starts_with("skilload-db-v1-to-v2-")
+            && (name.ends_with(".db") || name.ends_with(".manifest.json"))
+        {
+            protected.push(entry.path());
+        }
     }
-    protected
+    Ok(protected)
 }
 
 fn resolved_existing_path(path: &Path) -> Option<PathBuf> {
@@ -1514,6 +1535,37 @@ mod tests {
                 .to_string_lossy()
                 .starts_with(".skilload-library-")
         }));
+    }
+
+    #[test]
+    fn output_rejects_an_unreadable_migration_backup_inventory_before_staging() {
+        let temporary = tempdir().unwrap();
+        let backups = temporary.path().join("data/skilload/backups");
+        let output_parent = temporary.path().join("output");
+        let output = NativePath::new(output_parent.join("library.json"));
+        fs::create_dir_all(&backups).unwrap();
+        fs::create_dir(&output_parent).unwrap();
+        let backup = backups.join("skilload-db-v1-to-v2-1.db");
+        fs::write(&backup, b"recovery database").unwrap();
+        let original_permissions = fs::metadata(&backups).unwrap().permissions();
+        fs::set_permissions(&backups, fs::Permissions::from_mode(0o300)).unwrap();
+        assert!(fs::read_dir(&backups).is_err());
+
+        let store = PortableLibraryTransferStore::with_environment(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(XdgRootResolver),
+        );
+        let result = store.write_export(&output, &document());
+
+        fs::set_permissions(&backups, original_permissions).unwrap();
+        let error = result.unwrap_err();
+        assert_eq!(error.code(), "validation_failed");
+        assert_eq!(fs::read(&backup).unwrap(), b"recovery database");
+        assert!(!output.as_path().exists());
+        assert!(
+            fs::read_dir(&output_parent).unwrap().next().is_none(),
+            "the unavailable inventory must reject before staging"
+        );
     }
 
     #[test]

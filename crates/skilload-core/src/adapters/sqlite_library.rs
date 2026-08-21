@@ -381,10 +381,15 @@ impl SqliteLibraryRepository {
         // read-only generation instead.
         if !flags.contains(OpenFlags::SQLITE_OPEN_READ_ONLY) {
             verify_sqlite_connection_identity(&connection)?;
+            self.hooks
+                .after_existing_database_connection_identity_check(path)?;
         }
         configure_connection(&connection, path)?;
         revalidate_database_entry(directory, database_name, identity)?;
         Self::revalidate_database_identity(path, identity)?;
+        if !flags.contains(OpenFlags::SQLITE_OPEN_READ_ONLY) {
+            verify_sqlite_connection_identity(&connection)?;
+        }
         Ok((connection, identity))
     }
 
@@ -2211,6 +2216,13 @@ trait PersistenceHooks: Send + Sync {
     }
 
     fn after_existing_database_open(&self, _database: &Path) -> Result<(), AppError> {
+        Ok(())
+    }
+
+    fn after_existing_database_connection_identity_check(
+        &self,
+        _database: &Path,
+    ) -> Result<(), AppError> {
         Ok(())
     }
 
@@ -4956,6 +4968,81 @@ mod tests {
         assert_eq!(exported.entries, original.validate().unwrap().entries);
         assert!(database.exists());
         assert!(!replacement.exists());
+    }
+
+    struct ExistingWritableAbaReplacement {
+        database: PathBuf,
+        displaced: PathBuf,
+        replacement: PathBuf,
+        replacement_displaced: PathBuf,
+    }
+
+    impl PersistenceHooks for ExistingWritableAbaReplacement {
+        fn before_existing_database_open(&self, _database: &Path) -> Result<(), AppError> {
+            fs::rename(&self.database, &self.displaced).unwrap();
+            fs::rename(&self.replacement, &self.database).unwrap();
+            Ok(())
+        }
+
+        fn after_existing_database_connection_identity_check(
+            &self,
+            _database: &Path,
+        ) -> Result<(), AppError> {
+            fs::rename(&self.database, &self.replacement_displaced).unwrap();
+            fs::rename(&self.displaced, &self.database).unwrap();
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn writable_open_rejects_an_aba_generation_restored_after_initial_handle_check() {
+        let temporary = tempdir().unwrap();
+        let environment = Arc::new(TestEnvironment::with_roots(temporary.path()));
+        let initial = SqliteLibraryRepository::with_environment(
+            environment.clone(),
+            Arc::new(XdgRootResolver),
+        );
+        initial
+            .import(&document(vec![entry("skills/review", None)]), false)
+            .unwrap();
+        let initial_roots = initial.resolve_roots().unwrap();
+        let database = SqliteLibraryRepository::database_path(&initial_roots);
+        let replacement = temporary.path().join("replacement.db");
+        fs::copy(&database, &replacement).unwrap();
+        let replacement_displaced = temporary.path().join("replacement-displaced.db");
+        let repository = SqliteLibraryRepository::with_hooks(
+            environment,
+            Arc::new(XdgRootResolver),
+            Arc::new(ExistingWritableAbaReplacement {
+                database: database.clone(),
+                displaced: temporary.path().join("displaced.db"),
+                replacement,
+                replacement_displaced: replacement_displaced.clone(),
+            }),
+        );
+        let roots = repository.resolve_roots().unwrap();
+        let data_directory = repository.open_bound_data_directory(&roots).unwrap();
+
+        let error = repository
+            .open_existing_database(
+                &data_directory,
+                &database,
+                OpenFlags::SQLITE_OPEN_READ_WRITE,
+            )
+            .unwrap_err();
+
+        assert!(
+            matches!(
+                error,
+                AppError::InvalidState { ref state, .. } if state == "database_identity_drift"
+            ),
+            "expected database_identity_drift, got {error:?}"
+        );
+        assert_ne!(
+            metadata_identity(&fs::metadata(&database).unwrap()),
+            metadata_identity(&fs::metadata(&replacement_displaced).unwrap()),
+            "the restored path and the displaced connection target must be distinct generations"
+        );
     }
 
     struct ExistingReadOnlyWalReplacement {

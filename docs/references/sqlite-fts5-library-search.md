@@ -18,7 +18,7 @@ skilload 的 `SKL-LIB-004` 要求使用 bundled SQLite FTS5 搜索本地 Library
 * FTS5 的 `rebuild` special command会删除并按当前 FTS content 重新生成全文索引。若 FTS content rows 自身与 Library base rows 不一致，doctor 不能只调用 `rebuild`；它必须在 live repair transaction 中丢弃并按已验证 base rows 重新创建、填充整个派生 table。
 * `rusqlite 0.40.2` 的 `backup` module 要求 source 与 destination 是两个不同的 `Connection`。`Backup::new` 创建 handle；`run_to_completion(pages_per_step, pause_between_pages, progress)` 重复 step，并允许 source 在分块之间处理并发操作；`Backup` 的 `Drop` 调用 `sqlite3_backup_finish`。该 API 由 crate 的 `backup` feature 提供，适合从 live source generation 生成 standalone migration backup，也适合只读 doctor 的 in-memory snapshot。
 * `PRAGMA integrity_check(<table>)`（table-name 形式，SQLite ≥ 3.33.0；bundled 3.53.4）只检查指定 table 及其 indexes，也可指定 `sqlite_master`。2026-08-20 实验证实：仅损坏 FTS5 shadow b-tree（翻转 `library_fts_data` root page 尾部 cell 字节）时，整库 `PRAGMA integrity_check` 报告 `Tree N page N cell N: Extends off end of page`，而对 `sqlite_master` 与四个 base table 的逐表检查全部返回 `ok`。base/derived 两层分类因此应使用逐表检查，不要用整库结果。
-* 物理 damaged 的 FTS5 shadow b-tree 无法用任何 SQL 语句清除：`DROP TABLE library_fts`、`DROP TABLE library_fts_data`、`DELETE FROM library_fts_data` 都以 `SQLITE_CORRUPT` 失败（2026-08-20 实验）。可行的重建路径是 SQLite 文档记载的 `writable_schema` 修复：同一 transaction 内 `PRAGMA writable_schema = ON` → `DELETE FROM sqlite_master WHERE name IN (vtab + 5 个 shadow 表名)` → `PRAGMA writable_schema = OFF` → 读 `PRAGMA schema_version` 并 +1 强制 schema 重解析 → 重新 `CREATE VIRTUAL TABLE` 并按 base rows 填充。旧 shadow pages 成为 orphan pages（整库 integrity_check 之后会报 never used），不影响逐表 base 验证与 FTS5 special `integrity-check`。
+* 物理 damaged 的 FTS5 shadow b-tree 无法用任何 SQL 语句清除：`DROP TABLE library_fts`、`DROP TABLE library_fts_data`、`DELETE FROM library_fts_data` 都以 `SQLITE_CORRUPT` 失败（2026-08-20 实验）。可行的重建路径是 SQLite 文档记载的 `writable_schema` 修复：在第一笔 transaction 内 `PRAGMA writable_schema = ON` → `DELETE FROM sqlite_master WHERE name IN (vtab + 5 个 shadow 表名)` → `PRAGMA writable_schema = RESET` → 读 `PRAGMA schema_version` 并 +1 强制 schema 重解析，然后先 commit detach。旧 shadow pages 此时仍为 orphan pages，必须在无 transaction 的同一 held writable connection 执行 `VACUUM` 回收，再重验 live generation，并在一笔新的 transaction 中重新 `CREATE VIRTUAL TABLE`、按 base rows 填充和验证派生索引。这个顺序使整库 integrity_check 在 repair 后恢复 `ok`，同时不触碰 base rows。
 
 ## 对 `PLAN-0005` 的约束
 
@@ -32,7 +32,7 @@ skilload 的 `SKL-LIB-004` 要求使用 bundled SQLite FTS5 搜索本地 Library
 
 * 整库 `PRAGMA integrity_check` 会把 FTS5 shadow 表的损坏一并报告；若产品需要区分 base corruption 与可重建的 derived 损坏，必须逐表检查（见上）而不是解析整库输出的消息文本——SQLite 的错误消息格式不是稳定契约。
 * FTS table 保存的是可重建的 metadata 副本。Library durable truth仍是 `library_entries` 与 `library_tags`；搜索、doctor 或 migration 不得通过 FTS row反向修改 base metadata。
-* Query 语义、tokenizer 配置或 Unicode query-normalization 数据一旦对外发布就属于兼容契约。后续改变它们必须更新产品 behavior revision并提供显式索引重建或 schema migration，不能静默改变同一 revision 的结果。
+* 物理 FTS shadow corruption 的 `writable_schema` detach 不能直接接 virtual-table recreate：必须先 commit、在无 transaction connection 上 `VACUUM` 回收 orphan pages、重验 generation，再在新 transaction rebuild；否则派生-only 验证可通过而全库 integrity_check 仍可能报告 never-used pages。
 
 ## 来源
 
@@ -43,4 +43,4 @@ skilload 的 `SKL-LIB-004` 要求使用 bundled SQLite FTS5 搜索本地 Library
 * [`rust-sqlite-unicode-library-foundation.md`](rust-sqlite-unicode-library-foundation.md)：本仓库 locked bundled SQLite 与 Unicode 15.1.0 基础。
 * [`sqlite-backup-and-corruption-recovery.md`](sqlite-backup-and-corruption-recovery.md)：backup、WAL generation、integrity/foreign-key check 与恢复边界。
 
-最后更新：2026-08-20。
+最后更新：2026-08-22。
