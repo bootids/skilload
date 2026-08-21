@@ -547,7 +547,7 @@ Disposition: fixed
 
 Status: open
 
-Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 的 `pre_open_generation_gate` 使用完整 `DATABASE_SIDECAR_SUFFIXES`（`-journal`、`-wal`、`-shm`）拒绝 descriptor-bound read 前的 non-standalone generation；新增 `rollback_journal_generation_is_rejected_before_sqlite_opens` 覆盖 export/list/search/get/default doctor 的 typed error、bytes 不变，且将既有 concurrent-writer regression 改为 `reads_reject_live_rollback_journals_before_descriptor_opens`，明确 active journal 的保守拒绝。同步 `SKL-OPS-004` clarification、`ARCHITECTURE.md`、persistence design 与 SQLite reference。预备修复提交待创建。
+Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 的 `pre_open_generation_gate` 使用完整 `DATABASE_SIDECAR_SUFFIXES`（`-journal`、`-wal`、`-shm`）拒绝 descriptor-bound read 前的 non-standalone generation；新增 `rollback_journal_generation_is_rejected_before_sqlite_opens` 覆盖 export/list/search/get/default doctor 的 typed error、bytes 不变，且将既有 concurrent-writer regression 改为 `reads_reject_live_rollback_journals_before_descriptor_opens`，明确 active journal 的保守拒绝。同步 `SKL-OPS-004` clarification、`ARCHITECTURE.md`、persistence design 与 SQLite reference。修复提交已推送：`ffeea3a7e850712db8b4b89c19dd6bfddf84136b`。
 
 Evidence: 所有四个 focused regressions 已通过；`mise exec -- cargo fmt --all -- --check`、`mise exec -- cargo clippy --quiet --workspace --all-targets --all-features -- -D warnings`、`mise exec -- cargo test --quiet --workspace --all-features --locked`（12 CLI binary + 17 contract + 149 core）及 `mise exec -- cargo build --quiet --workspace --all-features --locked` 已通过；`git diff --check`无输出。
 
@@ -563,7 +563,7 @@ Disposition: fixed
 
 Status: open
 
-Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 将 `read_schema_generation` 的范围从 `0..=API_V1_UINT_MAX` 收紧为 `1..=API_V1_UINT_MAX`；新增 `schema_version_zero_is_database_corrupt`，以 SQLite `ignore_check_constraints` 夹具构造外部损坏值并验证 export/list/search/get/default doctor/fix 均走 typed `database_corrupt`。预备修复提交待创建。
+Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 将 `read_schema_generation` 的范围从 `0..=API_V1_UINT_MAX` 收紧为 `1..=API_V1_UINT_MAX`；新增 `schema_version_zero_is_database_corrupt`，以 SQLite `ignore_check_constraints` 夹具构造外部损坏值并验证 export/list/search/get/default doctor/fix 均走 typed `database_corrupt`。修复提交已推送：`ffeea3a7e850712db8b4b89c19dd6bfddf84136b`。
 
 Evidence: `schema_version_zero_is_database_corrupt` 与完整 focused/workspace validation 均通过；完整 gate 和 `git diff --check` 证据同上。
 
@@ -579,7 +579,7 @@ Disposition: fixed
 
 Status: open
 
-Resolution: 已在 `crates/skilload-cli/src/human.rs` 的共享 `append_library_entry` 投影 canonical 与全部 `SourceIdentity` 字段、repository ID、commit、integrity、name、description、entry/byte counts、metadata/tags/trust state；所有字符串继续复用 `quote_string`。新增 `library_read_renderers_project_complete_terminal_safe_entries`，同时断言 list/search/get 输出完整字段且 description control newline 被转义。预备修复提交待创建。
+Resolution: 已在 `crates/skilload-cli/src/human.rs` 的共享 `append_library_entry` 投影 canonical 与全部 `SourceIdentity` 字段、repository ID、commit、integrity、name、description、entry/byte counts、metadata/tags/trust state；所有字符串继续复用 `quote_string`。新增 `library_read_renderers_project_complete_terminal_safe_entries`，同时断言 list/search/get 输出完整字段且 description control newline 被转义。修复提交已推送：`ffeea3a7e850712db8b4b89c19dd6bfddf84136b`。
 
 Evidence: `library_read_renderers_project_complete_terminal_safe_entries` 与完整 focused/workspace validation 均通过；完整 gate 和 `git diff --check` 证据同上。
 
@@ -595,7 +595,7 @@ Disposition: fixed
 
 Status: open
 
-Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 添加 `map_derived_validation_error`：仅 `AppError::DatabaseCorrupt` 转为 `library_fts_invalid`；search 与 `validate_database` 复用该映射，doctor 的 `derived_index_is_consistent` 对 operational error 返回原 error、仅 corruption/content mismatch 返回 false finding。新增 `derived_validation_preserves_busy_errors`，以即时 busy locked reader 证明 doctor 不再产生假修复 finding。预备修复提交待创建。
+Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 添加 `map_derived_validation_error`：仅 `AppError::DatabaseCorrupt` 转为 `library_fts_invalid`；search 与 `validate_database` 复用该映射，doctor 的 `derived_index_is_consistent` 对 operational error 返回原 error、仅 corruption/content mismatch 返回 false finding。新增 `derived_validation_preserves_busy_errors`，以即时 busy locked reader 证明 doctor 不再产生假修复 finding。修复提交已推送：`ffeea3a7e850712db8b4b89c19dd6bfddf84136b`。
 
 Evidence: `derived_validation_preserves_busy_errors` 与完整 focused/workspace validation 均通过；完整 gate 和 `git diff --check` 证据同上。
 
