@@ -86,7 +86,7 @@ DELETE-mode `-journal` 同样不能与 descriptor-bound open 分离：SQLite 官
 - [x] (2026-08-21) 第四轮 remediation 已以 `648fb40323f2d35ac1dba6331501d0e03f7ecc6a` 推送：backup inventory 现验证 manifest/schema/standalone base、migration lock 后重新诊断、manifest 读取受 4 KiB 上限约束、orphaned FTS shadow tables 可重建；focused 70 tests 与 workspace fmt/clippy/test/build 已通过。四个 GitHub replies 已写入且 inline threads 均 resolved，最终 Review Conversation Log 记录如下。
 - [x] (2026-08-21) PR #5 第五轮 final-review 的 4 个 inline 问题已由 `ffeea3a7e850712db8b4b89c19dd6bfddf84136b` 修复并通过 focused/workspace validation；4 个 GitHub replies 已成功写入、对应 threads 均 resolved，最终会话 reconciliation 与本 Review Conversation Log 已同步。
 - [x] (2026-08-21) 第六轮 final-review 的 5 个 inline 问题已由 `b581acb63df42a882e0f02d5167a931fdf6e47f0` 修复并推送：malformed FTS schema derived-only repair、recoverable Library export diagnostics、mutation special integrity gate、human recovery assets 与 backup-pair export protection；`SKL-LIB-009` 已提升至 Revision 5。focused tests、core 153 tests、CLI 13+17 tests 与 workspace fmt/clippy/test/build 已通过；5 个 GitHub replies 已写入且 threads 均 resolved。最终完整 conversation reconciliation 现确认 7 个 top-level comments、33 个 reviews、27 个 threads 均已完整记录或不含独立问题。
-- [x] (2026-08-21) 第七轮 final-review 的两个 inline 问题已在 Product Baseline 边界内完成实现与文档同步：read-only generation gate 现绑定已解析 `data/skilload` directory descriptor并用 relative nonblocking no-follow open 验证 main file；FIFO race 被拒绝而不等待 writer。新增两项 adapter regressions与既有 ABA/WAL regressions通过，workspace fmt/clippy/test/locked build 通过；待本轮 preliminary evidence commit 推送并回复/resolve 两个 thread。
+- [x] (2026-08-21) 第七轮 final-review 的两个 inline 问题已由 `0a1cad3897588623b77c69b0fe90279a9d770257` 修复并推送：read-only generation gate 现绑定已解析 `data/skilload` directory descriptor并用 relative nonblocking no-follow open 验证 main file；FIFO race 被拒绝而不等待 writer。新增两项 adapter regressions与既有 ABA/WAL regressions通过，workspace fmt/clippy/test/locked build 通过；待本轮 GitHub reply/resolve 与 final log reconciliation。
 
 ## Surprises & Discoveries
 
@@ -1058,6 +1058,8 @@ Backup manifest是private versioned serde record，不进入API-v2或portable ex
 
 2026-08-21：第六轮 final-review reconciliation。PRRT_kwDOT7YN2s6bB2FR、PRRT_kwDOT7YN2s6bB2FX、PRRT_kwDOT7YN2s6bB2Fb、PRRT_kwDOT7YN2s6bB2Fg 与 PRRT_kwDOT7YN2s6bB2Fm 分别修复 malformed derived FTS schema recovery、recoverable export diagnostics、write-time FTS special integrity、human recovery assets 与 migration backup export collision。实现、tests、产品 Revision 5、design/reference 与 preliminary Review Conversation Log 由 `b581acb63df42a882e0f02d5167a931fdf6e47f0` 推送；五个 reply URLs 和 resolved states 已逐项写入本 Log。最终完整读取为 7 top-level comments、33 reviews、27 threads，所有 thread resolved、无未记录、未回答或 blocked actual problem；新增 trigger、自动化 wrapper 与五个空 reply containers 均无独立问题。focused tests、core 153、CLI 13+17、workspace fmt/clippy/test/build 与 `git diff --check` 均通过。
 
+2026-08-21：第七轮 final-review remediation。PRRT_kwDOT7YN2s6bDCYF 与 PRRT_kwDOT7YN2s6bDCYM 都在 Product Baseline 内修复：existing-database read gate 现在将 root-validated data-directory descriptor、relative main-file entry、header/sidecar inspection 与 `/dev/fd` SQLite source 连续绑定，并以 nonblocking open 拒绝 FIFO race。实现、两项新 regression、架构/持久化设计、preliminary Review Conversation Log 由 `0a1cad3897588623b77c69b0fe90279a9d770257` 推送；focused 与 workspace validation 均通过。Plan 保持 `review`、PR 保持 ready；待本 workflow 回复并 resolve 两个 thread 后完成 reconciliation。
+
 ### PRRT_kwDOT7YN2s6bDCYF - 将既有数据库读取绑定到已解析的数据目录
 
 
@@ -1069,9 +1071,9 @@ Disposition: fixed
 
 Status: open
 
-Resolution: 待在 `crates/skilload-core/src/adapters/sqlite_library.rs` 中让 existing-database gate 通过已验证且持续持有的数据目录 descriptor 以相对名称打开 `skilload.db`，并在 SQLite open 前后重验该目录和 entry；补充目录替换竞态回归测试。当前修复与本 preliminary log 将在本 PR 的下一次提交中一并推送。
+Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 增加 `open_bound_data_directory`，在 root anchors 前后绑定 `data/skilload` directory identity；`pre_open_generation_gate` 从 held directory 相对打开并验证 `skilload.db`，所有 read-only list/search/get/export/default doctor 与 dry-run read 都传递该 held directory，transaction 前后继续重验。`0a1cad3897588623b77c69b0fe90279a9d770257` 已推送。
 
-Evidence: 尚未产生提交；计划运行新增 focused adapter regression、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace`、`cargo build --workspace --locked` 与 `git diff --check`。
+Evidence: `read_only_open_rejects_a_replaced_data_directory`、既有 `export_uses_checked_generation_when_a_read_only_aba_is_restored` 与 `read_only_open_never_creates_sidecars_for_a_replaced_wal_generation` 通过；`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace`、`cargo build --workspace --locked` 通过，提交前 `git diff --check` clean。修复提交：`0a1cad3897588623b77c69b0fe90279a9d770257`。
 
 GitHub outcome: 尚未回复；thread 保持 unresolved。
 
@@ -1086,8 +1088,8 @@ Disposition: fixed
 
 Status: open
 
-Resolution: 待在同一 `pre_open_generation_gate` 中为 descriptor open 加入 `O_NONBLOCK`，保留已有 opened-descriptor regular-file validation，并增加 FIFO replacement regression。当前修复与本 preliminary log 将在本 PR 的下一次提交中一并推送。
+Resolution: 已在同一 `pre_open_generation_gate` 的 directory-relative `openat` 加入 `O_NONBLOCK` 与已有 `O_NOFOLLOW`，保留 opened-descriptor regular-file validation；`0a1cad3897588623b77c69b0fe90279a9d770257` 已推送。
 
-Evidence: 尚未产生提交；计划运行新增 focused adapter regression、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace`、`cargo build --workspace --locked` 与 `git diff --check`。
+Evidence: `generation_gate_rejects_fifo_without_waiting` 通过，证明 regular-file precheck 后的 FIFO replacement 立即返回 typed identity error；同轮 existing ABA/WAL regressions与 `cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace`、`cargo build --workspace --locked` 通过，提交前 `git diff --check` clean。修复提交：`0a1cad3897588623b77c69b0fe90279a9d770257`。
 
 GitHub outcome: 尚未回复；thread 保持 unresolved。
