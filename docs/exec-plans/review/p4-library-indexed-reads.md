@@ -85,7 +85,7 @@ DELETE-mode `-journal` 同样不能与 descriptor-bound open 分离：SQLite 官
 - [x] (2026-08-21) final review 第三轮的 4 个 inline 问题已在 Product Baseline 边界内实现并通过 focused 与 workspace validation：只读 descriptor-bound SQLite open、保守保留 migration backups、MATCH-derived corruption mapping、no-follow backup validation；修复与 preliminary Review Conversation Log 已以 `7e5a7bda7ce2dc3804a687a4e7249944a7908980` 推送，四个 GitHub replies 已成功写入且 threads 均 resolved；final log reconciliation 已推送，完整会话读取未发现未记录、未回答或 blocked 的实际问题。
 - [x] (2026-08-21) 第四轮 remediation 已以 `648fb40323f2d35ac1dba6331501d0e03f7ecc6a` 推送：backup inventory 现验证 manifest/schema/standalone base、migration lock 后重新诊断、manifest 读取受 4 KiB 上限约束、orphaned FTS shadow tables 可重建；focused 70 tests 与 workspace fmt/clippy/test/build 已通过。四个 GitHub replies 已写入且 inline threads 均 resolved，最终 Review Conversation Log 记录如下。
 - [x] (2026-08-21) PR #5 第五轮 final-review 的 4 个 inline 问题已由 `ffeea3a7e850712db8b4b89c19dd6bfddf84136b` 修复并通过 focused/workspace validation；4 个 GitHub replies 已成功写入、对应 threads 均 resolved，最终会话 reconciliation 与本 Review Conversation Log 已同步。
-- [x] (2026-08-21) 第六轮 final-review 的 5 个 inline 问题已在 current Product Baseline 内实现：malformed FTS schema 的 derived-only repair、recoverable Library export diagnostics、mutation special integrity gate、human recovery assets 与 backup-pair export protection；`SKL-LIB-009` 已提升至 Revision 5。focused tests、core 153 tests、CLI 13+17 tests 与 workspace fmt/clippy/test/build 已通过；fix 与 preliminary Review Conversation Log 已 staged，待创建并推送 commit 后回复 threads。
+- [x] (2026-08-21) 第六轮 final-review 的 5 个 inline 问题已由 `b581acb63df42a882e0f02d5167a931fdf6e47f0` 修复并推送：malformed FTS schema derived-only repair、recoverable Library export diagnostics、mutation special integrity gate、human recovery assets 与 backup-pair export protection；`SKL-LIB-009` 已提升至 Revision 5。focused tests、core 153 tests、CLI 13+17 tests 与 workspace fmt/clippy/test/build 已通过；5 个 GitHub replies 已写入且 threads 均 resolved，final Review Conversation Log commit 待推送。
 
 ## Surprises & Discoveries
 
@@ -245,6 +245,8 @@ DELETE-mode `-journal` 同样不能与 descriptor-bound open 分离：SQLite 官
 最终 reconciliation 读取确认 PR #5 有 5 个 top-level comments、22 个 submitted reviews 与 18 个 review threads；所有 18 inline threads 都 resolved。五个 top-level source（`IC_kwDOT7YN2s8AAAABPzQF5Q`、`IC_kwDOT7YN2s8AAAABPz7oxg`、`IC_kwDOT7YN2s8AAAABPz_YTg`、`IC_kwDOT7YN2s8AAAABP1xCTg`、`IC_kwDOT7YN2s8AAAABP7Xvuw`）均是 bot trigger/notification，无独立问题；review body 的实际问题全部由本 Log 的 18 个 inline entries 覆盖。
 
 2026-08-21 第五轮 review remediation 已完成：`ffeea3a7e850712db8b4b89c19dd6bfddf84136b` 修复 rollback journal generation gate、zero schema version classification、complete human `LibraryEntry` projection 与 derived validation operational-error propagation；`53aac2f625ca246fcaf00fc2865f636a60bab5e7` 推送预备 Plan evidence。四个 inline replies 均已写入并 resolved。final complete conversation read 观察到 6 个 top-level comments、27 个 submitted reviews、22 个 review threads；22 个实际 inline problem source 均有本 Plan entry、reply URL 与 resolved state，top-level trigger/notification、自动化 review wrapper 与 empty reply containers 不含独立问题。Plan 保持 `review`，PR 保持 ready。
+
+2026-08-21 第六轮 final-review remediation 已由 `b581acb63df42a882e0f02d5167a931fdf6e47f0` 推送：malformed `library_fts` schema 现保持 derived-only、corruption diagnostics 仅在可验证 portable projection 时列出 `library.export`、writes 先运行 special FTS integrity check、human error 显示 recovery assets，且 `SKL-LIB-009` Revision 5 保护已发布 migration backup pair。focused coverage、core 153 tests、CLI 13+17 tests 与 workspace fmt/clippy/test/build 均通过；五个 inline reply URLs 和 resolved state 已逐项记录，final Plan log push 与 fresh conversation reconciliation 待完成。
 
 ## Review Conversation Log
 
@@ -633,13 +635,13 @@ Problem: 仅 `library_fts` 的 `sqlite_master` SQL 文本损坏时，普通 sche
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
-Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 以 connection-local `writable_schema` tolerance 完成 base-only inspection，repair 在确认 base rows 后识别 malformed FTS SQL、分离 FTS/shadow schema rows并以 `RESET` reload。新增 `malformed_fts_schema_stays_derived_and_doctor_fixable`，覆盖 list/get/export、search invalid、default doctor finding 和 `doctor --fix` repair。变更已纳入待推送的 preliminary review-remediation commit。
+Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 以 connection-local `writable_schema` tolerance 完成 base-only inspection，repair 在确认 base rows 后识别 malformed FTS SQL、分离 FTS/shadow schema rows并以 `RESET` reload。新增 `malformed_fts_schema_stays_derived_and_doctor_fixable`，覆盖 list/get/export、search invalid、default doctor finding 和 `doctor --fix` repair。修复 commit：`b581acb63df42a882e0f02d5167a931fdf6e47f0`。
 
-Evidence: `SKL-OPS-004` Revision 1 要求 base records 可证明完整时 FTS-only failure 可由 doctor rebuild；2026-08-21 local SQLite probe 证明 read-only `PRAGMA writable_schema=ON` 可读取 intact base table，而普通 schema load 失败。focused regression、`mise exec -- cargo test --quiet -p skilload-core --lib`（153 passed）以及 workspace fmt/clippy/test/build 均已通过；`git diff --check` clean。
+Evidence: `SKL-OPS-004` Revision 1 要求 base records 可证明完整时 FTS-only failure 可由 doctor rebuild；2026-08-21 local SQLite probe 证明 read-only `PRAGMA writable_schema=ON` 可读取 intact base table，而普通 schema load 失败。focused regression、core 153 tests、workspace fmt/clippy/test/build 均通过；`git diff --check` clean。commit `b581acb63df42a882e0f02d5167a931fdf6e47f0` 已推送。
 
-GitHub outcome: 未回复；thread resolved: false。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/5#discussion_r3827330061；thread resolved: true。
 
 ### PRRT_kwDOT7YN2s6bB2FX - corruption diagnostics 列出仍可导出的 Library
 
@@ -649,13 +651,13 @@ Problem: `database_corrupt_with_known_backups` 与 `enrich_database_corruption` 
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
-Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 用 descriptor-bound read-only connection 独立验证 portable Library projection（entry/tag schema、integrity、foreign keys 与 domain document），成功时将 `library.export` 加入 `DatabaseCorruptDetails.recoverable_exports`；同一 projection 已成为 `library export` 的 read path，不能证明完整时仍为空。新增 state-revision corruption regression；变更已纳入待推送的 preliminary review-remediation commit。
+Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 用 descriptor-bound read-only connection 独立验证 portable Library projection（entry/tag schema、integrity、foreign keys 与 domain document），成功时将 `library.export` 加入 `DatabaseCorruptDetails.recoverable_exports`；同一 projection 已成为 `library export` 的 read path，不能证明完整时仍为空。新增 state-revision corruption regression。修复 commit：`b581acb63df42a882e0f02d5167a931fdf6e47f0`。
 
-Evidence: `SKL-OPS-004` Revision 1 明定 diagnostics MUST “name every still-readable export”；`database-recovery.md` 要求保留 details 指向的 export。focused regression、`mise exec -- cargo test --quiet -p skilload-core --lib`（153 passed）以及 workspace fmt/clippy/test/build 均已通过；`git diff --check` clean。
+Evidence: `SKL-OPS-004` Revision 1 明定 diagnostics MUST “name every still-readable export”；`database-recovery.md` 要求保留 details 指向的 export。focused regression、core 153 tests、workspace fmt/clippy/test/build 均通过；`git diff --check` clean。commit `b581acb63df42a882e0f02d5167a931fdf6e47f0` 已推送。
 
-GitHub outcome: 未回复；thread resolved: false。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/5#discussion_r3827330759；thread resolved: true。
 
 ### PRRT_kwDOT7YN2s6bB2Fb - mutation 前验证 FTS special integrity-check
 
@@ -665,13 +667,13 @@ Problem: write validation 只比对 visible FTS projection；`library_fts_docsiz
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
-Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 将 FTS5 special `integrity-check` 纳入 writable `validate_database` 的 schema-v2 precondition；detected derived mismatch 映射为 `library_fts_invalid`，busy/I/O 等 operational error 原样保留。新增 docsize-shadow drift regression，验证 import 与 metadata mutation 均在任何 product-state write 前拒绝；变更已纳入待推送的 preliminary review-remediation commit。
+Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 将 FTS5 special `integrity-check` 纳入 writable `validate_database` 的 schema-v2 precondition；detected derived mismatch 映射为 `library_fts_invalid`，busy/I/O 等 operational error 原样保留。新增 docsize-shadow drift regression，验证 import 与 metadata mutation 均在任何 product-state write 前拒绝。修复 commit：`b581acb63df42a882e0f02d5167a931fdf6e47f0`。
 
-Evidence: Plan Design Inputs 要求 write path 先证明 derived index consistent，doctor 已用同一 FTS5 special command。focused regression、`mise exec -- cargo test --quiet -p skilload-core --lib`（153 passed）以及 workspace fmt/clippy/test/build 均已通过；`git diff --check` clean。
+Evidence: Plan Design Inputs 要求 write path 先证明 derived index consistent，doctor 已用同一 FTS5 special command。focused regression、core 153 tests、workspace fmt/clippy/test/build 均通过；`git diff --check` clean。commit `b581acb63df42a882e0f02d5167a931fdf6e47f0` 已推送。
 
-GitHub outcome: 未回复；thread resolved: false。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/5#discussion_r3827331433；thread resolved: true。
 
 ### PRRT_kwDOT7YN2s6bB2Fg - human doctor error 显示 validated backups
 
@@ -681,13 +683,13 @@ Problem: JSON `DatabaseCorruptDetails` 显示 validated backup paths，但 `huma
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
-Resolution: 已在 `crates/skilload-cli/src/human.rs` 为 `AppError::DatabaseCorrupt` terminal-safe 逐项渲染 backup paths 与 recoverable export identifiers，并加入 `database_corruption_renderer_lists_terminal_safe_recovery_assets`；API-v2 JSON 不变。变更已纳入待推送的 preliminary review-remediation commit。
+Resolution: 已在 `crates/skilload-cli/src/human.rs` 为 `AppError::DatabaseCorrupt` terminal-safe 逐项渲染 backup paths 与 recoverable export identifiers，并加入 `database_corruption_renderer_lists_terminal_safe_recovery_assets`；API-v2 JSON 不变。修复 commit：`b581acb63df42a882e0f02d5167a931fdf6e47f0`。
 
-Evidence: `cli-json-and-release.md` 要求 human error 提供 relevant paths 且 terminal-safe；`SKL-OPS-004` 与 recovery procedure 要求 operators 保留 backups/exports。focused renderer regression、`mise exec -- cargo test --quiet -p skilload-cli`（13+17 passed）以及 workspace fmt/clippy/test/build 均已通过；`git diff --check` clean。
+Evidence: `cli-json-and-release.md` 要求 human error 提供 relevant paths 且 terminal-safe；`SKL-OPS-004` 与 recovery procedure 要求 operators 保留 backups/exports。focused renderer regression、CLI 13+17 tests、workspace fmt/clippy/test/build 均通过；`git diff --check` clean。commit `b581acb63df42a882e0f02d5167a931fdf6e47f0` 已推送。
 
-GitHub outcome: 未回复；thread resolved: false。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/5#discussion_r3827332140；thread resolved: true。
 
 ### PRRT_kwDOT7YN2s6bB2Fm - export 不得覆盖 migration backup pair
 
@@ -697,13 +699,13 @@ Problem: migration 发布的 `data/backups/*.db` 与 `.manifest.json` 不在 exp
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
-Resolution: 已在 `crates/skilload-core/src/adapters/portable_library.rs` 将已发布 migration backup-pair entries 纳入 pathname、resolved-path 与 inode collision protection，并新增 pair DB、manifest与 hard-link alias regression；`SKL-LIB-009` 已同步至 Revision 5、Product Baseline 与 Design Inputs。变更已纳入待推送的 preliminary review-remediation commit。
+Resolution: 已在 `crates/skilload-core/src/adapters/portable_library.rs` 将已发布 migration backup-pair entries 纳入 pathname、resolved-path 与 inode collision protection，并新增 pair DB、manifest与 hard-link alias regression；`SKL-LIB-009` 已同步至 Revision 5、Product Baseline 与 Design Inputs。修复 commit：`b581acb63df42a882e0f02d5167a931fdf6e47f0`。
 
-Evidence: `SKL-OPS-003` Revision 1 要求 backup 保持 recoverable，`ARCHITECTURE.md` 禁止替换不应由当前 operation 覆盖的 skilload-owned path。focused transfer regression、`mise exec -- cargo test --quiet -p skilload-core --lib`（153 passed）以及 workspace fmt/clippy/test/build 均已通过；`git diff --check` clean。
+Evidence: `SKL-OPS-003` Revision 1 要求 backup 保持 recoverable，`ARCHITECTURE.md` 禁止替换不应由当前 operation 覆盖的 skilload-owned path。focused transfer regression、core 153 tests、workspace fmt/clippy/test/build 均通过；`git diff --check` clean。commit `b581acb63df42a882e0f02d5167a931fdf6e47f0` 已推送。
 
-GitHub outcome: 未回复；thread resolved: false。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/5#discussion_r3827332858；thread resolved: true。
 ## Context and Orientation
 
 
@@ -1047,3 +1049,5 @@ Backup manifest是private versioned serde record，不进入API-v2或portable ex
 2026-08-21：第四轮最终 reconciliation 读取并记录五个 top-level sources、22 个 review bodies 与 18 个 threads；新增四个 empty review containers 不含实际问题。所有 18 个 inline problem source 都有 Plan entry、reply URL 和 `thread resolved: true`，PR head 与本地/remote 均为 ready `review` 状态；本次 Plan revision 专门补齐该 source-complete evidence。
 
 2026-08-21：第五轮 final-review remediation 与 reconciliation。PRRT_kwDOT7YN2s6bA7j1、PRRT_kwDOT7YN2s6bA7j5、PRRT_kwDOT7YN2s6bA7j7 与 PRRT_kwDOT7YN2s6bA7j- 均在 Product Baseline 内完成：rollback-journal descriptor gate、zero-version corruption、complete human `LibraryEntry` 及 operational FTS error propagation。实现/测试/架构、设计、product clarification 与 SQLite reference 由 `ffeea3a7e850712db8b4b89c19dd6bfddf84136b` 推送；预备 Plan evidence 为 `53aac2f625ca246fcaf00fc2865f636a60bab5e7`。四个 GitHub reply URLs 和 resolved states 已逐项记录，final conversation read 为 6 top-level comments、27 reviews、22 threads（均 resolved），无未记录、未回答或 blocked 的实际问题；Plan 继续保持 `review`、PR 保持 ready。
+
+2026-08-21：第六轮 final-review remediation。PRRT_kwDOT7YN2s6bB2FR、PRRT_kwDOT7YN2s6bB2FX、PRRT_kwDOT7YN2s6bB2Fb、PRRT_kwDOT7YN2s6bB2Fg 与 PRRT_kwDOT7YN2s6bB2Fm 分别修复 malformed derived FTS schema recovery、recoverable export diagnostics、write-time FTS special integrity、human recovery assets 与 migration backup export collision。实现、tests、产品 Revision 5、design/reference 与 preliminary Review Conversation Log 由 `b581acb63df42a882e0f02d5167a931fdf6e47f0` 推送；五个 reply URLs 与 resolved states 已逐项写入本 Log。focused tests、core 153、CLI 13+17、workspace fmt/clippy/test/build 与 `git diff --check` 均通过；本次最终 Plan log commit 后必须重新读取完整 conversation 以确认无新 source 或 state drift。
