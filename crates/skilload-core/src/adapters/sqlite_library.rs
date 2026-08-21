@@ -21,14 +21,14 @@ use crate::ports::configuration::{Environment, ResolvedRoots, StateRootResolver}
 use crate::ports::doctor::DatabaseMaintenance;
 use crate::ports::library::LibraryRepository;
 use rusqlite::{
-    Connection, Error as SqlError, ErrorCode, OpenFlags, OptionalExtension, backup::Backup, ffi,
-    params,
+    Connection, Error as SqlError, ErrorCode, OpenFlags, OptionalExtension, Transaction,
+    backup::Backup, ffi, params,
 };
 use rustix::fs::{AtFlags, Dir, Mode, OFlags, fstat, linkat, openat, statat, unlinkat};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::os::fd::AsRawFd;
@@ -157,6 +157,46 @@ impl SqliteLibraryRepository {
             )),
         }
     }
+    fn database_exists_with_details(
+        &self,
+        roots: &ResolvedRoots,
+        path: &Path,
+    ) -> Result<bool, AppError> {
+        Self::database_exists(path)
+            .map_err(|error| self.enrich_absent_database_corruption(error, roots, path))
+    }
+
+    fn enrich_absent_database_corruption(
+        &self,
+        error: AppError,
+        roots: &ResolvedRoots,
+        path: &Path,
+    ) -> AppError {
+        let AppError::DatabaseCorrupt { database, .. } = error else {
+            return error;
+        };
+        (|| {
+            let roots = self.root_resolver.revalidate(roots)?;
+            let directory = self.open_bound_data_directory(&roots)?;
+            let database_name = path.file_name().ok_or_else(Self::database_identity_drift)?;
+            match statat(&directory.handle, database_name, AtFlags::SYMLINK_NOFOLLOW) {
+                Err(error) if error == rustix::io::Errno::NOENT => {}
+                _ => return Err(Self::database_identity_drift()),
+            }
+            if !has_database_sidecar(&directory, database_name) {
+                return Err(Self::database_identity_drift());
+            }
+            let backups = Self::known_validated_backups(&directory)?;
+            directory.revalidate()?;
+            Ok(AppError::DatabaseCorrupt {
+                database,
+                backups,
+                recoverable_exports: Vec::new(),
+            })
+        })()
+        .unwrap_or_else(|error| error)
+    }
+
     fn ensure_no_orphaned_database_sidecars(path: &Path) -> Result<(), AppError> {
         for suffix in DATABASE_SIDECAR_SUFFIXES {
             let sidecar = Self::database_sidecar_path(path, suffix)?;
@@ -183,15 +223,17 @@ impl SqliteLibraryRepository {
     fn ensure_no_existing_database_sidecars(
         &self,
         directory: &ValidatedDataDirectory,
-        database_name: &std::ffi::OsStr,
+        database_name: &OsStr,
         path: &Path,
+        identity: (u64, u64),
     ) -> Result<(), AppError> {
         for suffix in DATABASE_SIDECAR_SUFFIXES {
-            let mut sidecar_name = database_name.to_os_string();
-            sidecar_name.push(suffix);
+            let sidecar_name = database_sidecar_name(database_name, suffix);
             let sidecar = Self::database_sidecar_path(path, suffix)?;
             match statat(&directory.handle, &sidecar_name, AtFlags::SYMLINK_NOFOLLOW) {
-                Ok(_) => return Err(self.database_corrupt_with_known_backups(path)),
+                Ok(_) => {
+                    return Err(self.database_corrupt_for_generation(directory, path, identity)?);
+                }
                 Err(error) if error == rustix::io::Errno::NOENT => {}
                 Err(error) => {
                     return Err(environment_io(
@@ -208,9 +250,7 @@ impl SqliteLibraryRepository {
 
     fn database_sidecar_path(path: &Path, suffix: &str) -> Result<PathBuf, AppError> {
         let database_name = path.file_name().ok_or_else(Self::database_identity_drift)?;
-        let mut sidecar_name = database_name.to_os_string();
-        sidecar_name.push(suffix);
-        Ok(path.with_file_name(sidecar_name))
+        Ok(path.with_file_name(database_sidecar_name(database_name, suffix)))
     }
     fn database_identity_drift() -> AppError {
         AppError::invalid_state(
@@ -246,6 +286,70 @@ impl SqliteLibraryRepository {
         } else {
             Err(Self::database_identity_drift())
         }
+    }
+    fn revalidate_database_generation(
+        directory: &ValidatedDataDirectory,
+        path: &Path,
+        identity: (u64, u64),
+    ) -> Result<(), AppError> {
+        let database_name = path.file_name().ok_or_else(Self::database_identity_drift)?;
+        revalidate_database_entry(directory, database_name, identity)?;
+        Self::revalidate_database_identity(path, identity)
+    }
+
+    /// Force SQLite to hold a read snapshot before a descriptor-bound path
+    /// trusts that it has no journal/WAL/SHM companions. A companion that
+    /// appears after this check cannot commit into the held snapshot.
+    fn begin_existing_read_snapshot<'connection>(
+        &self,
+        connection: &'connection mut Connection,
+        directory: &ValidatedDataDirectory,
+        path: &Path,
+        identity: (u64, u64),
+    ) -> Result<Transaction<'connection>, AppError> {
+        let database_name = path.file_name().ok_or_else(Self::database_identity_drift)?;
+        let transaction = connection
+            .transaction()
+            .map_err(|error| database_error(path, error))?;
+        transaction
+            .query_row("PRAGMA schema_version", [], |row| row.get::<_, i64>(0))
+            .map_err(|error| database_error(path, error))?;
+        self.ensure_no_existing_database_sidecars(directory, database_name, path, identity)?;
+        Self::revalidate_database_generation(directory, path, identity)?;
+        Ok(transaction)
+    }
+
+    fn run_read_snapshot<T>(
+        &self,
+        connection: &mut Connection,
+        directory: &ValidatedDataDirectory,
+        path: &Path,
+        identity: (u64, u64),
+        operation: impl FnOnce(&Transaction<'_>) -> Result<T, AppError>,
+    ) -> Result<T, AppError> {
+        let transaction =
+            self.begin_existing_read_snapshot(connection, directory, path, identity)?;
+        let value = operation(&transaction)?;
+        Self::revalidate_database_generation(directory, path, identity)?;
+        transaction
+            .commit()
+            .map_err(|error| database_error(path, error))?;
+        Self::revalidate_database_generation(directory, path, identity)?;
+        Ok(value)
+    }
+
+    fn with_read_snapshot<T>(
+        &self,
+        directory: &ValidatedDataDirectory,
+        path: &Path,
+        operation: impl FnOnce(&Transaction<'_>) -> Result<T, AppError>,
+    ) -> Result<T, AppError> {
+        let (mut connection, identity) =
+            self.open_existing_database(directory, path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        self.run_read_snapshot(&mut connection, directory, path, identity, operation)
+            .map_err(|error| {
+                self.enrich_database_corruption_for_generation(error, directory, path, identity)
+            })
     }
 
     fn open_existing_database(
@@ -284,22 +388,12 @@ impl SqliteLibraryRepository {
         directory: &ValidatedDataDirectory,
         path: &Path,
     ) -> Result<Vec<PortableLibraryEntry>, AppError> {
-        let (mut connection, identity) =
-            self.open_existing_database(directory, path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
-        let transaction = connection
-            .transaction()
-            .map_err(|error| database_error(path, error))?;
-        validate_for_read(&transaction, path)?;
-        let entries = load_validated_entries(&transaction, path)?;
-        directory.revalidate()?;
-        Self::revalidate_database_identity(path, identity)?;
-        transaction
-            .commit()
-            .map_err(|error| database_error(path, error))?;
-        directory.revalidate()?;
-        Self::revalidate_database_identity(path, identity)?;
-        Ok(entries)
+        self.with_read_snapshot(directory, path, |transaction| {
+            validate_for_read(transaction, path)?;
+            load_validated_entries(transaction, path)
+        })
     }
+
     /// Read the independently portable Library projection. Recovery exports
     /// intentionally do not depend on `schema_info` or `state_revision`;
     /// their own tables, foreign keys, domain values, and integrity still
@@ -309,20 +403,21 @@ impl SqliteLibraryRepository {
         directory: &ValidatedDataDirectory,
         path: &Path,
     ) -> Result<Vec<PortableLibraryEntry>, AppError> {
+        self.with_read_snapshot(directory, path, |transaction| {
+            load_recoverable_export_entries(transaction, path)
+        })
+    }
+
+    fn read_exportable_entries_for_recovery(
+        &self,
+        directory: &ValidatedDataDirectory,
+        path: &Path,
+    ) -> Result<Vec<PortableLibraryEntry>, AppError> {
         let (mut connection, identity) =
             self.open_existing_database(directory, path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
-        let transaction = connection
-            .transaction()
-            .map_err(|error| database_error(path, error))?;
-        let entries = load_recoverable_export_entries(&transaction, path)?;
-        directory.revalidate()?;
-        Self::revalidate_database_identity(path, identity)?;
-        transaction
-            .commit()
-            .map_err(|error| database_error(path, error))?;
-        directory.revalidate()?;
-        Self::revalidate_database_identity(path, identity)?;
-        Ok(entries)
+        self.run_read_snapshot(&mut connection, directory, path, identity, |transaction| {
+            load_recoverable_export_entries(transaction, path)
+        })
     }
 
     fn plan(
@@ -428,7 +523,7 @@ impl SqliteLibraryRepository {
     ) -> Result<T, AppError> {
         let roots = self.root_resolver.revalidate(roots)?;
         let database = Self::database_path(&roots);
-        if !Self::database_exists(&database)? {
+        if !self.database_exists_with_details(&roots, &database)? {
             return Err(Self::database_identity_drift());
         }
         let data_directory = self.open_bound_data_directory(&roots)?;
@@ -451,6 +546,14 @@ impl SqliteLibraryRepository {
             &mut connection,
             identity,
         )
+        .map_err(|error| {
+            self.enrich_database_corruption_for_generation(
+                error,
+                &data_directory,
+                &database,
+                identity,
+            )
+        })
     }
 
     fn import_existing(
@@ -648,7 +751,7 @@ impl SqliteLibraryRepository {
             let result = (|| {
                 let roots = self.root_resolver.revalidate(roots)?;
                 let database = Self::database_path(&roots);
-                if Self::database_exists(&database)? {
+                if self.database_exists_with_details(&roots, &database)? {
                     return self.import_existing_with_lock(&roots, document);
                 }
                 created_directories.record_created_directories(
@@ -657,7 +760,7 @@ impl SqliteLibraryRepository {
                 );
                 let roots = self.root_resolver.revalidate(&roots)?;
                 let database = Self::database_path(&roots);
-                if Self::database_exists(&database)? {
+                if self.database_exists_with_details(&roots, &database)? {
                     return Err(AppError::invalid_state(
                         "library_database",
                         "database_identity_drift",
@@ -717,7 +820,7 @@ impl SqliteLibraryRepository {
                 let roots = self.root_resolver.revalidate(&roots)?;
                 let database = Self::database_path(&roots);
                 data_directory.revalidate()?;
-                if Self::database_exists(&database)? {
+                if self.database_exists_with_details(&roots, &database)? {
                     return Err(AppError::invalid_state(
                         "library_database",
                         "database_identity_drift",
@@ -818,60 +921,91 @@ impl SqliteLibraryRepository {
             || header[18] != 1
             || header[19] != 1
         {
-            return Err(self.database_corrupt_with_known_backups(path));
+            return Err(self.database_corrupt_for_generation(directory, path, identity)?);
         }
-        self.ensure_no_existing_database_sidecars(directory, database_name, path)?;
-        revalidate_database_entry(directory, database_name, identity)?;
+        self.ensure_no_existing_database_sidecars(directory, database_name, path, identity)?;
+        Self::revalidate_database_generation(directory, path, identity)?;
         Ok((file, identity))
     }
 
-    fn database_corrupt_with_known_backups(&self, path: &Path) -> AppError {
-        let backups = self
-            .resolve_roots()
-            .ok()
-            .map(|roots| Self::known_validated_backups(&roots))
-            .unwrap_or_default();
-        AppError::DatabaseCorrupt {
+    fn database_corrupt_for_generation(
+        &self,
+        directory: &ValidatedDataDirectory,
+        path: &Path,
+        identity: (u64, u64),
+    ) -> Result<AppError, AppError> {
+        self.hooks.before_database_corruption_details(path)?;
+        Self::revalidate_database_generation(directory, path, identity)?;
+        let backups = Self::known_validated_backups(directory)?;
+        Self::revalidate_database_generation(directory, path, identity)?;
+        Ok(AppError::DatabaseCorrupt {
             database: NativePath::new(path.to_path_buf()),
             backups,
             recoverable_exports: Vec::new(),
-        }
-    }
-    fn recoverable_library_exports(&self, path: &Path) -> Vec<String> {
-        let Ok(roots) = self.resolve_roots() else {
-            return Vec::new();
-        };
-        if Self::database_path(&roots) != path {
-            return Vec::new();
-        }
-        let Ok(directory) = self.open_bound_data_directory(&roots) else {
-            return Vec::new();
-        };
-        if self.read_exportable_entries(&directory, path).is_ok() {
-            vec!["library.export".to_owned()]
-        } else {
-            Vec::new()
-        }
+        })
     }
 
-    fn known_validated_backups(roots: &ResolvedRoots) -> Vec<NativePath> {
-        let backups_root = roots.data.effective.join("backups");
-        let Ok(directory) = ValidatedDataDirectory::open(&backups_root) else {
-            return Vec::new();
+    fn recoverable_library_exports(
+        &self,
+        directory: &ValidatedDataDirectory,
+        path: &Path,
+        identity: (u64, u64),
+    ) -> Result<Vec<String>, AppError> {
+        Self::revalidate_database_generation(directory, path, identity)?;
+        let readable = self
+            .read_exportable_entries_for_recovery(directory, path)
+            .is_ok();
+        Self::revalidate_database_generation(directory, path, identity)?;
+        Ok(readable
+            .then(|| "library.export".to_owned())
+            .into_iter()
+            .collect())
+    }
+
+    fn enrich_database_corruption_for_generation(
+        &self,
+        error: AppError,
+        directory: &ValidatedDataDirectory,
+        path: &Path,
+        identity: (u64, u64),
+    ) -> AppError {
+        let AppError::DatabaseCorrupt { database, .. } = error else {
+            return error;
+        };
+        (|| {
+            Self::revalidate_database_generation(directory, path, identity)?;
+            let backups = Self::known_validated_backups(directory)?;
+            let recoverable_exports =
+                self.recoverable_library_exports(directory, path, identity)?;
+            Self::revalidate_database_generation(directory, path, identity)?;
+            Ok(AppError::DatabaseCorrupt {
+                database,
+                backups,
+                recoverable_exports,
+            })
+        })()
+        .unwrap_or_else(|error| error)
+    }
+
+    fn known_validated_backups(
+        data_directory: &ValidatedDataDirectory,
+    ) -> Result<Vec<NativePath>, AppError> {
+        let Some(directory) =
+            ValidatedDataDirectory::open_optional_child(data_directory, OsStr::new("backups"))?
+        else {
+            return Ok(Vec::new());
         };
         let mut stems = backup_manifest_stems(&directory);
         stems.sort();
         let mut validated = Vec::new();
         for stem in stems {
             if backup_pair_is_valid(&directory, &stem) {
-                validated.push(NativePath::new(backups_root.join(format!("{stem}.db"))));
+                validated.push(NativePath::new(directory.path.join(format!("{stem}.db"))));
             }
         }
-        if directory.revalidate().is_err() {
-            Vec::new()
-        } else {
-            validated
-        }
+        directory.revalidate()?;
+        data_directory.revalidate()?;
+        Ok(validated)
     }
 
     fn list_page(
@@ -913,43 +1047,33 @@ impl SqliteLibraryRepository {
         page: LibraryPage,
         filter: ReadFilter<'_>,
     ) -> Result<(Vec<LibraryEntry>, u64), AppError> {
-        let (mut connection, identity) =
-            self.open_existing_database(directory, database, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
-        let transaction = connection
-            .transaction()
-            .map_err(|error| database_error(database, error))?;
-        let generation = validate_for_read(&transaction, database)?;
-        let total = match (&filter, generation) {
-            (_, SchemaGeneration::Newer(found)) => {
-                return Err(schema_newer(found));
-            }
-            (ReadFilter::All, _) => count_entries(&transaction, database)?,
-            (ReadFilter::FtsMatch(_), SchemaGeneration::V1) => {
-                return Err(AppError::MigrationRequired {
-                    domain: "library".to_owned(),
-                    found_version: 1,
-                    supported_version: SCHEMA_VERSION,
-                });
-            }
-            (ReadFilter::FtsMatch(expression), SchemaGeneration::V2) => {
-                validate_derived_database(&transaction, database)
-                    .map_err(map_derived_validation_error)?;
-                count_fts_matches(&transaction, database, expression)?
-            }
-        };
-        let entries = if page.offset() >= total {
-            Vec::new()
-        } else {
-            query_page(&transaction, database, &filter, &page)?
-        };
-        directory.revalidate()?;
-        Self::revalidate_database_identity(database, identity)?;
-        transaction
-            .commit()
-            .map_err(|error| database_error(database, error))?;
-        directory.revalidate()?;
-        Self::revalidate_database_identity(database, identity)?;
-        Ok((entries, total))
+        self.with_read_snapshot(directory, database, |transaction| {
+            let generation = validate_for_read(transaction, database)?;
+            let total = match (&filter, generation) {
+                (_, SchemaGeneration::Newer(found)) => {
+                    return Err(schema_newer(found));
+                }
+                (ReadFilter::All, _) => count_entries(transaction, database)?,
+                (ReadFilter::FtsMatch(_), SchemaGeneration::V1) => {
+                    return Err(AppError::MigrationRequired {
+                        domain: "library".to_owned(),
+                        found_version: 1,
+                        supported_version: SCHEMA_VERSION,
+                    });
+                }
+                (ReadFilter::FtsMatch(expression), SchemaGeneration::V2) => {
+                    validate_derived_database(transaction, database)
+                        .map_err(map_derived_validation_error)?;
+                    count_fts_matches(transaction, database, expression)?
+                }
+            };
+            let entries = if page.offset() >= total {
+                Vec::new()
+            } else {
+                query_page(transaction, database, &filter, &page)?
+            };
+            Ok((entries, total))
+        })
     }
 
     fn get_entry(
@@ -958,129 +1082,78 @@ impl SqliteLibraryRepository {
         database: &Path,
         selector: &str,
     ) -> Result<LibraryEntry, AppError> {
-        let (mut connection, identity) =
-            self.open_existing_database(directory, database, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
-        let transaction = connection
-            .transaction()
-            .map_err(|error| database_error(database, error))?;
-        let generation = validate_for_read(&transaction, database)?;
-        if let SchemaGeneration::Newer(found) = generation {
-            return Err(schema_newer(found));
-        }
-        let entry = query_entry(&transaction, database, selector)?
-            .ok_or_else(|| AppError::not_found("library", selector.to_owned()))?;
-        directory.revalidate()?;
-        Self::revalidate_database_identity(database, identity)?;
-        transaction
-            .commit()
-            .map_err(|error| database_error(database, error))?;
-        directory.revalidate()?;
-        Self::revalidate_database_identity(database, identity)?;
-        Ok(entry)
-    }
-
-    /// Base-corruption errors detected after the pre-open gate are raised
-    /// far from the roots lookup; reattach the known validated backups so
-    /// `DatabaseCorruptDetails` stays complete on every path.
-    fn enrich_database_corruption(&self, error: AppError) -> AppError {
-        match error {
-            AppError::DatabaseCorrupt {
-                database,
-                mut backups,
-                mut recoverable_exports,
-            } => {
-                if backups.is_empty() {
-                    backups = self
-                        .resolve_roots()
-                        .ok()
-                        .map(|roots| Self::known_validated_backups(&roots))
-                        .unwrap_or_default();
-                }
-                if recoverable_exports.is_empty() {
-                    recoverable_exports = self.recoverable_library_exports(database.as_path());
-                }
-                AppError::DatabaseCorrupt {
-                    database,
-                    backups,
-                    recoverable_exports,
-                }
+        self.with_read_snapshot(directory, database, |transaction| {
+            let generation = validate_for_read(transaction, database)?;
+            if let SchemaGeneration::Newer(found) = generation {
+                return Err(schema_newer(found));
             }
-            other => other,
-        }
+            query_entry(transaction, database, selector)?
+                .ok_or_else(|| AppError::not_found("library", selector.to_owned()))
+        })
     }
 
-    fn diagnosis_classification(&self) -> Result<(Diagnosis, Vec<DoctorFinding>), AppError> {
-        let roots = self.resolve_roots()?;
+    fn diagnosis_classification(
+        &self,
+        roots: &ResolvedRoots,
+    ) -> Result<(Diagnosis, Vec<DoctorFinding>), AppError> {
+        let roots = self.root_resolver.revalidate(roots)?;
         let database = Self::database_path(&roots);
-        if !Self::database_exists(&database)? {
+        if !self.database_exists_with_details(&roots, &database)? {
             return Ok((Diagnosis::Absent, Vec::new()));
         }
         let directory = self.open_bound_data_directory(&roots)?;
-        let (mut connection, identity) =
-            self.open_existing_database(&directory, &database, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
-        let transaction = connection
-            .transaction()
-            .map_err(|error| database_error(&database, error))?;
-        let generation = validate_for_read(&transaction, &database)?;
-        let (classification, finding) = match generation {
-            SchemaGeneration::V1 => (
-                Diagnosis::RequiresMigration,
-                Some(DoctorFinding::database(
-                    DoctorSeverity::Warning,
-                    "library_database_migration_required",
-                    "Library database schema 1 requires an explicit doctor --fix migration to schema 2.",
-                    Some(NativePath::new(database.clone())),
-                    true,
-                    false,
-                )),
-            ),
-            SchemaGeneration::Newer(found) => (
-                Diagnosis::SchemaNewer,
-                Some(DoctorFinding::database(
-                    DoctorSeverity::Error,
-                    "library_schema_newer",
-                    format!(
-                        "Library database schema {found} is newer than the supported schema {SCHEMA_VERSION}."
-                    ),
-                    Some(NativePath::new(database.clone())),
-                    false,
-                    false,
-                )),
-            ),
-            SchemaGeneration::V2 => {
-                let derived_consistent =
-                    self.derived_index_is_consistent(&transaction, &database)?;
-                if derived_consistent {
-                    (Diagnosis::Healthy, None)
-                } else {
-                    (
-                        Diagnosis::FtsInvalid,
-                        Some(DoctorFinding::database(
-                            DoctorSeverity::Warning,
-                            "library_fts_invalid",
-                            "Library full-text index is missing or inconsistent with base rows.",
-                            Some(NativePath::new(database.clone())),
-                            true,
-                            false,
-                        )),
-                    )
+        self.with_read_snapshot(&directory, &database, |transaction| {
+            let generation = validate_for_read(transaction, &database)?;
+            let (classification, finding) = match generation {
+                SchemaGeneration::V1 => (
+                    Diagnosis::RequiresMigration,
+                    Some(DoctorFinding::database(
+                        DoctorSeverity::Warning,
+                        "library_database_migration_required",
+                        "Library database schema 1 requires an explicit doctor --fix migration to schema 2.",
+                        Some(NativePath::new(database.clone())),
+                        true,
+                        false,
+                    )),
+                ),
+                SchemaGeneration::Newer(found) => (
+                    Diagnosis::SchemaNewer,
+                    Some(DoctorFinding::database(
+                        DoctorSeverity::Error,
+                        "library_schema_newer",
+                        format!(
+                            "Library database schema {found} is newer than the supported schema {SCHEMA_VERSION}."
+                        ),
+                        Some(NativePath::new(database.clone())),
+                        false,
+                        false,
+                    )),
+                ),
+                SchemaGeneration::V2 => {
+                    let derived_consistent =
+                        self.derived_index_is_consistent(transaction, &database)?;
+                    if derived_consistent {
+                        (Diagnosis::Healthy, None)
+                    } else {
+                        (
+                            Diagnosis::FtsInvalid,
+                            Some(DoctorFinding::database(
+                                DoctorSeverity::Warning,
+                                "library_fts_invalid",
+                                "Library full-text index is missing or inconsistent with base rows.",
+                                Some(NativePath::new(database.clone())),
+                                true,
+                                false,
+                            )),
+                        )
+                    }
                 }
-            }
-        };
-        // The diagnosis is evidence for recovery: like the read paths, prove
-        // the live pathname still names the inode that was diagnosed both
-        // before and after closing the snapshot.
-        directory.revalidate()?;
-        Self::revalidate_database_identity(&database, identity)?;
-        transaction
-            .commit()
-            .map_err(|error| database_error(&database, error))?;
-        directory.revalidate()?;
-        Self::revalidate_database_identity(&database, identity)?;
-        match finding {
-            Some(finding) => Ok((classification, vec![finding])),
-            None => Ok((classification, Vec::new())),
-        }
+            };
+            Ok(match finding {
+                Some(finding) => (classification, vec![finding]),
+                None => (classification, Vec::new()),
+            })
+        })
     }
 
     /// Compare derived index content against base rows on the live
@@ -1138,7 +1211,7 @@ impl SqliteLibraryRepository {
     fn migrate_v1_locked(&self, roots: &ResolvedRoots) -> Result<Option<DoctorAction>, AppError> {
         let roots = self.root_resolver.revalidate(roots)?;
         let database = Self::database_path(&roots);
-        if !Self::database_exists(&database)? {
+        if !self.database_exists_with_details(&roots, &database)? {
             return Err(Self::database_identity_drift());
         }
         let data_directory = self.open_bound_data_directory(&roots)?;
@@ -1152,23 +1225,63 @@ impl SqliteLibraryRepository {
             &database,
             OpenFlags::SQLITE_OPEN_READ_WRITE,
         )?;
-        data_directory.revalidate()?;
-        Self::revalidate_database_identity(&database, identity)?;
+        let result: Result<Option<DoctorAction>, AppError> = (|| {
+            data_directory.revalidate()?;
+            Self::revalidate_database_identity(&database, identity)?;
 
-        let state_revision_baseline = {
+            let state_revision_baseline = {
+                let transaction = connection
+                    .transaction()
+                    .map_err(|error| database_error(&database, error))?;
+                let generation = read_schema_generation(&transaction, &database)?;
+                validate_base_database(&transaction, &database)?;
+                if generation == SchemaGeneration::V2 {
+                    return Ok(None);
+                }
+                if generation != SchemaGeneration::V1 {
+                    return Err(AppError::invalid_state(
+                        "library_database",
+                        "migration_baseline_changed",
+                        ["a validated schema 1 database"],
+                    ));
+                }
+                let revision = singleton_i64(
+                    &transaction,
+                    "SELECT revision FROM state_revision",
+                    &database,
+                )?;
+                transaction
+                    .commit()
+                    .map_err(|error| database_error(&database, error))?;
+                revision
+            };
+            Self::revalidate_database_identity(&database, identity)?;
+
+            let entries = {
+                let transaction = connection
+                    .transaction()
+                    .map_err(|error| database_error(&database, error))?;
+                load_validated_entries(&transaction, &database)?
+            };
+
+            self.publish_validated_backup(
+                &roots,
+                &connection,
+                &database,
+                identity,
+                state_revision_baseline,
+            )?;
+
             let transaction = connection
                 .transaction()
                 .map_err(|error| database_error(&database, error))?;
             let generation = read_schema_generation(&transaction, &database)?;
             validate_base_database(&transaction, &database)?;
-            if generation == SchemaGeneration::V2 {
-                return Ok(None);
-            }
             if generation != SchemaGeneration::V1 {
                 return Err(AppError::invalid_state(
                     "library_database",
                     "migration_baseline_changed",
-                    ["a validated schema 1 database"],
+                    ["a validated schema 1 database after backup"],
                 ));
             }
             let revision = singleton_i64(
@@ -1176,95 +1289,65 @@ impl SqliteLibraryRepository {
                 "SELECT revision FROM state_revision",
                 &database,
             )?;
+            if revision != state_revision_baseline {
+                return Err(AppError::invalid_state(
+                    "library_database",
+                    "migration_state_revision_changed",
+                    ["the state revision recorded with the backup"],
+                ));
+            }
+            transaction
+                .execute_batch(LIBRARY_FTS_CREATE_SQL)
+                .map_err(|error| database_error(&database, error))?;
+            for entry in &entries {
+                insert_fts_row(&transaction, entry, &database)?;
+            }
+            validate_derived_database(&transaction, &database)?;
+            transaction
+                .execute(
+                    "INSERT INTO library_fts(library_fts) VALUES('integrity-check')",
+                    [],
+                )
+                .map_err(|error| database_error(&database, error))?;
+            let changed = transaction
+                .execute("UPDATE schema_info SET version = 2 WHERE version = 1", [])
+                .map_err(|error| database_error(&database, error))?;
+            if changed != 1 {
+                return Err(AppError::database_corrupt(NativePath::new(
+                    database.to_path_buf(),
+                )));
+            }
+            self.hooks.before_migration_commit(&database)?;
             transaction
                 .commit()
                 .map_err(|error| database_error(&database, error))?;
-            revision
-        };
-        Self::revalidate_database_identity(&database, identity)?;
-
-        let entries = {
-            let transaction = connection
-                .transaction()
-                .map_err(|error| database_error(&database, error))?;
-            load_validated_entries(&transaction, &database)?
-        };
-
-        self.publish_validated_backup(
-            &roots,
-            &connection,
-            &database,
-            identity,
-            state_revision_baseline,
-        )?;
-
-        let transaction = connection
-            .transaction()
-            .map_err(|error| database_error(&database, error))?;
-        let generation = read_schema_generation(&transaction, &database)?;
-        validate_base_database(&transaction, &database)?;
-        if generation != SchemaGeneration::V1 {
-            return Err(AppError::invalid_state(
-                "library_database",
-                "migration_baseline_changed",
-                ["a validated schema 1 database after backup"],
-            ));
-        }
-        let revision = singleton_i64(
-            &transaction,
-            "SELECT revision FROM state_revision",
-            &database,
-        )?;
-        if revision != state_revision_baseline {
-            return Err(AppError::invalid_state(
-                "library_database",
-                "migration_state_revision_changed",
-                ["the state revision recorded with the backup"],
-            ));
-        }
-        transaction
-            .execute_batch(LIBRARY_FTS_CREATE_SQL)
-            .map_err(|error| database_error(&database, error))?;
-        for entry in &entries {
-            insert_fts_row(&transaction, entry, &database)?;
-        }
-        validate_derived_database(&transaction, &database)?;
-        transaction
-            .execute(
-                "INSERT INTO library_fts(library_fts) VALUES('integrity-check')",
-                [],
+            self.hooks.after_migration_commit_before_sync(&database)?;
+            sync_existing_database(
+                &database,
+                &data_directory,
+                database_name.as_os_str(),
+                identity,
+                || {
+                    self.hooks
+                        .after_migration_database_sync_before_parent_sync(&database)
+                },
+            )?;
+            Self::revalidate_database_identity(&database, identity)?;
+            Ok(Some(DoctorAction {
+                kind: DoctorActionKind::Migrate,
+                target: NativePath::new(database.clone()),
+                before: Some("schema_1".to_owned()),
+                after: Some("schema_2".to_owned()),
+            }))
+        })();
+        result.map_err(|error| {
+            self.enrich_database_corruption_for_generation(
+                error,
+                &data_directory,
+                &database,
+                identity,
             )
-            .map_err(|error| database_error(&database, error))?;
-        let changed = transaction
-            .execute("UPDATE schema_info SET version = 2 WHERE version = 1", [])
-            .map_err(|error| database_error(&database, error))?;
-        if changed != 1 {
-            return Err(AppError::database_corrupt(NativePath::new(
-                database.to_path_buf(),
-            )));
-        }
-        self.hooks.before_migration_commit(&database)?;
-        transaction
-            .commit()
-            .map_err(|error| database_error(&database, error))?;
-        self.hooks.after_migration_commit_before_sync(&database)?;
-        sync_existing_database(
-            &database,
-            &data_directory,
-            database_name.as_os_str(),
-            identity,
-            || {
-                self.hooks
-                    .after_migration_database_sync_before_parent_sync(&database)
-            },
-        )?;
-        Self::revalidate_database_identity(&database, identity)?;
-        Ok(Some(DoctorAction {
-            kind: DoctorActionKind::Migrate,
-            target: NativePath::new(database),
-            before: Some("schema_1".to_owned()),
-            after: Some("schema_2".to_owned()),
-        }))
+        })
     }
 
     fn repair_fts(&self, roots: &ResolvedRoots) -> Result<Option<DoctorAction>, AppError> {
@@ -1286,7 +1369,7 @@ impl SqliteLibraryRepository {
     fn repair_fts_locked(&self, roots: &ResolvedRoots) -> Result<Option<DoctorAction>, AppError> {
         let roots = self.root_resolver.revalidate(roots)?;
         let database = Self::database_path(&roots);
-        if !Self::database_exists(&database)? {
+        if !self.database_exists_with_details(&roots, &database)? {
             return Err(Self::database_identity_drift());
         }
         let data_directory = self.open_bound_data_directory(&roots)?;
@@ -1300,62 +1383,72 @@ impl SqliteLibraryRepository {
             &database,
             OpenFlags::SQLITE_OPEN_READ_WRITE,
         )?;
-        data_directory.revalidate()?;
-        Self::revalidate_database_identity(&database, identity)?;
-        {
+        let result: Result<Option<DoctorAction>, AppError> = (|| {
+            data_directory.revalidate()?;
+            Self::revalidate_database_identity(&database, identity)?;
+            {
+                let transaction = connection
+                    .transaction()
+                    .map_err(|error| database_error(&database, error))?;
+                let generation = validate_base_for_fts_recovery(&transaction, &database)?;
+                if generation != SchemaGeneration::V2 {
+                    return Err(AppError::invalid_state(
+                        "library_database",
+                        "fts_repair_requires_schema_2",
+                        ["a schema 2 database with intact base rows"],
+                    ));
+                }
+                transaction
+                    .commit()
+                    .map_err(|error| database_error(&database, error))?;
+            }
+            // Re-diagnose under the durable lock: a concurrent `doctor --fix`
+            // may have rebuilt the index after this process observed drift.
+            // Rebuilding a healthy index would report a false `changed` result.
+            if self.derived_index_is_consistent(&connection, &database)? {
+                disable_writable_schema(&connection, &database)?;
+                Self::revalidate_database_identity(&database, identity)?;
+                return Ok(None);
+            }
             let transaction = connection
                 .transaction()
                 .map_err(|error| database_error(&database, error))?;
-            let generation = validate_base_for_fts_recovery(&transaction, &database)?;
-            if generation != SchemaGeneration::V2 {
-                return Err(AppError::invalid_state(
-                    "library_database",
-                    "fts_repair_requires_schema_2",
-                    ["a schema 2 database with intact base rows"],
-                ));
-            }
+            rebuild_derived_index(&transaction, &database)?;
+            validate_derived_database(&transaction, &database)?;
+            transaction
+                .execute(
+                    "INSERT INTO library_fts(library_fts) VALUES('integrity-check')",
+                    [],
+                )
+                .map_err(|error| database_error(&database, error))?;
+            self.hooks.before_fts_rebuild_commit(&database)?;
             transaction
                 .commit()
                 .map_err(|error| database_error(&database, error))?;
-        }
-        // Re-diagnose under the durable lock: a concurrent `doctor --fix`
-        // may have rebuilt the index after this process observed drift.
-        // Rebuilding a healthy index would report a false `changed` result.
-        if self.derived_index_is_consistent(&connection, &database)? {
-            disable_writable_schema(&connection, &database)?;
+            self.hooks.after_fts_rebuild_commit_before_sync(&database)?;
+            sync_existing_database(
+                &database,
+                &data_directory,
+                database_name.as_os_str(),
+                identity,
+                || Ok(()),
+            )?;
             Self::revalidate_database_identity(&database, identity)?;
-            return Ok(None);
-        }
-        let transaction = connection
-            .transaction()
-            .map_err(|error| database_error(&database, error))?;
-        rebuild_derived_index(&transaction, &database)?;
-        validate_derived_database(&transaction, &database)?;
-        transaction
-            .execute(
-                "INSERT INTO library_fts(library_fts) VALUES('integrity-check')",
-                [],
+            Ok(Some(DoctorAction {
+                kind: DoctorActionKind::Repair,
+                target: NativePath::new(database.clone()),
+                before: Some("fts_invalid".to_owned()),
+                after: Some("fts_valid".to_owned()),
+            }))
+        })();
+        result.map_err(|error| {
+            self.enrich_database_corruption_for_generation(
+                error,
+                &data_directory,
+                &database,
+                identity,
             )
-            .map_err(|error| database_error(&database, error))?;
-        self.hooks.before_fts_rebuild_commit(&database)?;
-        transaction
-            .commit()
-            .map_err(|error| database_error(&database, error))?;
-        self.hooks.after_fts_rebuild_commit_before_sync(&database)?;
-        sync_existing_database(
-            &database,
-            &data_directory,
-            database_name.as_os_str(),
-            identity,
-            || Ok(()),
-        )?;
-        Self::revalidate_database_identity(&database, identity)?;
-        Ok(Some(DoctorAction {
-            kind: DoctorActionKind::Repair,
-            target: NativePath::new(database),
-            before: Some("fts_invalid".to_owned()),
-            after: Some("fts_valid".to_owned()),
-        }))
+        })
     }
 
     /// Create, validate, and publish one standalone backup pair for the v1
@@ -1578,6 +1671,25 @@ impl SqliteLibraryRepository {
     }
 }
 
+fn database_sidecar_name(database_name: &OsStr, suffix: &str) -> OsString {
+    let mut sidecar_name = database_name.to_os_string();
+    sidecar_name.push(suffix);
+    sidecar_name
+}
+
+fn has_database_sidecar(directory: &ValidatedDataDirectory, database_name: &OsStr) -> bool {
+    DATABASE_SIDECAR_SUFFIXES.into_iter().any(|suffix| {
+        match statat(
+            &directory.handle,
+            database_sidecar_name(database_name, suffix),
+            AtFlags::SYMLINK_NOFOLLOW,
+        ) {
+            Ok(_) => true,
+            Err(error) => error != rustix::io::Errno::NOENT,
+        }
+    })
+}
+
 /// List candidate manifest stems through a held directory descriptor so a
 /// replacement of the directory pathname cannot redirect later validation.
 fn backup_manifest_stems(directory: &ValidatedDataDirectory) -> Vec<String> {
@@ -1633,7 +1745,12 @@ fn directory_entry_matches_file(
 /// Validate a held standalone v1 backup before it is shown in corruption
 /// diagnostics. Its header excludes WAL-mode opens, and the SQLite checks
 /// prove that the manifest's claimed source generation has intact base rows.
-fn standalone_backup_is_valid(database: &mut File, path: &Path) -> bool {
+fn standalone_backup_is_valid(
+    directory: &ValidatedDataDirectory,
+    database_name: &OsStr,
+    database: &mut File,
+    path: &Path,
+) -> bool {
     let mut header = [0u8; 100];
     if database.seek(SeekFrom::Start(0)).is_err()
         || database.read_exact(&mut header).is_err()
@@ -1657,10 +1774,16 @@ fn standalone_backup_is_valid(database: &mut File, path: &Path) -> bool {
         let Ok(transaction) = connection.transaction() else {
             return false;
         };
-        matches!(
-            read_schema_generation(&transaction, path),
-            Ok(SchemaGeneration::V1)
-        ) && validate_base_database(&transaction, path).is_ok()
+        transaction
+            .query_row("PRAGMA schema_version", [], |row| row.get::<_, i64>(0))
+            .is_ok()
+            && !has_database_sidecar(directory, database_name)
+            && matches!(
+                read_schema_generation(&transaction, path),
+                Ok(SchemaGeneration::V1)
+            )
+            && validate_base_database(&transaction, path).is_ok()
+            && !has_database_sidecar(directory, database_name)
             && transaction.commit().is_ok()
     })();
     database.seek(SeekFrom::Start(0)).is_ok() && validation
@@ -1668,11 +1791,14 @@ fn standalone_backup_is_valid(database: &mut File, path: &Path) -> bool {
 
 /// A backup pair counts as validated only when both files are opened through
 /// the held directory with no-follow descriptors, remain linked under their
-/// advertised names, have a compatible manifest, and contain the verified
-/// standalone v1 database it describes.
+/// advertised names, have no SQLite sidecars, have a compatible manifest,
+/// and contain the verified standalone v1 database it describes.
 fn backup_pair_is_valid(directory: &ValidatedDataDirectory, stem: &str) -> bool {
     let database_name = OsString::from(format!("{stem}.db"));
     let manifest_name = OsString::from(format!("{stem}.manifest.json"));
+    if has_database_sidecar(directory, &database_name) {
+        return false;
+    }
     let Some(mut manifest) = open_regular_file_at(directory, &manifest_name) else {
         return false;
     };
@@ -1707,7 +1833,12 @@ fn backup_pair_is_valid(directory: &ValidatedDataDirectory, stem: &str) -> bool 
         return false;
     };
     if record.database_bytes != metadata.len()
-        || !standalone_backup_is_valid(&mut database, &directory.path.join(&database_name))
+        || !standalone_backup_is_valid(
+            directory,
+            &database_name,
+            &mut database,
+            &directory.path.join(&database_name),
+        )
     {
         return false;
     }
@@ -1715,6 +1846,7 @@ fn backup_pair_is_valid(directory: &ValidatedDataDirectory, stem: &str) -> bool 
         return false;
     };
     format!("sha256:{digest}") == record.sha256
+        && !has_database_sidecar(directory, &database_name)
         && directory_entry_matches_file(directory, &manifest_name, &manifest)
         && directory_entry_matches_file(directory, &database_name, &database)
 }
@@ -1729,7 +1861,7 @@ impl LibraryRepository for SqliteLibraryRepository {
     fn list(&self, page: &LibraryPage) -> Result<LibraryEntriesPage, AppError> {
         let roots = self.resolve_roots()?;
         let database = Self::database_path(&roots);
-        if !Self::database_exists(&database)? {
+        if !self.database_exists_with_details(&roots, &database)? {
             return Ok(LibraryEntriesPage {
                 entries: Vec::new(),
                 page: *page,
@@ -1738,7 +1870,6 @@ impl LibraryRepository for SqliteLibraryRepository {
         }
         let directory = self.open_bound_data_directory(&roots)?;
         self.list_page(&directory, &database, *page)
-            .map_err(|error| self.enrich_database_corruption(error))
     }
 
     fn search(
@@ -1748,7 +1879,7 @@ impl LibraryRepository for SqliteLibraryRepository {
     ) -> Result<LibrarySearchPage, AppError> {
         let roots = self.resolve_roots()?;
         let database = Self::database_path(&roots);
-        if !Self::database_exists(&database)? {
+        if !self.database_exists_with_details(&roots, &database)? {
             return Ok(LibrarySearchPage {
                 original: query.original().to_owned(),
                 entries: Vec::new(),
@@ -1758,30 +1889,26 @@ impl LibraryRepository for SqliteLibraryRepository {
         }
         let directory = self.open_bound_data_directory(&roots)?;
         self.search_page(&directory, &database, query, *page)
-            .map_err(|error| self.enrich_database_corruption(error))
     }
 
     fn get(&self, selector: &str) -> Result<LibraryEntry, AppError> {
         let roots = self.resolve_roots()?;
         let database = Self::database_path(&roots);
-        if !Self::database_exists(&database)? {
+        if !self.database_exists_with_details(&roots, &database)? {
             return Err(AppError::not_found("library", selector.to_owned()));
         }
         let directory = self.open_bound_data_directory(&roots)?;
         self.get_entry(&directory, &database, selector)
-            .map_err(|error| self.enrich_database_corruption(error))
     }
 
     fn export(&self) -> Result<PortableLibraryDocument, AppError> {
         let roots = self.resolve_roots()?;
         let database = Self::database_path(&roots);
-        if !Self::database_exists(&database)? {
+        if !self.database_exists_with_details(&roots, &database)? {
             return Ok(PortableLibraryDocument::empty());
         }
         let directory = self.open_bound_data_directory(&roots)?;
-        let entries = self
-            .read_exportable_entries(&directory, &database)
-            .map_err(|error| self.enrich_database_corruption(error))?;
+        let entries = self.read_exportable_entries(&directory, &database)?;
         let mut document = PortableLibraryDocument {
             format_version: LIBRARY_FORMAT_VERSION,
             entries,
@@ -1799,10 +1926,9 @@ impl LibraryRepository for SqliteLibraryRepository {
         let roots = self.resolve_roots()?;
         let database = Self::database_path(&roots);
         if dry_run {
-            let existing = if Self::database_exists(&database)? {
+            let existing = if self.database_exists_with_details(&roots, &database)? {
                 let directory = self.open_bound_data_directory(&roots)?;
-                self.read_existing(&directory, &database)
-                    .map_err(|error| self.enrich_database_corruption(error))?
+                self.read_existing(&directory, &database)?
             } else {
                 Vec::new()
             };
@@ -1812,9 +1938,8 @@ impl LibraryRepository for SqliteLibraryRepository {
                 data: plan.result,
             });
         }
-        if Self::database_exists(&database)? {
+        if self.database_exists_with_details(&roots, &database)? {
             self.import_existing(&roots, &document)
-                .map_err(|error| self.enrich_database_corruption(error))
         } else if document.entries.is_empty() {
             Ok(LibraryImportOperation {
                 outcome: LibraryImportOutcome::Unchanged,
@@ -1823,7 +1948,6 @@ impl LibraryRepository for SqliteLibraryRepository {
         } else {
             let plan = Self::plan(&document, &[], false)?;
             self.import_first(&roots, &document, plan)
-                .map_err(|error| self.enrich_database_corruption(error))
         }
     }
 
@@ -1834,11 +1958,10 @@ impl LibraryRepository for SqliteLibraryRepository {
         mutation.change.validate()?;
         let roots = self.resolve_roots()?;
         let database = Self::database_path(&roots);
-        if !Self::database_exists(&database)? {
+        if !self.database_exists_with_details(&roots, &database)? {
             return Err(AppError::not_found("library", mutation.selector.clone()));
         }
         self.mutate_existing(&roots, mutation)
-            .map_err(|error| self.enrich_database_corruption(error))
     }
 }
 
@@ -1852,9 +1975,8 @@ enum Diagnosis {
 
 impl DatabaseMaintenance for SqliteLibraryRepository {
     fn inspect(&self) -> Result<DoctorData, AppError> {
-        let (classification, findings) = self
-            .diagnosis_classification()
-            .map_err(|error| self.enrich_database_corruption(error))?;
+        let roots = self.resolve_roots()?;
+        let (classification, findings) = self.diagnosis_classification(&roots)?;
         let database_writable = matches!(classification, Diagnosis::Absent | Diagnosis::Healthy);
         Ok(DoctorData {
             fix_requested: false,
@@ -1865,17 +1987,11 @@ impl DatabaseMaintenance for SqliteLibraryRepository {
     }
     fn fix(&self) -> Result<DoctorOperation, AppError> {
         let roots = self.resolve_roots()?;
-        let (classification, mut findings) = self
-            .diagnosis_classification()
-            .map_err(|error| self.enrich_database_corruption(error))?;
+        let (classification, mut findings) = self.diagnosis_classification(&roots)?;
         let action = match classification {
             Diagnosis::Absent | Diagnosis::Healthy | Diagnosis::SchemaNewer => None,
-            Diagnosis::RequiresMigration => self
-                .migrate_v1(&roots)
-                .map_err(|error| self.enrich_database_corruption(error))?,
-            Diagnosis::FtsInvalid => self
-                .repair_fts(&roots)
-                .map_err(|error| self.enrich_database_corruption(error))?,
+            Diagnosis::RequiresMigration => self.migrate_v1(&roots)?,
+            Diagnosis::FtsInvalid => self.repair_fts(&roots)?,
         };
         match action {
             Some(action) => {
@@ -1900,8 +2016,7 @@ impl DatabaseMaintenance for SqliteLibraryRepository {
                     // A concurrent `doctor --fix` may have repaired the state
                     // between this diagnosis and acquiring the durable lock.
                     // Report the current state rather than the stale finding.
-                    self.diagnosis_classification()
-                        .map_err(|error| self.enrich_database_corruption(error))?
+                    self.diagnosis_classification(&roots)?
                 } else {
                     (classification, findings)
                 };
@@ -2070,6 +2185,9 @@ trait PersistenceHooks: Send + Sync {
     fn before_existing_database_generation_open(&self, _database: &Path) -> Result<(), AppError> {
         Ok(())
     }
+    fn before_database_corruption_details(&self, _database: &Path) -> Result<(), AppError> {
+        Ok(())
+    }
 
     fn before_existing_database_open(&self, _database: &Path) -> Result<(), AppError> {
         Ok(())
@@ -2229,6 +2347,39 @@ impl ValidatedDataDirectory {
             identity: metadata_identity(&metadata),
             handle,
         })
+    }
+    fn open_optional_child(&self, name: &OsStr) -> Result<Option<Self>, AppError> {
+        self.revalidate()?;
+        let handle = match openat(
+            &self.handle,
+            name,
+            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::NONBLOCK,
+            Mode::empty(),
+        ) {
+            Ok(handle) => File::from(handle),
+            Err(error) if error == rustix::io::Errno::NOENT => {
+                self.revalidate()?;
+                return Ok(None);
+            }
+            Err(_) => return Err(SqliteLibraryRepository::database_identity_drift()),
+        };
+        let metadata = handle
+            .metadata()
+            .map_err(|_| SqliteLibraryRepository::database_identity_drift())?;
+        let entry = statat(&self.handle, name, AtFlags::SYMLINK_NOFOLLOW)
+            .map_err(|_| SqliteLibraryRepository::database_identity_drift())?;
+        let identity = metadata_identity(&metadata);
+        if !metadata.file_type().is_dir()
+            || stat_identity(entry.st_dev, entry.st_ino) != Some(identity)
+        {
+            return Err(SqliteLibraryRepository::database_identity_drift());
+        }
+        self.revalidate()?;
+        Ok(Some(Self {
+            path: self.path.join(Path::new(name)),
+            identity,
+            handle,
+        }))
     }
 
     fn revalidate(&self) -> Result<(), AppError> {
@@ -4858,6 +5009,55 @@ mod tests {
         );
     }
 
+    struct CorruptionDetailsDataDirectoryReplacement {
+        data_directory: PathBuf,
+        displaced_directory: PathBuf,
+        replacement_directory: PathBuf,
+    }
+
+    impl PersistenceHooks for CorruptionDetailsDataDirectoryReplacement {
+        fn before_database_corruption_details(&self, _database: &Path) -> Result<(), AppError> {
+            fs::rename(&self.data_directory, &self.displaced_directory).unwrap();
+            fs::rename(&self.replacement_directory, &self.data_directory).unwrap();
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn corruption_details_reject_a_replaced_data_directory() {
+        let temporary = tempdir().unwrap();
+        let environment = Arc::new(TestEnvironment::with_roots(temporary.path()));
+        let initial = SqliteLibraryRepository::with_environment(
+            environment.clone(),
+            Arc::new(XdgRootResolver),
+        );
+        initial
+            .import(&document(vec![entry("skills/review", None)]), false)
+            .unwrap();
+        let data_directory = temporary.path().join("data/skilload");
+        let database = data_directory.join("skilload.db");
+        let replacement_directory = temporary.path().join("replacement-data-directory");
+        fs::create_dir(&replacement_directory).unwrap();
+        fs::copy(&database, replacement_directory.join("skilload.db")).unwrap();
+        fs::write(&database, b"not sqlite").unwrap();
+        let repository = SqliteLibraryRepository::with_hooks(
+            environment,
+            Arc::new(XdgRootResolver),
+            Arc::new(CorruptionDetailsDataDirectoryReplacement {
+                data_directory,
+                displaced_directory: temporary.path().join("displaced-data-directory"),
+                replacement_directory,
+            }),
+        );
+
+        let error = repository.inspect().unwrap_err();
+
+        assert!(matches!(
+            error,
+            AppError::InvalidState { state, .. } if state == "database_identity_drift"
+        ));
+    }
+
     struct ExistingDatabaseFifoReplacement {
         database: PathBuf,
         displaced: PathBuf,
@@ -6104,6 +6304,54 @@ mod tests {
         );
     }
 
+    struct SidecarAfterGenerationGate {
+        journal: PathBuf,
+    }
+
+    impl PersistenceHooks for SidecarAfterGenerationGate {
+        fn before_existing_database_open(&self, _database: &Path) -> Result<(), AppError> {
+            fs::write(&self.journal, b"journal created after generation gate").unwrap();
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn read_snapshot_rejects_a_journal_created_after_generation_gate() {
+        let temporary = tempdir().unwrap();
+        let environment = Arc::new(TestEnvironment::with_roots(temporary.path()));
+        let initial = SqliteLibraryRepository::with_environment(
+            environment.clone(),
+            Arc::new(XdgRootResolver),
+        );
+        initial
+            .import(&document(vec![entry("skills/review", None)]), false)
+            .unwrap();
+        let database = temporary.path().join("data/skilload/skilload.db");
+        let journal = database.with_file_name("skilload.db-journal");
+        let journal_bytes = b"journal created after generation gate".to_vec();
+        let repository = SqliteLibraryRepository::with_hooks(
+            environment,
+            Arc::new(XdgRootResolver),
+            Arc::new(SidecarAfterGenerationGate {
+                journal: journal.clone(),
+            }),
+        );
+        let query = Query::new("review".to_owned()).unwrap();
+
+        for error in [
+            repository.list(&page(100, 0)).unwrap_err(),
+            repository.search(&query, &page(100, 0)).unwrap_err(),
+            repository
+                .get("github:owner/repository#skills/review@refs/heads/main")
+                .unwrap_err(),
+            repository.export().unwrap_err(),
+            repository.inspect().unwrap_err(),
+        ] {
+            assert_eq!(error.code(), "database_corrupt", "{error:?}");
+        }
+        assert_eq!(fs::read(&journal).unwrap(), journal_bytes);
+    }
+
     struct MigrationFailpoint(&'static str);
 
     impl PersistenceHooks for MigrationFailpoint {
@@ -6316,6 +6564,37 @@ mod tests {
             repository.fix(),
             Err(AppError::DatabaseCorrupt { .. })
         ));
+    }
+
+    #[test]
+    fn backup_inventory_rejects_pairs_with_sqlite_sidecars() {
+        for suffix in DATABASE_SIDECAR_SUFFIXES {
+            let temporary = tempdir().unwrap();
+            let database = initialize_v1_database(&temporary);
+            let repository = SqliteLibraryRepository::with_environment(
+                Arc::new(TestEnvironment::with_roots(temporary.path())),
+                Arc::new(XdgRootResolver),
+            );
+            repository.fix().unwrap();
+            let backups_root = temporary.path().join("data/skilload/backups");
+            let backup = fs::read_dir(&backups_root)
+                .unwrap()
+                .flatten()
+                .map(|entry| entry.path())
+                .find(|path| path.extension().is_some_and(|extension| extension == "db"))
+                .unwrap();
+            let mut companion_name = backup.file_name().unwrap().to_os_string();
+            companion_name.push(suffix);
+            fs::write(backup.with_file_name(companion_name), b"backup sidecar").unwrap();
+            let mut bytes = fs::read(&database).unwrap();
+            bytes[100..132].fill(0xa5);
+            fs::write(&database, &bytes).unwrap();
+
+            assert!(matches!(
+                repository.inspect().unwrap_err(),
+                AppError::DatabaseCorrupt { backups, .. } if backups.is_empty()
+            ));
+        }
     }
 
     #[test]
@@ -6698,7 +6977,7 @@ mod tests {
             Arc::new(XdgRootResolver),
         );
         let roots = repository.resolve_roots().unwrap();
-        let (stale_diagnosis, _) = repository.diagnosis_classification().unwrap();
+        let (stale_diagnosis, _) = repository.diagnosis_classification(&roots).unwrap();
         assert!(matches!(stale_diagnosis, Diagnosis::RequiresMigration));
 
         assert_eq!(
@@ -6714,7 +6993,7 @@ mod tests {
             repository.migrate_v1(&roots).unwrap().is_none(),
             "a v1 diagnosis that waits behind a completed migration is unchanged"
         );
-        let (current_diagnosis, findings) = repository.diagnosis_classification().unwrap();
+        let (current_diagnosis, findings) = repository.diagnosis_classification(&roots).unwrap();
         assert!(matches!(current_diagnosis, Diagnosis::Healthy));
         assert!(findings.is_empty());
         assert_eq!(repository.fix().unwrap().outcome.as_str(), "unchanged");
