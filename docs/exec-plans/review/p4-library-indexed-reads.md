@@ -58,9 +58,11 @@ FTS tokenizer固定为 bundled SQLite 的 `unicode61 remove_diacritics 0`。Doma
 
 `docs/references/sqlite-fts5-library-search.md` 记录 FTS5 string quoting、bare-phrase implicit AND的语法边界与显式 `AND` 组合、`unicode61`、content-bearing index、special `integrity-check`/`rebuild` 与 rusqlite backup API事实。`docs/references/sqlite-backup-and-corruption-recovery.md` 规定 live WAL generation不能靠复制 main file备份；migration必须用 SQLite online backup得到 standalone snapshot，并记录 read-only SQLite 打开 WAL-mode generation会创建 `-shm`/`-wal` sidecar、`immutable=1` 会忽略 WAL 内容的实验事实。为 `rusqlite 0.40.2` 启用 `backup` feature，并加入 `sha2 0.11.0`（`default-features = false`）流式计算 SHA-256；不得引入 async runtime、ORM、外部 search service或通用 migration framework。
 Review remediation 固定以下实现约束：`writable_schema=ON` 只在 descriptor-bound connection 上临时容忍 malformed derived schema，以验证 base/portable projection；任何 mutation 继续在 write 前执行 special `integrity-check` 并只将 confirmed derived drift 映射为 `library_fts_invalid`；repair 删除 FTS/shadow schema rows 后以 `RESET` reload schema；recovery export 不依赖 `schema_info`/`state_revision`，但必须验证 entries/tags schema、integrity、foreign keys 和 portable domain document。Published backup-pair target protection 属于 portable adapter，不把 SQLite backup validation helper 反向暴露给 CLI。
+本轮 remediation 还要求：unknown newer schema 在任何当前 base-table validation 前以 `schema_newer` 分类；共用 absent-database probe 在 roots 重验前后执行，不能把 resolution 后替换的空 root 当成功 empty state。物理 FTS shadow 损坏先提交 schema detach、在 durable lock 内无 open transaction 时 `VACUUM` 回收不可达 pages并重验 database identity，随后用新 transaction 重建；中断状态保持 FTS missing/invalid 而非带 orphan pages 的伪 healthy。
 
 Read兼容性是显式边界。完整 v1 base rows可供 list/get/export只读；search和所有 database writes返回现有 API-v2 `migration_required`，直到 `doctor --fix`。Default doctor从 identity-bound read-only source向内存 SQLite destination做 online backup，在副本上执行需要 writable connection的 FTS5 special check，因此 live XDG state保持不变。该不变性不能仅由 read-only flag推出：read-only SQLite connection打开 WAL-mode generation时会在可写 data directory创建并保留 `-shm`（header 为 WAL 而 sidecar缺失时连 `-wal` 一并创建），`immutable=1` 虽不创建 sidecar却忽略 WAL 内容。因此所有对已存在 live database的 read-only opens（list/get/search/export/doctor inspect）先在 root anchors 前后持有并重验 `data/skilload` 的 no-follow directory descriptor，再从该 descriptor 以 `openat(..., O_RDONLY|O_NOFOLLOW|O_NONBLOCK)` 打开单组件 main-file；`fstat` regular type、relative entry identity、100-byte header和相对 `-journal`/`-wal`/`-shm` 盘点均针对同一 held directory generation。journal-mode bytes（偏移18/19）非 (1,1) 或存在任一 sibling的 generation不属于任何 skilload 二进制可能发布的 DELETE-journal state，不经 SQLite open 即返回 `database_corrupt`；directory 或 main-file identity/ABA replacement 返回 `database_identity_drift`，symlink、FIFO及其他 non-regular entry 一律拒绝，且 FIFO 不会等待 writer。SQLite read-only connection仅从 held main-file descriptor的 `/dev/fd/<fd>` 打开；transaction 前后持续重验 held directory、relative entry和 pathname identity。
 DELETE-mode `-journal` 同样不能与 descriptor-bound open 分离：SQLite 官方文档说明 active writer 的 RESERVED lock 与 hot journal 的 crash recovery 有不同含义，但 `/dev/fd/<fd>` 不能安全关联 pathname journal。当前 Plan 选择可证明 filesystem-inert 的保守边界：任意在 gate 时已观察到的 `-journal`、`-wal`、`-shm` 都在 SQLite 前按 `database_corrupt` 拒绝；这牺牲 active writer 期间的 read availability，避免误读可能未恢复的 main image。
+同一 root-binding 规则也适用于 absent return：`database_exists_with_details` 在 pathname absence probe 前后重验 `ResolvedRoots`，所以目录在 `resolve_roots` 与返回 empty/not_found 之间被替换时返回 root identity error，不采纳 replacement generation。
 
 ## Purpose / Big Picture
 
@@ -88,6 +90,7 @@ DELETE-mode `-journal` 同样不能与 descriptor-bound open 分离：SQLite 官
 - [x] (2026-08-21) 第六轮 final-review 的 5 个 inline 问题已由 `b581acb63df42a882e0f02d5167a931fdf6e47f0` 修复并推送：malformed FTS schema derived-only repair、recoverable Library export diagnostics、mutation special integrity gate、human recovery assets 与 backup-pair export protection；`SKL-LIB-009` 已提升至 Revision 5。focused tests、core 153 tests、CLI 13+17 tests 与 workspace fmt/clippy/test/build 已通过；5 个 GitHub replies 已写入且 threads 均 resolved。最终完整 conversation reconciliation 现确认 7 个 top-level comments、33 个 reviews、27 个 threads 均已完整记录或不含独立问题。
 - [x] (2026-08-21) 第七轮 final-review 的两个 inline 问题已由 `0a1cad3897588623b77c69b0fe90279a9d770257` 修复并推送：read-only generation gate 现绑定已解析 `data/skilload` directory descriptor并用 relative nonblocking no-follow open 验证 main file；FIFO race 被拒绝而不等待 writer。新增两项 adapter regressions与既有 ABA/WAL regressions通过，workspace fmt/clippy/test/locked build 通过；两个 GitHub replies 已写入并 resolve，final conversation reconciliation 已记录。
 - [x] (2026-08-21) 第八轮 final-review remediation 完成：backup companion rejection、snapshot-bound live-sidecar recheck 与 corruption recovery inventory root binding 已由 `8a0d84dc1e6de9959c0423f99273aa214c4f38b8` 推送；三个 GitHub replies 已写入，三个 inline threads 均 resolved。最终完整 reconciliation 读取为 9 个 top-level comments、40 个 reviews、32 个 threads；所有 actual inline source 都有本 Log 条目、reply 与 resolved state，无 pending 或 blocked source。finalized Review Conversation Log 由当前 documentation commit 提交。
+- [ ] (2026-08-21) 第九轮 final-review 的三个 inline 问题均已在 Product Baseline 内完成代码、regression、设计/reference 与 Plan 更新：三个新 regression 已由 red→green 证明，workspace fmt/clippy/test/build 全部通过；待提交推送 preliminary evidence、回复并 resolve 三个 thread，再完成最终 reconciliation。
 
 ## Surprises & Discoveries
 
@@ -119,8 +122,8 @@ DELETE-mode `-journal` 同样不能与 descriptor-bound open 分离：SQLite 官
   Evidence: 2026-08-20 scratch 实验（`PRAGMA integrity_check('...')` 五组输出 + `library_fts_data` root page 尾部字节翻转后的整库/逐表对照）；回归测试 `fts_shadow_corruption_stays_doctor_fixable` 与 `corrupt_base_keeps_typed_details_with_known_backups`。
 - Observation: 物理 damaged 的 FTS5 shadow b-tree 无法用任何 SQL 清除——`DROP TABLE library_fts`、`DROP TABLE library_fts_data`、`DELETE FROM library_fts_data` 全部以 `SQLITE_CORRUPT` 失败，且失败发生在 schema-modifying 语句中途时会毒化整个 transaction（后续 commit 也失败）。
   Evidence: 2026-08-20 scratch probe 输出（drop/delete/commit 均 `Err(DatabaseCorrupt)`）；detected damage 必须在任何 DROP 尝试之前完成，因此 `rebuild_derived_index` 先检测再选择手术路径。
-- Observation: `writable_schema` schema-row 手术可以在同一 transaction 内完整重建：ON → DELETE 6 行 schema → `RESET` reload → `PRAGMA schema_version` +1 → CREATE VIRTUAL TABLE → 按 base rows 填充 → validate → FTS5 `integrity-check` → commit；旧 shadow pages 成为 orphan pages。
-  Evidence: 2026-08-20 scratch probe 与 SQLite `writable_schema=RESET` 文档；`fts_shadow_corruption_stays_doctor_fixable`、`orphaned_fts_shadow_tables_are_doctor_fixable` 与 `malformed_fts_schema_stays_derived_and_doctor_fixable` 经公开 `fix()` 路径复验。
+- Observation: 直接删除 FTS virtual/shadow schema rows后在同一 transaction重建，旧 b-tree pages不会进入 freelist；即使 FTS projection/special integrity 都通过，整库 `PRAGMA integrity_check` 仍报告 `Page …: never used`，会把损坏数据库误报 healthy。
+  Evidence: 新增 `fts_shadow_corruption_stays_doctor_fixable` red run 显示 `Page 9` 至 `Page 13: never used`；将 repair 拆为 committed detach、transaction-external `VACUUM`、second-transaction rebuild 后，该 regression 与 bundled SQLite 返回 `ok`。SQLite 3.51.0 local probe 也得到 detach 后 `never used`、VACUUM 后 `ok` 且 inode 不变。
 - Observation: 使用仍持有的 `/dev/fd/<fd>` 打开 bundled SQLite connection 能使 gate 与实际读取的 inode 相同；在 hook 把 pathname 替换为 WAL generation 后，read 返回 `database_identity_drift` 且 replacement 未生成 `-wal`/`-shm`。
   Evidence: `read_only_open_never_creates_sidecars_for_a_replaced_wal_generation` 与 `export_uses_checked_generation_when_a_read_only_aba_is_restored` 均通过；后者还证明 replacement 被还原时 export 使用已检查 generation 而非短暂 ABA replacement。
 - Observation: 在跨 macOS/Linux 的可移植 API中，验证后的 pathname unlink 无法原子约束到已验证 inode；保留 backup pair 比删除可能被替换的 entry 安全。
@@ -133,6 +136,10 @@ DELETE-mode `-journal` 同样不能与 descriptor-bound open 分离：SQLite 官
   Evidence: `read_only_open_rejects_a_replaced_data_directory` 在 directory swap 后返回 `database_identity_drift` 而不导出 replacement generation；`generation_gate_rejects_fifo_without_waiting` 在 regular-file precheck 后把 main file换成 FIFO 仍立即返回 typed error。两者以及既有 ABA/WAL regressions 均通过。
 - Observation: 只在 descriptor-bound SQLite open 前盘点 companion 仍有 race；在同一 transaction 的最小 `PRAGMA schema_version` read 后重验，可以在任何 Library schema/data query 前拒绝已经出现的 sibling，而已建立的 SHARED snapshot 阻止随后 writer 的 EXCLUSIVE main-image update 混入结果。
   Evidence: `read_snapshot_rejects_a_journal_created_after_generation_gate` 在 gate 后 hook 创建 `skilload.db-journal`，覆盖 list/search/get/export/default doctor 全部返回 `database_corrupt`；SQLite 官方 locking 文档说明 SHARED reader、RESERVED journal writer 与 EXCLUSIVE commit 的锁边界。
+- Observation: pathname absence 本身也是 generation decision；只在 `resolve_roots` 后检查 `skilload.db` 会把随后替换的空 `data/skilload` 误报为 empty Library。
+  Evidence: `absent_read_rejects_data_root_replaced_after_resolution` 在 pre-fix 返回空 list；`database_exists_with_details` 在 probe 前后 revalidate 后返回 `XDG_DATA_HOME` identity error。
+- Observation: `SchemaGeneration::Newer` 不能先应用 current v1/v2 base invariants。
+  Evidence: `newer_schema_precedes_current_base_validation` 将 `library_entries` 重命名并把 version 设为 9；pre-fix list/search/get/mutation/import 不是 `schema_newer`，generation-first validation 后全部返回 version 9 的 typed refusal，doctor 报 `library_schema_newer`。
 
 
 ## Decision Log
@@ -194,9 +201,9 @@ DELETE-mode `-journal` 同样不能与 descriptor-bound open 分离：SQLite 官
   Rationale: base 表结构在 v1/v2 完全相同，drop-then-downgrade 得到与 P2/P3 二进制产出逐字节同构的 v1 database，避免维护两份 DDL（core 内）且让 CLI 级迁移 smoke 使用真实 binary。
   Date/Author: 2026-08-20 / Codex
 
-- Decision: 对物理 damaged 的 FTS shadow b-tree，rebuild 先用逐 shadow `PRAGMA integrity_check` + 存在性检测识别（`fts_shadow_btree_is_damaged`），再以 `writable_schema` schema-row 手术（`detach_damaged_fts_schema`）替代常规 `DROP TABLE`；健康的 derived drift 仍走 DROP+recreate。
-  Rationale: 2026-08-20 实验证实 damaged shadow 上的 DROP/DELETE 必然以 `SQLITE_CORRUPT` 失败并毒化 transaction；手术在同一 transaction 内删除 vtab + 5 个 shadow 的 schema 行并 bump `schema_version` 后重建，是 SQLite 文档记载的 schema 级恢复机制，base rows 与 state_revision 不受影响。代价是旧 shadow pages 成为 orphan pages（仅整库 integrity_check 可见，逐表 base 验证与 FTS5 special `integrity-check` 均不受影响），换取 `doctor --fix` 对 FTS-only 物理损坏真正可修复（PRRT_kwDOT7YN2s6a1M6h 的产品契约要求）。
-  Date/Author: 2026-08-20 / Codex
+- Decision: physical FTS shadow damage、missing virtual table或任一 shadow schema/integrity 缺口先以 `writable_schema` 删除六条 FTS schema rows并 commit；在同一 durable lock 的无 transaction connection 上运行 `VACUUM`，重验 database identity后以第二笔 transaction重建。
+  Rationale: PRRT_kwDOT7YN2s6bF0oR 证明同一 transaction直接重建把 detached b-tree pages遗留为整库 integrity `never used`，而 derived-only checks可能误报 healthy。`VACUUM` 是 SQLite 官方的 page-repacking path且不能在 open transaction 中运行；将 rebuild 后移使中断点保持 FTS missing/invalid，可由下一次 doctor 重试，不改变 base rows、`canonical_source` identity或 `state_revision`。
+  Date/Author: 2026-08-21 / Codex
 
 - Decision: read-only SQLite connection 从通过 generation gate 的 held regular-file descriptor 的 `/dev/fd/<fd>` 路径打开，而不是在 gate 后再次按 durable database pathname 打开。
   Rationale: PRRT_kwDOT7YN2s6a3XAK 证明 gate 与 pathname open之间的同账号 replacement 窗口可让 SQLite 在 later identity-drift error前为 WAL replacement 创建 sidecar。descriptor 在 SQLite open完成前保持持有，使实际读取的 inode与已检查 DELETE-journal generation相同；pathname replacement仍由既有 revalidation拒绝。
@@ -246,6 +253,14 @@ DELETE-mode `-journal` 同样不能与 descriptor-bound open 分离：SQLite 官
   Rationale: PRRT_kwDOT7YN2s6bD4zh 证明仅 pre-open inventory 仍有 journal race；PRRT_kwDOT7YN2s6bD4zc 证明 standalone backup也不能忽略 companion；PRRT_kwDOT7YN2s6bD4zj 证明 error-path root re-resolution会混合 recovery evidence。SQLite locking documentation说明 SHARED reader与 RESERVED writer/EXCLUSIVE commit的边界，使 snapshot 内复核能够拒绝早到 companion并固定随后 reader返回的 main generation。
   Date/Author: 2026-08-21 / Codex
 
+- Decision: 共用 absent-database probe 在 pathname 检查前后 revalidate 已解析 roots。
+  Rationale: PRRT_kwDOT7YN2s6bF0oG 证明已存在 database 的 descriptor-bound gate不能覆盖其前面的 absent early return；共享 helper 让 list/search/get/export/default doctor 及 mutation path都拒绝 `resolve_roots` 后的 root replacement，同时保留 truly absent state 的 lazy/no-create behavior。
+  Date/Author: 2026-08-21 / Codex
+
+- Decision: 任一可读 schema version大于当前 `SCHEMA_VERSION` 时，在 v1/v2 base validation 前分类为 `SchemaGeneration::Newer`。
+  Rationale: PRRT_kwDOT7YN2s6bF0oA 指出未来 schema 可合法替换当前 base table；若旧 binary先验证已知 table shape，会把兼容性拒绝误报 corruption。generation-first helper保持 safe export 的独立 projection，同时让 read/mutation/doctor/migration/repair paths一致拒绝 unknown newer write。
+  Date/Author: 2026-08-21 / Codex
+
 
 ## Outcomes & Retrospective
 
@@ -265,6 +280,8 @@ DELETE-mode `-journal` 同样不能与 descriptor-bound open 分离：SQLite 官
 2026-08-21 第七轮 final-review remediation 已完成：`0a1cad3897588623b77c69b0fe90279a9d770257` 将 existing-database read gate 绑定到 root-validated `data/skilload` directory descriptor，并以 `O_NOFOLLOW|O_NONBLOCK` relative open 拒绝 FIFO；`read_only_open_rejects_a_replaced_data_directory` 与 `generation_gate_rejects_fifo_without_waiting` 覆盖两个 race，既有 ABA/WAL regressions 继续通过。两个 inline replies 已写入并 resolved。最终完整会话读取为 8 个 top-level comments、36 个 submitted reviews 与 29 个 review threads；所有 threads 均 resolved，且无未记录、未回答或 blocked actual problem。Plan 保持 `review`、PR 保持 ready。
 
 2026-08-21 第八轮 final-review remediation 已完成：`8a0d84dc1e6de9959c0423f99273aa214c4f38b8` 在 Product Baseline 内修复 backup pair companion、descriptor-read sidecar race 与 corruption error-path root mixing。`backup_inventory_rejects_pairs_with_sqlite_sidecars`、`read_snapshot_rejects_a_journal_created_after_generation_gate`、`corruption_details_reject_a_replaced_data_directory` 通过；workspace fmt、clippy、test（13 + 17 + 158）与 locked build 均通过。三条 GitHub 回复 URL 与 `thread resolved: true` 已逐项写入本 Log。最终完整会话读取为 9 个 top-level comments、40 个 review bodies 与 32 个 threads；全部 32 个 actual inline sources 已记录、回复并 resolved，top-level trigger/notification 与 automated wrapper 未提出独立问题。Plan 保持 `review`、PR 保持 ready。
+
+2026-08-21 第九轮 final-review remediation 已完成实现与本地 validation，待提交 preliminary evidence：`validate_base_for_generation` 使 version 9 的 replaced-base fixture按 `schema_newer`/`library_schema_newer` 分类；共用 absence probe 拒绝 resolved root replacement；FTS repair 已拆分为 detach commit、`VACUUM` 和 rebuild transaction，damaged-shadow repair 后整库 integrity 为 `ok`。三项 focused regression 先 red 后 green，workspace fmt check、clippy、13+17+160 tests 与 locked build 通过；PR 保持 ready、Plan 保持 `review`，尚未回复新 thread。
 
 ## Review Conversation Log
 
@@ -772,6 +789,54 @@ Evidence: `SKL-OPS-004` observed generation 约束与 `ARCHITECTURE.md` database
 
 GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/5#discussion_r3828484555；thread resolved: true。
 
+### PRRT_kwDOT7YN2s6bF0oA - 新代际必须先于当前基表校验拒绝
+
+Source: PRRT_kwDOT7YN2s6bF0oA / PRRC_kwDOT7YN2s7kNSt0（https://github.com/bootids/skilload/pull/5#discussion_r3828689780）
+
+Problem: 现有 write-path 在读取到 `SchemaGeneration::Newer` 后仍先按 v1/v2 基表不变量验证；未来 schema 合法替换当前 base table 时，旧 binary 会错误报 `database_corrupt`，而不是 `schema_newer` 的降级拒绝。
+
+Disposition: fixed
+
+Status: open
+
+Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 增加 `validate_base_for_generation`，在当前 v1/v2 base validation 前返回 `Newer`；read、write、migration 与 FTS repair race 均复用该分类，新增 `newer_schema_precedes_current_base_validation` 以 version 9 + renamed `library_entries` 覆盖 list/search/get/mutation/import/doctor。fix commit 待提交并推送。
+
+Evidence: `SKL-OPS-003` Revision 1 要求 unknown newer schema 拒绝写入；新增 regression pre-fix 失败、修复后通过。`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets --locked -- -D warnings`、`cargo test --workspace --locked`（13 + 17 + 160）与 `cargo build --workspace --locked` 全部通过。
+
+GitHub outcome: 尚未回复；thread resolved: false。
+
+### PRRT_kwDOT7YN2s6bF0oG - 接受 absent 前必须重验数据根
+
+Source: PRRT_kwDOT7YN2s6bF0oG / PRRC_kwDOT7YN2s7kNSt8（https://github.com/bootids/skilload/pull/5#discussion_r3828689788）
+
+Problem: list/search/get/export/default doctor 在 `resolve_roots` 后以 pathname 判定缺失并立即返回；若 `data/skilload` 在此窗口被替换为空目录，操作会把替换 generation 误报为 empty/not_found，而非拒绝 root identity drift。
+
+Disposition: fixed
+
+Status: open
+
+Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 的 `database_exists_with_details` 让缺失 probe 前后 revalidate roots，所有共享该 gate 的 early-return reader/mutation 都拒绝 root replacement；新增 `absent_read_rejects_data_root_replaced_after_resolution` 以 resolver 后目录替换覆盖 public list path。fix commit 待提交并推送。
+
+Evidence: `SKL-OPS-004` Revision 1 与 persistence design 的 root-generation boundary 拒绝采纳 replacement；新增 regression pre-fix 返回 empty list、修复后返回 `XDG_DATA_HOME` identity error。workspace fmt/clippy/test/build 的同一上述命令全部通过。
+
+GitHub outcome: 尚未回复；thread resolved: false。
+
+### PRRT_kwDOT7YN2s6bF0oR - FTS detach 后必须回收孤立页面
+
+Source: PRRT_kwDOT7YN2s6bF0oR / PRRC_kwDOT7YN2s7kNSuI（https://github.com/bootids/skilload/pull/5#discussion_r3828689800）
+
+Problem: damaged FTS repair 只删除六条 `sqlite_master` schema row 后立即重建；旧 shadow b-tree pages 未加入 freelist，整库 `PRAGMA integrity_check` 保留 `never used` pages，doctor 却可能报 healthy，重复 repair 还会累积泄漏。
+
+Disposition: fixed
+
+Status: open
+
+Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 让 `fts_schema_requires_detach` 覆盖 missing/partial/damaged FTS schema；`repair_fts_locked` 先提交 detach、在同一 lock 的无 transaction connection 上 `VACUUM` 并重验 identity，再以第二笔 transaction rebuild；`rebuild_derived_index` 仅处理已准备 schema。`fts_shadow_corruption_stays_doctor_fixable` 现断言修复后整库 integrity 为 `ok`。fix commit 待提交并推送。
+
+Evidence: `SKL-OPS-004` Revision 1 只允许 base 完整时 repair derived FTS；pre-fix regression 显示 five `never used` pages，修复后 bundled SQLite test 与 local SQLite 3.51.0 probe 都返回 `ok`。workspace fmt/clippy/test/build 的同一上述命令全部通过。
+
+GitHub outcome: 尚未回复；thread resolved: false。
+
 ## Context and Orientation
 
 
@@ -779,6 +844,7 @@ GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/5#discussion_
 
 持久 Library位于有效 `XDG_DATA_HOME/skilload/skilload.db`；durable database process lock位于有效 `XDG_STATE_HOME/skilload/locks/database.lock`。Effective config/data/state/cache application roots必须两两不重叠。Absent read只能建立内存empty view，不能创建任何 root。SQLite main file必须是no-follow regular file；read-only open从 held data-directory descriptor相对读取 generation header并作第一次 companion census，再以同一 descriptor 的 `/dev/fd/<fd>` 路径打开 SQLite。connection在同一 transaction用 `PRAGMA schema_version` 建立 SHARED snapshot并作第二次 census，只有两次均无 `-journal`、`-wal`、`-shm` 后才读取 Library schema/data。directory/main-file replacement 返回 `database_identity_drift`，不让 SQLite 修改 replacement generation。
 若任一 census 观察到同名 `-journal`、`-wal` 或 `-shm`，adapter以 `database_corrupt`（含可验证 backups 与 `database-corruption-v1`）返回并保留每个文件；snapshot 后启动的 writer不能将未提交 main image混入当前 read result。backup inventory从同一 held `data/skilload` generation相对打开 `backups`，并拒绝每个有 SQLite companion 的 pair。
+所有 absent return 在接受 empty/not_found 前后也重验已解析 XDG roots；unknown newer generation 在解释已知 base schema 前返回 typed `schema_newer`，但 portable export 仅在其独立 entries/tags projection仍可证明时保留恢复出口。FTS schema row 直删后的 page 回收必须先 commit、无 transaction 执行 `VACUUM`，再以新 transaction重建，以免 unreachable pages躲过 derived-only validation。
 
 Schema v1固定 `schema_info(version=1)`、`state_revision`、以 `canonical_source`为 primary key的 `library_entries`，以及 foreign-key cascade的 `library_tags(canonical_source, comparison_key, display)`。`state_revision`只记录 product-state mutation；添加/rebuild派生 FTS或升级schema不代表用户metadata变化。Portable import最多10,000 entries且完整 deterministic export最多67,108,864 bytes，因此 `total`在当前有效状态中可安全转换为 `u64`，但 API仍按 `DecimalU64`编码。
 
@@ -1159,3 +1225,5 @@ GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/5#discussion_
 2026-08-21 最终完整会话 reconciliation：PR #5 有 8 个 top-level comments、36 个 submitted reviews 与 29 个 review threads。所有 inline thread 的 current `isResolved` 均为 true；所有 thread ID 均已在本 Log 记录。`IC_kwDOT7YN2s8AAAABP9F5SA` 是 `@codex` trigger，`PRR_kwDOT7YN2s8AAAABKRoboQ`、`PRR_kwDOT7YN2s8AAAABKVvOlQ` 与 `PRR_kwDOT7YN2s8AAAABKW3ROQ` 只是自动化 review wrapper，均无独立 requested change、defect、question 或 constraint；没有 pending 或 blocked source。
 
 2026-08-21：第八轮 final-review remediation 与 reconciliation。PRRT_kwDOT7YN2s6bD4zc、PRRT_kwDOT7YN2s6bD4zh 与 PRRT_kwDOT7YN2s6bD4zj 分别修复 standalone backup companion inventory、descriptor-bound live read 的 pre-open/snapshot 双重 census，以及 corruption diagnostics 的 held-root binding。运行时代码、产品 clarification、持久化设计、SQLite reference 与 preliminary Review Conversation Log 由 `8a0d84dc1e6de9959c0423f99273aa214c4f38b8` 推送；三个 reply URL 和 resolved state 已逐项记录。最终完整会话读取为 9 个 top-level comments、40 个 reviews 与 32 个 threads，所有 actual inline sources 都有 Log entry/reply/resolution，无 pending 或 blocked source。本次 revision 完成最终 Plan log evidence，Plan 保持 `review`、PR 保持 ready。
+
+2026-08-21：第九轮 final-review preliminary remediation。PRRT_kwDOT7YN2s6bF0oA、PRRT_kwDOT7YN2s6bF0oG 与 PRRT_kwDOT7YN2s6bF0oR 分别修复 unknown-newer 分类顺序、absent root generation revalidation 与 FTS detached-page reclamation。代码、三项 red→green regression、持久化设计、SQLite reference 与 preliminary Review Conversation Log 已同步；workspace fmt/clippy/test/build 已通过。待将本 preliminary evidence 提交推送后回复并 resolve 三个 inline thread，随后重新读取完整 conversation 完成 reconciliation。

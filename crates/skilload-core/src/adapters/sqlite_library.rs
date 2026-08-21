@@ -162,8 +162,11 @@ impl SqliteLibraryRepository {
         roots: &ResolvedRoots,
         path: &Path,
     ) -> Result<bool, AppError> {
-        Self::database_exists(path)
-            .map_err(|error| self.enrich_absent_database_corruption(error, roots, path))
+        let roots = self.root_resolver.revalidate(roots)?;
+        let result = Self::database_exists(path)
+            .map_err(|error| self.enrich_absent_database_corruption(error, &roots, path));
+        self.root_resolver.revalidate(&roots)?;
+        result
     }
 
     fn enrich_absent_database_corruption(
@@ -1233,17 +1236,11 @@ impl SqliteLibraryRepository {
                 let transaction = connection
                     .transaction()
                     .map_err(|error| database_error(&database, error))?;
-                let generation = read_schema_generation(&transaction, &database)?;
-                validate_base_database(&transaction, &database)?;
-                if generation == SchemaGeneration::V2 {
-                    return Ok(None);
-                }
-                if generation != SchemaGeneration::V1 {
-                    return Err(AppError::invalid_state(
-                        "library_database",
-                        "migration_baseline_changed",
-                        ["a validated schema 1 database"],
-                    ));
+                let generation = validate_base_for_generation(&transaction, &database)?;
+                match generation {
+                    SchemaGeneration::V2 => return Ok(None),
+                    SchemaGeneration::V1 => {}
+                    SchemaGeneration::Newer(found) => return Err(schema_newer(found)),
                 }
                 let revision = singleton_i64(
                     &transaction,
@@ -1275,14 +1272,17 @@ impl SqliteLibraryRepository {
             let transaction = connection
                 .transaction()
                 .map_err(|error| database_error(&database, error))?;
-            let generation = read_schema_generation(&transaction, &database)?;
-            validate_base_database(&transaction, &database)?;
-            if generation != SchemaGeneration::V1 {
-                return Err(AppError::invalid_state(
-                    "library_database",
-                    "migration_baseline_changed",
-                    ["a validated schema 1 database after backup"],
-                ));
+            let generation = validate_base_for_generation(&transaction, &database)?;
+            match generation {
+                SchemaGeneration::V1 => {}
+                SchemaGeneration::Newer(found) => return Err(schema_newer(found)),
+                SchemaGeneration::V2 => {
+                    return Err(AppError::invalid_state(
+                        "library_database",
+                        "migration_baseline_changed",
+                        ["a validated schema 1 database after backup"],
+                    ));
+                }
             }
             let revision = singleton_i64(
                 &transaction,
@@ -1391,12 +1391,16 @@ impl SqliteLibraryRepository {
                     .transaction()
                     .map_err(|error| database_error(&database, error))?;
                 let generation = validate_base_for_fts_recovery(&transaction, &database)?;
-                if generation != SchemaGeneration::V2 {
-                    return Err(AppError::invalid_state(
-                        "library_database",
-                        "fts_repair_requires_schema_2",
-                        ["a schema 2 database with intact base rows"],
-                    ));
+                match generation {
+                    SchemaGeneration::V2 => {}
+                    SchemaGeneration::Newer(found) => return Err(schema_newer(found)),
+                    SchemaGeneration::V1 => {
+                        return Err(AppError::invalid_state(
+                            "library_database",
+                            "fts_repair_requires_schema_2",
+                            ["a schema 2 database with intact base rows"],
+                        ));
+                    }
                 }
                 transaction
                     .commit()
@@ -1409,6 +1413,17 @@ impl SqliteLibraryRepository {
                 disable_writable_schema(&connection, &database)?;
                 Self::revalidate_database_identity(&database, identity)?;
                 return Ok(None);
+            }
+            if fts_schema_requires_detach(&connection) {
+                let transaction = connection
+                    .transaction()
+                    .map_err(|error| database_error(&database, error))?;
+                detach_damaged_fts_schema(&transaction, &database)?;
+                transaction
+                    .commit()
+                    .map_err(|error| database_error(&database, error))?;
+                reclaim_detached_fts_pages(&connection, &database)?;
+                Self::revalidate_database_generation(&data_directory, &database, identity)?;
             }
             let transaction = connection
                 .transaction()
@@ -2680,6 +2695,20 @@ fn validate_base_database(connection: &Connection, path: &Path) -> Result<(), Ap
     Ok(())
 }
 
+/// Unknown newer generations must be classified before this binary assumes
+/// any current base-table shape. Supported v1/v2 generations still require
+/// complete base validation before they can be read or written.
+fn validate_base_for_generation(
+    connection: &Connection,
+    path: &Path,
+) -> Result<SchemaGeneration, AppError> {
+    let generation = read_schema_generation(connection, path)?;
+    if !matches!(generation, SchemaGeneration::Newer(_)) {
+        validate_base_database(connection, path)?;
+    }
+    Ok(generation)
+}
+
 /// Validate the projection used by `library export` without relying on
 /// non-portable operational metadata such as schema generation or revision.
 fn load_recoverable_export_entries(
@@ -2770,8 +2799,7 @@ fn validate_derived_database(connection: &Connection, path: &Path) -> Result<(),
 /// contract and search can return the typed derived-index error.
 fn validate_for_read(connection: &Connection, path: &Path) -> Result<SchemaGeneration, AppError> {
     enable_writable_schema(connection, path)?;
-    let generation = read_schema_generation(connection, path)?;
-    validate_base_database(connection, path)?;
+    let generation = validate_base_for_generation(connection, path)?;
     disable_writable_schema(connection, path)?;
     Ok(generation)
 }
@@ -2783,9 +2811,7 @@ fn validate_base_for_fts_recovery(
     path: &Path,
 ) -> Result<SchemaGeneration, AppError> {
     enable_writable_schema(connection, path)?;
-    let generation = read_schema_generation(connection, path)?;
-    validate_base_database(connection, path)?;
-    Ok(generation)
+    validate_base_for_generation(connection, path)
 }
 
 fn fts_index_invalid() -> AppError {
@@ -2835,8 +2861,7 @@ fn fts_match_error(path: &Path, error: SqlError) -> AppError {
 fn validate_database(connection: &Connection, path: &Path) -> Result<(), AppError> {
     enable_writable_schema(connection, path)?;
     let result = (|| {
-        let generation = read_schema_generation(connection, path)?;
-        validate_base_database(connection, path)?;
+        let generation = validate_base_for_generation(connection, path)?;
         match generation {
             SchemaGeneration::V1 => Err(AppError::MigrationRequired {
                 domain: "library".to_owned(),
@@ -3109,9 +3134,10 @@ fn replace_fts_row(
     insert_fts_row(connection, entry, path)
 }
 
-/// True when rebuilding must first detach the current FTS schema rows.
-/// This includes damaged or partial virtual-table schema and orphaned shadow
-/// tables whose virtual-table row has already disappeared.
+/// True when rebuilding must detach current FTS schema rows and compact the
+/// database before recreating the derived index. This includes missing,
+/// damaged, partial, and orphaned FTS schema so a previous interrupted
+/// detach cannot leave unreachable pages behind.
 fn fts_schema_requires_detach(connection: &Connection) -> bool {
     let statement: Option<String> = match connection
         .query_row(
@@ -3124,12 +3150,9 @@ fn fts_schema_requires_detach(connection: &Connection) -> bool {
         Ok(statement) => statement,
         Err(_) => return true,
     };
-    let virtual_table_present = statement.is_some();
-    if virtual_table_present && statement.as_deref().map(str::trim) != Some(LIBRARY_FTS_CREATE_SQL)
-    {
+    if statement.as_deref().map(str::trim) != Some(LIBRARY_FTS_CREATE_SQL) {
         return true;
     }
-    let mut orphaned_shadow_present = false;
     for shadow in LIBRARY_FTS_SHADOW_TABLES {
         let present = matches!(
             connection.query_row(
@@ -3140,14 +3163,7 @@ fn fts_schema_requires_detach(connection: &Connection) -> bool {
             Ok(1)
         );
         if !present {
-            if virtual_table_present {
-                return true;
-            }
-            continue;
-        }
-        if !virtual_table_present {
-            orphaned_shadow_present = true;
-            continue;
+            return true;
         }
         let integrity =
             connection.query_row(&format!("PRAGMA integrity_check('{shadow}')"), [], |row| {
@@ -3157,14 +3173,14 @@ fn fts_schema_requires_detach(connection: &Connection) -> bool {
             return true;
         }
     }
-    orphaned_shadow_present
+    false
 }
 
 /// Physically damaged FTS5 shadow b-trees cannot be dropped or cleared
 /// through SQL: any traversal fails with `SQLITE_CORRUPT`. Remove the six
 /// schema rows directly instead — the `writable_schema` mechanism SQLite
-/// documents for schema-level recovery — inside the caller's transaction.
-/// The orphaned shadow pages stay unreferenced and base rows are untouched.
+/// documents for schema-level recovery — then commit and compact before
+/// recreating the derived index. Base rows remain untouched.
 fn detach_damaged_fts_schema(connection: &Connection, path: &Path) -> Result<(), AppError> {
     connection
         .execute_batch("PRAGMA writable_schema = ON;")
@@ -3186,17 +3202,19 @@ fn detach_damaged_fts_schema(connection: &Connection, path: &Path) -> Result<(),
     Ok(())
 }
 
-/// Drop and recreate the derived index from verified base rows. Base rows
-/// are never rewritten and `state_revision` never advances.
+fn reclaim_detached_fts_pages(connection: &Connection, path: &Path) -> Result<(), AppError> {
+    connection
+        .execute_batch("VACUUM;")
+        .map_err(|error| database_error(path, error))
+}
+
+/// Drop and recreate a prepared derived index from verified base rows. Base
+/// rows are never rewritten and `state_revision` never advances.
 fn rebuild_derived_index(connection: &Connection, path: &Path) -> Result<(), AppError> {
-    if fts_schema_requires_detach(connection) {
-        detach_damaged_fts_schema(connection, path)?;
-    } else {
-        disable_writable_schema(connection, path)?;
-        connection
-            .execute("DROP TABLE IF EXISTS library_fts", [])
-            .map_err(|error| database_error(path, error))?;
-    }
+    disable_writable_schema(connection, path)?;
+    connection
+        .execute("DROP TABLE IF EXISTS library_fts", [])
+        .map_err(|error| database_error(path, error))?;
     connection
         .execute_batch(LIBRARY_FTS_CREATE_SQL)
         .map_err(|error| database_error(path, error))?;
@@ -3800,6 +3818,29 @@ mod tests {
     impl Environment for TestEnvironment {
         fn var_os(&self, key: &str) -> Option<OsString> {
             self.0.get(key).cloned()
+        }
+    }
+
+    struct ReplaceDataRootAfterResolve {
+        data_directory: PathBuf,
+        displaced_directory: PathBuf,
+        replaced: std::sync::Mutex<bool>,
+    }
+
+    impl StateRootResolver for ReplaceDataRootAfterResolve {
+        fn resolve(&self, environment: &dyn Environment) -> Result<ResolvedRoots, AppError> {
+            let roots = XdgRootResolver.resolve(environment)?;
+            let mut replaced = self.replaced.lock().unwrap();
+            if !*replaced {
+                fs::rename(&self.data_directory, &self.displaced_directory).unwrap();
+                fs::create_dir(&self.data_directory).unwrap();
+                *replaced = true;
+            }
+            Ok(roots)
+        }
+
+        fn revalidate(&self, roots: &ResolvedRoots) -> Result<ResolvedRoots, AppError> {
+            XdgRootResolver.revalidate(roots)
         }
     }
 
@@ -5840,6 +5881,26 @@ mod tests {
     }
 
     #[test]
+    fn absent_read_rejects_data_root_replaced_after_resolution() {
+        let temporary = tempdir().unwrap();
+        let data_directory = temporary.path().join("data/skilload");
+        fs::create_dir_all(&data_directory).unwrap();
+        let repository = SqliteLibraryRepository::with_environment(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(ReplaceDataRootAfterResolve {
+                data_directory,
+                displaced_directory: temporary.path().join("displaced-data-directory"),
+                replaced: std::sync::Mutex::new(false),
+            }),
+        );
+
+        assert!(matches!(
+            repository.list(&page(100, 0)),
+            Err(AppError::InvalidEnvironment { variable, .. }) if variable == "XDG_DATA_HOME"
+        ));
+    }
+
+    #[test]
     fn search_matches_every_field_with_plain_term_semantics() {
         let temporary = tempdir().unwrap();
         let mut control = entry("skills/other", None);
@@ -6663,6 +6724,11 @@ mod tests {
         assert_eq!(operation.data.actions[0].kind.as_str(), "repair");
         assert_eq!(search(&repository, "code review").len(), 1);
         assert!(repository.inspect().unwrap().findings.is_empty());
+        let integrity: String = Connection::open(&database)
+            .unwrap()
+            .query_row("PRAGMA integrity_check", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(integrity, "ok");
     }
 
     #[test]
@@ -7119,5 +7185,50 @@ mod tests {
         let operation = repository.fix().unwrap();
         assert_eq!(operation.outcome.as_str(), "unchanged");
         assert_eq!(read_schema_version(&database), 9);
+    }
+    #[test]
+    fn newer_schema_precedes_current_base_validation() {
+        let temporary = tempdir().unwrap();
+        let database = initialize_v1_database(&temporary);
+        Connection::open(&database)
+            .unwrap()
+            .execute_batch(
+                "UPDATE schema_info SET version = 9;
+                 ALTER TABLE library_entries RENAME TO library_entries_v9;",
+            )
+            .unwrap();
+        let repository = SqliteLibraryRepository::with_environment(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(XdgRootResolver),
+        );
+        let source = "github:owner/repository#skills/review@refs/heads/main";
+        let query = Query::new("review".to_owned()).unwrap();
+
+        for error in [
+            repository.list(&page(100, 0)).unwrap_err(),
+            repository.search(&query, &page(100, 0)).unwrap_err(),
+            repository.get(source).unwrap_err(),
+            repository
+                .mutate_metadata(&metadata_mutation(
+                    source,
+                    LibraryMetadataChange::note_set("blocked".to_owned()).unwrap(),
+                ))
+                .unwrap_err(),
+            repository
+                .import(&document(vec![entry("skills/new", None)]), false)
+                .unwrap_err(),
+        ] {
+            assert!(matches!(
+                error,
+                AppError::SchemaNewer {
+                    found_version: 9,
+                    ..
+                }
+            ));
+        }
+
+        let diagnosis = repository.inspect().unwrap();
+        assert_eq!(diagnosis.findings[0].code, "library_schema_newer");
+        assert_eq!(repository.fix().unwrap().outcome.as_str(), "unchanged");
     }
 }

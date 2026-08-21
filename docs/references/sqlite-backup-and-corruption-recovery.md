@@ -15,7 +15,7 @@ skilload keeps durable product state in one SQLite database. Migration backups m
 * `PRAGMA integrity_check` returns `ok` when its database checks find no error, but it does not detect foreign-key violations. `PRAGMA foreign_key_check` returns one row per violation, so backup validation needs both forms of evidence when using the external SQLite CLI.
 * `PRAGMA quick_check` deliberately skips some work, including UNIQUE-constraint and index-content consistency checks. It is useful diagnostically but is not the strongest optional restore-candidate check.
 * SQLite's recovery API and CLI `.recover` command are best-effort salvage mechanisms. Recovered output can violate foreign keys, uniqueness, CHECK constraints, or STRICT typing. skilload may use it only as evidence for manual reconstruction; it is not a validated replacement database.
-* 当普通 schema load 仅因 `library_fts` 的 malformed `sqlite_master` SQL 文本失败时，read-only connection 的 `PRAGMA writable_schema=ON` 仍可读取完整 base tables（2026-08-21 local probe 与 bundled-SQLite regression 均验证）。skilload 只在 descriptor-bound generation gate 之后将它作为 connection-local base inspection tolerance；它不以该 pragma 写 base rows。修复时先删除已证明只属于 FTS 的 virtual/shadow schema rows，再用 `PRAGMA writable_schema=RESET` 关闭并 reload schema；单纯 `OFF` 不会 reload 已缓存的 schema。
+* 当普通 schema load 仅因 `library_fts` 的 malformed `sqlite_master` SQL 文本失败时，read-only connection 的 `PRAGMA writable_schema=ON` 仍可读取完整 base tables（2026-08-21 local probe 与 bundled-SQLite regression 均验证）。skilload 只在 descriptor-bound generation gate 之后将它作为 connection-local base inspection tolerance；它不以该 pragma 写 base rows。修复先删除已证明只属于 FTS 的 virtual/shadow schema rows，再用 `PRAGMA writable_schema=RESET` 关闭并 reload schema；单纯 `OFF` 不会 reload 已缓存的 schema。直接删除 schema rows不会把旧 b-tree pages 加入 freelist：bundled regression 的整库 `PRAGMA integrity_check` 会报告 `Page …: never used`。因此 repair 必须先提交 detach，在同一持锁 connection、无 open transaction 时运行 `VACUUM` 回收不可达 pages并重验 database identity，然后才在第二笔 transaction重建 FTS；SQLite 官方文档明确说明 `VACUUM` 在 connection 有 open transaction 时失败。若进程在 phases 间中断，FTS table 保持 missing/invalid，重复 doctor repair 再执行 detach/compact/rebuild，不会将带 orphan pages 的重建 index 报为 healthy。
 
 ## Design Consequences
 
@@ -35,6 +35,7 @@ Filesystem copy and rename durability still require the platform-specific file a
 * [Recovering data from a corrupt SQLite database](https://www.sqlite.org/recovery.html)
 * [SQLite File Locking and Concurrency](https://www.sqlite.org/lockingv3.html)
 * [SQLite Database File Format: rollback journals](https://www.sqlite.org/fileformat2.html)
+* [SQLite VACUUM](https://www.sqlite.org/lang_vacuum.html)
 * [SQLite PRAGMA writable_schema](https://www.sqlite.org/pragma.html#pragma_writable_schema)
 
 最后更新：2026-08-21。
