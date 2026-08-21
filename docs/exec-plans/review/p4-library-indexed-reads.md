@@ -90,7 +90,7 @@ DELETE-mode `-journal` 同样不能与 descriptor-bound open 分离：SQLite 官
 - [x] (2026-08-21) 第六轮 final-review 的 5 个 inline 问题已由 `b581acb63df42a882e0f02d5167a931fdf6e47f0` 修复并推送：malformed FTS schema derived-only repair、recoverable Library export diagnostics、mutation special integrity gate、human recovery assets 与 backup-pair export protection；`SKL-LIB-009` 已提升至 Revision 5。focused tests、core 153 tests、CLI 13+17 tests 与 workspace fmt/clippy/test/build 已通过；5 个 GitHub replies 已写入且 threads 均 resolved。最终完整 conversation reconciliation 现确认 7 个 top-level comments、33 个 reviews、27 个 threads 均已完整记录或不含独立问题。
 - [x] (2026-08-21) 第七轮 final-review 的两个 inline 问题已由 `0a1cad3897588623b77c69b0fe90279a9d770257` 修复并推送：read-only generation gate 现绑定已解析 `data/skilload` directory descriptor并用 relative nonblocking no-follow open 验证 main file；FIFO race 被拒绝而不等待 writer。新增两项 adapter regressions与既有 ABA/WAL regressions通过，workspace fmt/clippy/test/locked build 通过；两个 GitHub replies 已写入并 resolve，final conversation reconciliation 已记录。
 - [x] (2026-08-21) 第八轮 final-review remediation 完成：backup companion rejection、snapshot-bound live-sidecar recheck 与 corruption recovery inventory root binding 已由 `8a0d84dc1e6de9959c0423f99273aa214c4f38b8` 推送；三个 GitHub replies 已写入，三个 inline threads 均 resolved。最终完整 reconciliation 读取为 9 个 top-level comments、40 个 reviews、32 个 threads；所有 actual inline source 都有本 Log 条目、reply 与 resolved state，无 pending 或 blocked source。finalized Review Conversation Log 由当前 documentation commit 提交。
-- [ ] (2026-08-21) 第九轮 final-review 的三个 inline 问题均已在 Product Baseline 内完成代码、regression、设计/reference 与 Plan 更新：三个新 regression 已由 red→green 证明，workspace fmt/clippy/test/build 全部通过；待提交推送 preliminary evidence、回复并 resolve 三个 thread，再完成最终 reconciliation。
+- [ ] (2026-08-21) 第九轮 final-review 的三个 inline 问题已由 `a140aad0f9fa85c0a9cb74f433793e4644bd2ce4` 修复并推送：三个新 regression 已由 red→green 证明，workspace fmt/clippy/test/build 全部通过；待回复并 resolve 三个 thread，再完成最终 reconciliation。
 
 ## Surprises & Discoveries
 
@@ -281,7 +281,7 @@ DELETE-mode `-journal` 同样不能与 descriptor-bound open 分离：SQLite 官
 
 2026-08-21 第八轮 final-review remediation 已完成：`8a0d84dc1e6de9959c0423f99273aa214c4f38b8` 在 Product Baseline 内修复 backup pair companion、descriptor-read sidecar race 与 corruption error-path root mixing。`backup_inventory_rejects_pairs_with_sqlite_sidecars`、`read_snapshot_rejects_a_journal_created_after_generation_gate`、`corruption_details_reject_a_replaced_data_directory` 通过；workspace fmt、clippy、test（13 + 17 + 158）与 locked build 均通过。三条 GitHub 回复 URL 与 `thread resolved: true` 已逐项写入本 Log。最终完整会话读取为 9 个 top-level comments、40 个 review bodies 与 32 个 threads；全部 32 个 actual inline sources 已记录、回复并 resolved，top-level trigger/notification 与 automated wrapper 未提出独立问题。Plan 保持 `review`、PR 保持 ready。
 
-2026-08-21 第九轮 final-review remediation 已完成实现与本地 validation，待提交 preliminary evidence：`validate_base_for_generation` 使 version 9 的 replaced-base fixture按 `schema_newer`/`library_schema_newer` 分类；共用 absence probe 拒绝 resolved root replacement；FTS repair 已拆分为 detach commit、`VACUUM` 和 rebuild transaction，damaged-shadow repair 后整库 integrity 为 `ok`。三项 focused regression 先 red 后 green，workspace fmt check、clippy、13+17+160 tests 与 locked build 通过；PR 保持 ready、Plan 保持 `review`，尚未回复新 thread。
+2026-08-21 第九轮 final-review remediation 的 runtime/design/reference/preliminary-log commit `a140aad0f9fa85c0a9cb74f433793e4644bd2ce4` 已推送：`validate_base_for_generation` 使 version 9 的 replaced-base fixture按 `schema_newer`/`library_schema_newer` 分类；共用 absence probe 拒绝 resolved root replacement；FTS repair 已拆分为 detach commit、`VACUUM` 和 rebuild transaction，damaged-shadow repair 后整库 integrity 为 `ok`。三项 focused regression 先 red 后 green，workspace fmt check、clippy、13+17+160 tests 与 locked build 通过；PR 保持 ready、Plan 保持 `review`，尚未回复新 thread。
 
 ## Review Conversation Log
 
@@ -799,9 +799,9 @@ Disposition: fixed
 
 Status: open
 
-Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 增加 `validate_base_for_generation`，在当前 v1/v2 base validation 前返回 `Newer`；read、write、migration 与 FTS repair race 均复用该分类，新增 `newer_schema_precedes_current_base_validation` 以 version 9 + renamed `library_entries` 覆盖 list/search/get/mutation/import/doctor。fix commit 待提交并推送。
+Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 增加 `validate_base_for_generation`，在当前 v1/v2 base validation 前返回 `Newer`；read、write、migration 与 FTS repair race 均复用该分类，新增 `newer_schema_precedes_current_base_validation` 以 version 9 + renamed `library_entries` 覆盖 list/search/get/mutation/import/doctor。修复 commit `a140aad0f9fa85c0a9cb74f433793e4644bd2ce4` 已推送。
 
-Evidence: `SKL-OPS-003` Revision 1 要求 unknown newer schema 拒绝写入；新增 regression pre-fix 失败、修复后通过。`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets --locked -- -D warnings`、`cargo test --workspace --locked`（13 + 17 + 160）与 `cargo build --workspace --locked` 全部通过。
+Evidence: `SKL-OPS-003` Revision 1 要求 unknown newer schema 拒绝写入；新增 regression pre-fix 失败、修复后通过。`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets --locked -- -D warnings`、`cargo test --workspace --locked`（13 + 17 + 160）与 `cargo build --workspace --locked` 全部通过；修复 commit `a140aad0f9fa85c0a9cb74f433793e4644bd2ce4` 已推送。
 
 GitHub outcome: 尚未回复；thread resolved: false。
 
@@ -815,9 +815,9 @@ Disposition: fixed
 
 Status: open
 
-Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 的 `database_exists_with_details` 让缺失 probe 前后 revalidate roots，所有共享该 gate 的 early-return reader/mutation 都拒绝 root replacement；新增 `absent_read_rejects_data_root_replaced_after_resolution` 以 resolver 后目录替换覆盖 public list path。fix commit 待提交并推送。
+Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 的 `database_exists_with_details` 让缺失 probe 前后 revalidate roots，所有共享该 gate 的 early-return reader/mutation 都拒绝 root replacement；新增 `absent_read_rejects_data_root_replaced_after_resolution` 以 resolver 后目录替换覆盖 public list path。修复 commit `a140aad0f9fa85c0a9cb74f433793e4644bd2ce4` 已推送。
 
-Evidence: `SKL-OPS-004` Revision 1 与 persistence design 的 root-generation boundary 拒绝采纳 replacement；新增 regression pre-fix 返回 empty list、修复后返回 `XDG_DATA_HOME` identity error。workspace fmt/clippy/test/build 的同一上述命令全部通过。
+Evidence: `SKL-OPS-004` Revision 1 与 persistence design 的 root-generation boundary 拒绝采纳 replacement；新增 regression pre-fix 返回 empty list、修复后返回 `XDG_DATA_HOME` identity error。workspace fmt/clippy/test/build 的同一上述命令全部通过；修复 commit `a140aad0f9fa85c0a9cb74f433793e4644bd2ce4` 已推送。
 
 GitHub outcome: 尚未回复；thread resolved: false。
 
@@ -831,9 +831,9 @@ Disposition: fixed
 
 Status: open
 
-Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 让 `fts_schema_requires_detach` 覆盖 missing/partial/damaged FTS schema；`repair_fts_locked` 先提交 detach、在同一 lock 的无 transaction connection 上 `VACUUM` 并重验 identity，再以第二笔 transaction rebuild；`rebuild_derived_index` 仅处理已准备 schema。`fts_shadow_corruption_stays_doctor_fixable` 现断言修复后整库 integrity 为 `ok`。fix commit 待提交并推送。
+Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 让 `fts_schema_requires_detach` 覆盖 missing/partial/damaged FTS schema；`repair_fts_locked` 先提交 detach、在同一 lock 的无 transaction connection 上 `VACUUM` 并重验 identity，再以第二笔 transaction rebuild；`rebuild_derived_index` 仅处理已准备 schema。`fts_shadow_corruption_stays_doctor_fixable` 现断言修复后整库 integrity 为 `ok`。修复 commit `a140aad0f9fa85c0a9cb74f433793e4644bd2ce4` 已推送。
 
-Evidence: `SKL-OPS-004` Revision 1 只允许 base 完整时 repair derived FTS；pre-fix regression 显示 five `never used` pages，修复后 bundled SQLite test 与 local SQLite 3.51.0 probe 都返回 `ok`。workspace fmt/clippy/test/build 的同一上述命令全部通过。
+Evidence: `SKL-OPS-004` Revision 1 只允许 base 完整时 repair derived FTS；pre-fix regression 显示 five `never used` pages，修复后 bundled SQLite test 与 local SQLite 3.51.0 probe 都返回 `ok`。workspace fmt/clippy/test/build 的同一上述命令全部通过；修复 commit `a140aad0f9fa85c0a9cb74f433793e4644bd2ce4` 已推送。
 
 GitHub outcome: 尚未回复；thread resolved: false。
 
@@ -1226,4 +1226,4 @@ GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/5#discussion_
 
 2026-08-21：第八轮 final-review remediation 与 reconciliation。PRRT_kwDOT7YN2s6bD4zc、PRRT_kwDOT7YN2s6bD4zh 与 PRRT_kwDOT7YN2s6bD4zj 分别修复 standalone backup companion inventory、descriptor-bound live read 的 pre-open/snapshot 双重 census，以及 corruption diagnostics 的 held-root binding。运行时代码、产品 clarification、持久化设计、SQLite reference 与 preliminary Review Conversation Log 由 `8a0d84dc1e6de9959c0423f99273aa214c4f38b8` 推送；三个 reply URL 和 resolved state 已逐项记录。最终完整会话读取为 9 个 top-level comments、40 个 reviews 与 32 个 threads，所有 actual inline sources 都有 Log entry/reply/resolution，无 pending 或 blocked source。本次 revision 完成最终 Plan log evidence，Plan 保持 `review`、PR 保持 ready。
 
-2026-08-21：第九轮 final-review preliminary remediation。PRRT_kwDOT7YN2s6bF0oA、PRRT_kwDOT7YN2s6bF0oG 与 PRRT_kwDOT7YN2s6bF0oR 分别修复 unknown-newer 分类顺序、absent root generation revalidation 与 FTS detached-page reclamation。代码、三项 red→green regression、持久化设计、SQLite reference 与 preliminary Review Conversation Log 已同步；workspace fmt/clippy/test/build 已通过。待将本 preliminary evidence 提交推送后回复并 resolve 三个 inline thread，随后重新读取完整 conversation 完成 reconciliation。
+2026-08-21：第九轮 final-review preliminary remediation。PRRT_kwDOT7YN2s6bF0oA、PRRT_kwDOT7YN2s6bF0oG 与 PRRT_kwDOT7YN2s6bF0oR 分别修复 unknown-newer 分类顺序、absent root generation revalidation 与 FTS detached-page reclamation。代码、三项 red→green regression、持久化设计、SQLite reference 与 preliminary Review Conversation Log 由 `a140aad0f9fa85c0a9cb74f433793e4644bd2ce4` 推送；workspace fmt/clippy/test/build 已通过。待回复并 resolve 三个 inline thread，随后重新读取完整 conversation 完成 reconciliation。
