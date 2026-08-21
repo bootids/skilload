@@ -116,6 +116,19 @@ impl SqliteLibraryRepository {
         self.root_resolver.resolve(self.environment.as_ref())
     }
 
+    /// Hold the resolved `data/skilload` directory and prove it still names
+    /// the root generation selected by `resolve_roots`.
+    fn open_bound_data_directory(
+        &self,
+        roots: &ResolvedRoots,
+    ) -> Result<ValidatedDataDirectory, AppError> {
+        let roots = self.root_resolver.revalidate(roots)?;
+        let directory = ValidatedDataDirectory::open(&roots.data.effective)?;
+        self.root_resolver.revalidate(&roots)?;
+        directory.revalidate()?;
+        Ok(directory)
+    }
+
     fn database_path(roots: &ResolvedRoots) -> PathBuf {
         roots.data.effective.join("skilload.db")
     }
@@ -167,6 +180,32 @@ impl SqliteLibraryRepository {
         Ok(())
     }
 
+    fn ensure_no_existing_database_sidecars(
+        &self,
+        directory: &ValidatedDataDirectory,
+        database_name: &std::ffi::OsStr,
+        path: &Path,
+    ) -> Result<(), AppError> {
+        for suffix in DATABASE_SIDECAR_SUFFIXES {
+            let mut sidecar_name = database_name.to_os_string();
+            sidecar_name.push(suffix);
+            let sidecar = Self::database_sidecar_path(path, suffix)?;
+            match statat(&directory.handle, &sidecar_name, AtFlags::SYMLINK_NOFOLLOW) {
+                Ok(_) => return Err(self.database_corrupt_with_known_backups(path)),
+                Err(error) if error == rustix::io::Errno::NOENT => {}
+                Err(error) => {
+                    return Err(environment_io(
+                        "XDG_DATA_HOME",
+                        &sidecar,
+                        "inspect SQLite database sidecar",
+                        io::Error::from(error),
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn database_sidecar_path(path: &Path, suffix: &str) -> Result<PathBuf, AppError> {
         let database_name = path.file_name().ok_or_else(Self::database_identity_drift)?;
         let mut sidecar_name = database_name.to_os_string();
@@ -211,10 +250,13 @@ impl SqliteLibraryRepository {
 
     fn open_existing_database(
         &self,
+        directory: &ValidatedDataDirectory,
         path: &Path,
         flags: OpenFlags,
     ) -> Result<(Connection, (u64, u64)), AppError> {
-        let (held_generation, identity) = self.pre_open_generation_gate(path)?;
+        let database_name = path.file_name().ok_or_else(Self::database_identity_drift)?;
+        let (held_generation, identity) =
+            self.pre_open_generation_gate(directory, database_name, path)?;
         self.hooks.before_existing_database_open(path)?;
         let connection = if flags.contains(OpenFlags::SQLITE_OPEN_READ_ONLY) {
             let held_path = PathBuf::from(format!("/dev/fd/{}", held_generation.as_raw_fd()));
@@ -224,24 +266,37 @@ impl SqliteLibraryRepository {
         }
         .map_err(|error| database_error(path, error))?;
         self.hooks.after_existing_database_open(path)?;
-        verify_sqlite_connection_identity(&connection)?;
+        // SQLite resolves `/dev/fd/*` to the temporary source name on Linux,
+        // so `HAS_MOVED` would reject a descriptor whose planned path was restored.
+        // The held descriptor and final identity revalidation establish the
+        // read-only generation instead.
+        if !flags.contains(OpenFlags::SQLITE_OPEN_READ_ONLY) {
+            verify_sqlite_connection_identity(&connection)?;
+        }
         configure_connection(&connection, path)?;
+        revalidate_database_entry(directory, database_name, identity)?;
         Self::revalidate_database_identity(path, identity)?;
         Ok((connection, identity))
     }
 
-    fn read_existing(&self, path: &Path) -> Result<Vec<PortableLibraryEntry>, AppError> {
+    fn read_existing(
+        &self,
+        directory: &ValidatedDataDirectory,
+        path: &Path,
+    ) -> Result<Vec<PortableLibraryEntry>, AppError> {
         let (mut connection, identity) =
-            self.open_existing_database(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+            self.open_existing_database(directory, path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
         let transaction = connection
             .transaction()
             .map_err(|error| database_error(path, error))?;
         validate_for_read(&transaction, path)?;
         let entries = load_validated_entries(&transaction, path)?;
+        directory.revalidate()?;
         Self::revalidate_database_identity(path, identity)?;
         transaction
             .commit()
             .map_err(|error| database_error(path, error))?;
+        directory.revalidate()?;
         Self::revalidate_database_identity(path, identity)?;
         Ok(entries)
     }
@@ -249,17 +304,23 @@ impl SqliteLibraryRepository {
     /// intentionally do not depend on `schema_info` or `state_revision`;
     /// their own tables, foreign keys, domain values, and integrity still
     /// have to be provably intact.
-    fn read_exportable_entries(&self, path: &Path) -> Result<Vec<PortableLibraryEntry>, AppError> {
+    fn read_exportable_entries(
+        &self,
+        directory: &ValidatedDataDirectory,
+        path: &Path,
+    ) -> Result<Vec<PortableLibraryEntry>, AppError> {
         let (mut connection, identity) =
-            self.open_existing_database(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+            self.open_existing_database(directory, path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
         let transaction = connection
             .transaction()
             .map_err(|error| database_error(path, error))?;
         let entries = load_recoverable_export_entries(&transaction, path)?;
+        directory.revalidate()?;
         Self::revalidate_database_identity(path, identity)?;
         transaction
             .commit()
             .map_err(|error| database_error(path, error))?;
+        directory.revalidate()?;
         Self::revalidate_database_identity(path, identity)?;
         Ok(entries)
     }
@@ -370,14 +431,17 @@ impl SqliteLibraryRepository {
         if !Self::database_exists(&database)? {
             return Err(Self::database_identity_drift());
         }
-        let data_directory = ValidatedDataDirectory::open(&roots.data.effective)?;
+        let data_directory = self.open_bound_data_directory(&roots)?;
         let database_name = database
             .file_name()
             .ok_or_else(Self::database_identity_drift)?
             .to_os_string();
         data_directory.revalidate()?;
-        let (mut connection, identity) =
-            self.open_existing_database(&database, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
+        let (mut connection, identity) = self.open_existing_database(
+            &data_directory,
+            &database,
+            OpenFlags::SQLITE_OPEN_READ_WRITE,
+        )?;
         data_directory.revalidate()?;
         Self::revalidate_database_identity(&database, identity)?;
         operation(
@@ -711,17 +775,30 @@ impl SqliteLibraryRepository {
         })()
     }
 
-    fn pre_open_generation_gate(&self, path: &Path) -> Result<(File, (u64, u64)), AppError> {
-        let mut options = OpenOptions::new();
-        options.read(true).custom_flags(libc::O_NOFOLLOW);
-        let mut file = options.open(path).map_err(|error| {
-            environment_io(
-                "XDG_DATA_HOME",
-                path,
-                "open database for generation check",
-                error,
+    fn pre_open_generation_gate(
+        &self,
+        directory: &ValidatedDataDirectory,
+        database_name: &std::ffi::OsStr,
+        path: &Path,
+    ) -> Result<(File, (u64, u64)), AppError> {
+        directory.revalidate()?;
+        self.hooks.before_existing_database_generation_open(path)?;
+        let mut file = File::from(
+            openat(
+                &directory.handle,
+                database_name,
+                OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK,
+                Mode::empty(),
             )
-        })?;
+            .map_err(|error| {
+                environment_io(
+                    "XDG_DATA_HOME",
+                    path,
+                    "open database for generation check",
+                    io::Error::from(error),
+                )
+            })?,
+        );
         let metadata = file.metadata().map_err(|error| {
             environment_io(
                 "XDG_DATA_HOME",
@@ -733,6 +810,8 @@ impl SqliteLibraryRepository {
         if !metadata.file_type().is_file() {
             return Err(Self::database_identity_drift());
         }
+        let identity = metadata_identity(&metadata);
+        revalidate_database_entry(directory, database_name, identity)?;
         let mut header = [0u8; 100];
         if file.read_exact(&mut header).is_err()
             || !header.starts_with(SQLITE_HEADER_MAGIC)
@@ -741,22 +820,9 @@ impl SqliteLibraryRepository {
         {
             return Err(self.database_corrupt_with_known_backups(path));
         }
-        for suffix in DATABASE_SIDECAR_SUFFIXES {
-            let sidecar = Self::database_sidecar_path(path, suffix)?;
-            match fs::symlink_metadata(&sidecar) {
-                Ok(_) => return Err(self.database_corrupt_with_known_backups(path)),
-                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-                Err(error) => {
-                    return Err(environment_io(
-                        "XDG_DATA_HOME",
-                        &sidecar,
-                        "inspect SQLite database sidecar",
-                        error,
-                    ));
-                }
-            }
-        }
-        Ok((file, metadata_identity(&metadata)))
+        self.ensure_no_existing_database_sidecars(directory, database_name, path)?;
+        revalidate_database_entry(directory, database_name, identity)?;
+        Ok((file, identity))
     }
 
     fn database_corrupt_with_known_backups(&self, path: &Path) -> AppError {
@@ -772,7 +838,16 @@ impl SqliteLibraryRepository {
         }
     }
     fn recoverable_library_exports(&self, path: &Path) -> Vec<String> {
-        if self.read_exportable_entries(path).is_ok() {
+        let Ok(roots) = self.resolve_roots() else {
+            return Vec::new();
+        };
+        if Self::database_path(&roots) != path {
+            return Vec::new();
+        }
+        let Ok(directory) = self.open_bound_data_directory(&roots) else {
+            return Vec::new();
+        };
+        if self.read_exportable_entries(&directory, path).is_ok() {
             vec!["library.export".to_owned()]
         } else {
             Vec::new()
@@ -801,10 +876,11 @@ impl SqliteLibraryRepository {
 
     fn list_page(
         &self,
+        directory: &ValidatedDataDirectory,
         database: &Path,
         page: LibraryPage,
     ) -> Result<LibraryEntriesPage, AppError> {
-        let (entries, total) = self.read_page(database, page, ReadFilter::All)?;
+        let (entries, total) = self.read_page(directory, database, page, ReadFilter::All)?;
         Ok(LibraryEntriesPage {
             entries,
             page,
@@ -814,12 +890,14 @@ impl SqliteLibraryRepository {
 
     fn search_page(
         &self,
+        directory: &ValidatedDataDirectory,
         database: &Path,
         query: &LibrarySearchQuery,
         page: LibraryPage,
     ) -> Result<LibrarySearchPage, AppError> {
         let expression = fts_match_expression(query);
-        let (entries, total) = self.read_page(database, page, ReadFilter::FtsMatch(&expression))?;
+        let (entries, total) =
+            self.read_page(directory, database, page, ReadFilter::FtsMatch(&expression))?;
         Ok(LibrarySearchPage {
             original: query.original().to_owned(),
             entries,
@@ -830,12 +908,13 @@ impl SqliteLibraryRepository {
 
     fn read_page(
         &self,
+        directory: &ValidatedDataDirectory,
         database: &Path,
         page: LibraryPage,
         filter: ReadFilter<'_>,
     ) -> Result<(Vec<LibraryEntry>, u64), AppError> {
         let (mut connection, identity) =
-            self.open_existing_database(database, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+            self.open_existing_database(directory, database, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
         let transaction = connection
             .transaction()
             .map_err(|error| database_error(database, error))?;
@@ -863,17 +942,24 @@ impl SqliteLibraryRepository {
         } else {
             query_page(&transaction, database, &filter, &page)?
         };
+        directory.revalidate()?;
         Self::revalidate_database_identity(database, identity)?;
         transaction
             .commit()
             .map_err(|error| database_error(database, error))?;
+        directory.revalidate()?;
         Self::revalidate_database_identity(database, identity)?;
         Ok((entries, total))
     }
 
-    fn get_entry(&self, database: &Path, selector: &str) -> Result<LibraryEntry, AppError> {
+    fn get_entry(
+        &self,
+        directory: &ValidatedDataDirectory,
+        database: &Path,
+        selector: &str,
+    ) -> Result<LibraryEntry, AppError> {
         let (mut connection, identity) =
-            self.open_existing_database(database, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+            self.open_existing_database(directory, database, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
         let transaction = connection
             .transaction()
             .map_err(|error| database_error(database, error))?;
@@ -883,10 +969,12 @@ impl SqliteLibraryRepository {
         }
         let entry = query_entry(&transaction, database, selector)?
             .ok_or_else(|| AppError::not_found("library", selector.to_owned()))?;
+        directory.revalidate()?;
         Self::revalidate_database_identity(database, identity)?;
         transaction
             .commit()
             .map_err(|error| database_error(database, error))?;
+        directory.revalidate()?;
         Self::revalidate_database_identity(database, identity)?;
         Ok(entry)
     }
@@ -927,8 +1015,9 @@ impl SqliteLibraryRepository {
         if !Self::database_exists(&database)? {
             return Ok((Diagnosis::Absent, Vec::new()));
         }
+        let directory = self.open_bound_data_directory(&roots)?;
         let (mut connection, identity) =
-            self.open_existing_database(&database, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+            self.open_existing_database(&directory, &database, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
         let transaction = connection
             .transaction()
             .map_err(|error| database_error(&database, error))?;
@@ -981,10 +1070,12 @@ impl SqliteLibraryRepository {
         // The diagnosis is evidence for recovery: like the read paths, prove
         // the live pathname still names the inode that was diagnosed both
         // before and after closing the snapshot.
+        directory.revalidate()?;
         Self::revalidate_database_identity(&database, identity)?;
         transaction
             .commit()
             .map_err(|error| database_error(&database, error))?;
+        directory.revalidate()?;
         Self::revalidate_database_identity(&database, identity)?;
         match finding {
             Some(finding) => Ok((classification, vec![finding])),
@@ -1050,14 +1141,17 @@ impl SqliteLibraryRepository {
         if !Self::database_exists(&database)? {
             return Err(Self::database_identity_drift());
         }
-        let data_directory = ValidatedDataDirectory::open(&roots.data.effective)?;
+        let data_directory = self.open_bound_data_directory(&roots)?;
         let database_name = database
             .file_name()
             .ok_or_else(Self::database_identity_drift)?
             .to_os_string();
         data_directory.revalidate()?;
-        let (mut connection, identity) =
-            self.open_existing_database(&database, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
+        let (mut connection, identity) = self.open_existing_database(
+            &data_directory,
+            &database,
+            OpenFlags::SQLITE_OPEN_READ_WRITE,
+        )?;
         data_directory.revalidate()?;
         Self::revalidate_database_identity(&database, identity)?;
 
@@ -1195,14 +1289,17 @@ impl SqliteLibraryRepository {
         if !Self::database_exists(&database)? {
             return Err(Self::database_identity_drift());
         }
-        let data_directory = ValidatedDataDirectory::open(&roots.data.effective)?;
+        let data_directory = self.open_bound_data_directory(&roots)?;
         let database_name = database
             .file_name()
             .ok_or_else(Self::database_identity_drift)?
             .to_os_string();
         data_directory.revalidate()?;
-        let (mut connection, identity) =
-            self.open_existing_database(&database, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
+        let (mut connection, identity) = self.open_existing_database(
+            &data_directory,
+            &database,
+            OpenFlags::SQLITE_OPEN_READ_WRITE,
+        )?;
         data_directory.revalidate()?;
         Self::revalidate_database_identity(&database, identity)?;
         {
@@ -1639,7 +1736,8 @@ impl LibraryRepository for SqliteLibraryRepository {
                 total: 0,
             });
         }
-        self.list_page(&database, *page)
+        let directory = self.open_bound_data_directory(&roots)?;
+        self.list_page(&directory, &database, *page)
             .map_err(|error| self.enrich_database_corruption(error))
     }
 
@@ -1658,7 +1756,8 @@ impl LibraryRepository for SqliteLibraryRepository {
                 total: 0,
             });
         }
-        self.search_page(&database, query, *page)
+        let directory = self.open_bound_data_directory(&roots)?;
+        self.search_page(&directory, &database, query, *page)
             .map_err(|error| self.enrich_database_corruption(error))
     }
 
@@ -1668,7 +1767,8 @@ impl LibraryRepository for SqliteLibraryRepository {
         if !Self::database_exists(&database)? {
             return Err(AppError::not_found("library", selector.to_owned()));
         }
-        self.get_entry(&database, selector)
+        let directory = self.open_bound_data_directory(&roots)?;
+        self.get_entry(&directory, &database, selector)
             .map_err(|error| self.enrich_database_corruption(error))
     }
 
@@ -1678,8 +1778,9 @@ impl LibraryRepository for SqliteLibraryRepository {
         if !Self::database_exists(&database)? {
             return Ok(PortableLibraryDocument::empty());
         }
+        let directory = self.open_bound_data_directory(&roots)?;
         let entries = self
-            .read_exportable_entries(&database)
+            .read_exportable_entries(&directory, &database)
             .map_err(|error| self.enrich_database_corruption(error))?;
         let mut document = PortableLibraryDocument {
             format_version: LIBRARY_FORMAT_VERSION,
@@ -1699,7 +1800,8 @@ impl LibraryRepository for SqliteLibraryRepository {
         let database = Self::database_path(&roots);
         if dry_run {
             let existing = if Self::database_exists(&database)? {
-                self.read_existing(&database)
+                let directory = self.open_bound_data_directory(&roots)?;
+                self.read_existing(&directory, &database)
                     .map_err(|error| self.enrich_database_corruption(error))?
             } else {
                 Vec::new()
@@ -1962,6 +2064,10 @@ trait PersistenceHooks: Send + Sync {
     }
 
     fn after_first_publish_sync_before_success(&self, _database: &Path) -> Result<(), AppError> {
+        Ok(())
+    }
+
+    fn before_existing_database_generation_open(&self, _database: &Path) -> Result<(), AppError> {
         Ok(())
     }
 
@@ -3509,7 +3615,7 @@ mod tests {
     use std::ffi::OsString;
     use std::os::unix::{
         ffi::{OsStrExt, OsStringExt},
-        fs::symlink,
+        fs::{FileTypeExt, symlink},
     };
     use tempfile::tempdir;
 
@@ -4600,12 +4706,21 @@ mod tests {
             environment.clone(),
             Arc::new(XdgRootResolver),
         );
-        initial
-            .import(&document(vec![entry("skills/review", None)]), false)
-            .unwrap();
+        let original = document(vec![entry("skills/review", None)]);
+        initial.import(&original, false).unwrap();
         let database = temporary.path().join("data/skilload/skilload.db");
         let replacement = temporary.path().join("replacement.db");
         fs::copy(&database, &replacement).unwrap();
+        assert_eq!(
+            Connection::open(&replacement)
+                .unwrap()
+                .execute(
+                    "UPDATE library_entries SET note = ?1",
+                    ["replacement generation"],
+                )
+                .unwrap(),
+            1
+        );
         let repository = SqliteLibraryRepository::with_hooks(
             environment,
             Arc::new(XdgRootResolver),
@@ -4619,7 +4734,7 @@ mod tests {
 
         let exported = repository.export().unwrap();
 
-        assert_eq!(exported.entries.len(), 1);
+        assert_eq!(exported.entries, original.validate().unwrap().entries);
         assert!(database.exists());
         assert!(!replacement.exists());
     }
@@ -4674,6 +4789,128 @@ mod tests {
         ));
         assert!(!database.with_file_name("skilload.db-shm").exists());
         assert!(!database.with_file_name("skilload.db-wal").exists());
+    }
+
+    struct ExistingDataDirectoryReplacement {
+        data_directory: PathBuf,
+        displaced_directory: PathBuf,
+        replacement_directory: PathBuf,
+    }
+
+    impl PersistenceHooks for ExistingDataDirectoryReplacement {
+        fn before_existing_database_generation_open(
+            &self,
+            _database: &Path,
+        ) -> Result<(), AppError> {
+            fs::rename(&self.data_directory, &self.displaced_directory).unwrap();
+            fs::rename(&self.replacement_directory, &self.data_directory).unwrap();
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn read_only_open_rejects_a_replaced_data_directory() {
+        let temporary = tempdir().unwrap();
+        let environment = Arc::new(TestEnvironment::with_roots(temporary.path()));
+        let initial = SqliteLibraryRepository::with_environment(
+            environment.clone(),
+            Arc::new(XdgRootResolver),
+        );
+        initial
+            .import(&document(vec![entry("skills/review", None)]), false)
+            .unwrap();
+        let data_directory = temporary.path().join("data/skilload");
+        let database = data_directory.join("skilload.db");
+        let replacement_directory = temporary.path().join("replacement-data-directory");
+        fs::create_dir(&replacement_directory).unwrap();
+        let replacement = replacement_directory.join("skilload.db");
+        fs::copy(&database, &replacement).unwrap();
+        Connection::open(&replacement)
+            .unwrap()
+            .execute(
+                "UPDATE library_entries SET note = ?1",
+                ["replacement root generation"],
+            )
+            .unwrap();
+        let repository = SqliteLibraryRepository::with_hooks(
+            environment,
+            Arc::new(XdgRootResolver),
+            Arc::new(ExistingDataDirectoryReplacement {
+                data_directory: data_directory.clone(),
+                displaced_directory: temporary.path().join("displaced-data-directory"),
+                replacement_directory,
+            }),
+        );
+
+        let error = repository.export().unwrap_err();
+
+        assert!(matches!(
+            error,
+            AppError::InvalidState { state, .. } if state == "database_identity_drift"
+        ));
+        assert_eq!(
+            Connection::open(data_directory.join("skilload.db"))
+                .unwrap()
+                .query_row("SELECT note FROM library_entries", [], |row| row
+                    .get::<_, String>(0),)
+                .unwrap(),
+            "replacement root generation"
+        );
+    }
+
+    struct ExistingDatabaseFifoReplacement {
+        database: PathBuf,
+        displaced: PathBuf,
+    }
+
+    impl PersistenceHooks for ExistingDatabaseFifoReplacement {
+        fn before_existing_database_generation_open(
+            &self,
+            _database: &Path,
+        ) -> Result<(), AppError> {
+            fs::rename(&self.database, &self.displaced).unwrap();
+            let status = std::process::Command::new("mkfifo")
+                .arg(&self.database)
+                .status()
+                .unwrap();
+            assert!(status.success());
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn generation_gate_rejects_fifo_without_waiting() {
+        let temporary = tempdir().unwrap();
+        let environment = Arc::new(TestEnvironment::with_roots(temporary.path()));
+        let initial = SqliteLibraryRepository::with_environment(
+            environment.clone(),
+            Arc::new(XdgRootResolver),
+        );
+        initial
+            .import(&document(vec![entry("skills/review", None)]), false)
+            .unwrap();
+        let database = temporary.path().join("data/skilload/skilload.db");
+        let repository = SqliteLibraryRepository::with_hooks(
+            environment,
+            Arc::new(XdgRootResolver),
+            Arc::new(ExistingDatabaseFifoReplacement {
+                database: database.clone(),
+                displaced: temporary.path().join("displaced.db"),
+            }),
+        );
+
+        let error = repository.export().unwrap_err();
+
+        assert!(matches!(
+            error,
+            AppError::InvalidState { state, .. } if state == "database_identity_drift"
+        ));
+        assert!(
+            fs::symlink_metadata(database)
+                .unwrap()
+                .file_type()
+                .is_fifo()
+        );
     }
 
     struct ExistingDatabaseReplacementAfterSync {
