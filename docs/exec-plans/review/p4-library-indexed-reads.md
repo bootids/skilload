@@ -885,6 +885,40 @@ GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/5#discussion_
 
 2026-08-21 第十轮 final reconciliation：PR #5 有 11 个 top-level comments、47 个 submitted reviews 与 37 个 review threads。37 个 thread ID 全部有本 Log heading，current `isResolved` 均为 true；PRRT_kwDOT7YN2s6bKUKq 的回复为 https://github.com/bootids/skilload/pull/5#discussion_r3830978897，PRRT_kwDOT7YN2s6bKUK8 的回复为 https://github.com/bootids/skilload/pull/5#discussion_r3830980524。十个 nonempty review body 是同一 automated wrapper template，top-level comments均为 `@codex` trigger/notification，没有 pending、blocked 或未记录 source。
 
+### PRRT_kwDOT7YN2s6bDCYF - 将既有数据库读取绑定到已解析的数据目录
+
+
+Source: PRRT_kwDOT7YN2s6bDCYF / PRRC_kwDOT7YN2s7kJD6S（https://github.com/bootids/skilload/pull/5#discussion_r3827580562）
+
+Problem: `resolve_roots` 与 `database_exists` 后、pathname-based generation gate 之前，同账号进程可替换 `data/skilload` 整个目录。当前 main-file identity 检查会把 replacement 当成新的有效 generation，导致 list/get/search/export 或 doctor 从错误 root 返回数据或恢复证据，违反 read-only 不采纳外部 replacement 的不变量。
+
+Disposition: fixed
+
+Status: resolved
+
+Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 增加 `open_bound_data_directory`，在 root anchors 前后绑定 `data/skilload` directory identity；`pre_open_generation_gate` 从 held directory 相对打开并验证 `skilload.db`，所有 read-only list/search/get/export/default doctor 与 dry-run read 都传递该 held directory，transaction 前后继续重验。`0a1cad3897588623b77c69b0fe90279a9d770257` 已推送。
+
+Evidence: `read_only_open_rejects_a_replaced_data_directory`、既有 `export_uses_checked_generation_when_a_read_only_aba_is_restored` 与 `read_only_open_never_creates_sidecars_for_a_replaced_wal_generation` 通过；`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace`、`cargo build --workspace --locked` 通过，提交前 `git diff --check` clean。修复提交：`0a1cad3897588623b77c69b0fe90279a9d770257`。
+
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/5#discussion_r3827811416；thread resolved: true。
+
+### PRRT_kwDOT7YN2s6bDCYM - no-follow generation open 必须 nonblocking
+
+
+Source: PRRT_kwDOT7YN2s6bDCYM / PRRC_kwDOT7YN2s7kJD6b（https://github.com/bootids/skilload/pull/5#discussion_r3827580571）
+
+Problem: generation gate 只使用 `O_NOFOLLOW`；regular-file precheck 与实际 open 之间若同账号进程将 `skilload.db` 替换为 FIFO，read-only open 会等待 writer，而不是在 metadata type check 前返回 typed identity error，可能无限挂起数据库相关 CLI。
+
+Disposition: fixed
+
+Status: resolved
+
+Resolution: 已在同一 `pre_open_generation_gate` 的 directory-relative `openat` 加入 `O_NONBLOCK` 与已有 `O_NOFOLLOW`，保留 opened-descriptor regular-file validation；`0a1cad3897588623b77c69b0fe90279a9d770257` 已推送。
+
+Evidence: `generation_gate_rejects_fifo_without_waiting` 通过，证明 regular-file precheck 后的 FIFO replacement 立即返回 typed identity error；同轮 existing ABA/WAL regressions与 `cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace`、`cargo build --workspace --locked` 通过，提交前 `git diff --check` clean。修复提交：`0a1cad3897588623b77c69b0fe90279a9d770257`。
+
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/5#discussion_r3827813420；thread resolved: true。
+
 ## Context and Orientation
 
 
@@ -1235,40 +1269,6 @@ Backup manifest是private versioned serde record，不进入API-v2或portable ex
 2026-08-21：第七轮 final-review remediation。PRRT_kwDOT7YN2s6bDCYF 与 PRRT_kwDOT7YN2s6bDCYM 都在 Product Baseline 内修复：existing-database read gate 现在将 root-validated data-directory descriptor、relative main-file entry、header/sidecar inspection 与 `/dev/fd` SQLite source 连续绑定，并以 nonblocking open 拒绝 FIFO race。实现、两项新 regression、架构/持久化设计、preliminary Review Conversation Log 由 `0a1cad3897588623b77c69b0fe90279a9d770257` 推送；focused 与 workspace validation 均通过。Plan 保持 `review`、PR 保持 ready；待本 workflow 回复并 resolve 两个 thread 后完成 reconciliation。
 
 2026-08-21：第七轮 final-review reconciliation。PRRT_kwDOT7YN2s6bDCYF 与 PRRT_kwDOT7YN2s6bDCYM 的修复 commit、workspace validation、reply URLs 与 resolved states 已逐项写入 Review Conversation Log。最终完整会话读取为 8 个 top-level comments、36 个 reviews 与 29 个 threads；新增 trigger `IC_kwDOT7YN2s8AAAABP9F5SA` 以及自动化 wrappers `PRR_kwDOT7YN2s8AAAABKRoboQ`、`PRR_kwDOT7YN2s8AAAABKVvOlQ`、`PRR_kwDOT7YN2s8AAAABKW3ROQ` 均未提出独立问题，所有 29 个 inline source 已记录、回复并 resolved。
-
-### PRRT_kwDOT7YN2s6bDCYF - 将既有数据库读取绑定到已解析的数据目录
-
-
-Source: PRRT_kwDOT7YN2s6bDCYF / PRRC_kwDOT7YN2s7kJD6S（https://github.com/bootids/skilload/pull/5#discussion_r3827580562）
-
-Problem: `resolve_roots` 与 `database_exists` 后、pathname-based generation gate 之前，同账号进程可替换 `data/skilload` 整个目录。当前 main-file identity 检查会把 replacement 当成新的有效 generation，导致 list/get/search/export 或 doctor 从错误 root 返回数据或恢复证据，违反 read-only 不采纳外部 replacement 的不变量。
-
-Disposition: fixed
-
-Status: resolved
-
-Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 增加 `open_bound_data_directory`，在 root anchors 前后绑定 `data/skilload` directory identity；`pre_open_generation_gate` 从 held directory 相对打开并验证 `skilload.db`，所有 read-only list/search/get/export/default doctor 与 dry-run read 都传递该 held directory，transaction 前后继续重验。`0a1cad3897588623b77c69b0fe90279a9d770257` 已推送。
-
-Evidence: `read_only_open_rejects_a_replaced_data_directory`、既有 `export_uses_checked_generation_when_a_read_only_aba_is_restored` 与 `read_only_open_never_creates_sidecars_for_a_replaced_wal_generation` 通过；`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace`、`cargo build --workspace --locked` 通过，提交前 `git diff --check` clean。修复提交：`0a1cad3897588623b77c69b0fe90279a9d770257`。
-
-GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/5#discussion_r3827811416；thread resolved: true。
-
-### PRRT_kwDOT7YN2s6bDCYM - no-follow generation open 必须 nonblocking
-
-
-Source: PRRT_kwDOT7YN2s6bDCYM / PRRC_kwDOT7YN2s7kJD6b（https://github.com/bootids/skilload/pull/5#discussion_r3827580571）
-
-Problem: generation gate 只使用 `O_NOFOLLOW`；regular-file precheck 与实际 open 之间若同账号进程将 `skilload.db` 替换为 FIFO，read-only open 会等待 writer，而不是在 metadata type check 前返回 typed identity error，可能无限挂起数据库相关 CLI。
-
-Disposition: fixed
-
-Status: resolved
-
-Resolution: 已在同一 `pre_open_generation_gate` 的 directory-relative `openat` 加入 `O_NONBLOCK` 与已有 `O_NOFOLLOW`，保留 opened-descriptor regular-file validation；`0a1cad3897588623b77c69b0fe90279a9d770257` 已推送。
-
-Evidence: `generation_gate_rejects_fifo_without_waiting` 通过，证明 regular-file precheck 后的 FIFO replacement 立即返回 typed identity error；同轮 existing ABA/WAL regressions与 `cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace`、`cargo build --workspace --locked` 通过，提交前 `git diff --check` clean。修复提交：`0a1cad3897588623b77c69b0fe90279a9d770257`。
-
-GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/5#discussion_r3827813420；thread resolved: true。
 
 2026-08-21 最终完整会话 reconciliation：PR #5 有 8 个 top-level comments、36 个 submitted reviews 与 29 个 review threads。所有 inline thread 的 current `isResolved` 均为 true；所有 thread ID 均已在本 Log 记录。`IC_kwDOT7YN2s8AAAABP9F5SA` 是 `@codex` trigger，`PRR_kwDOT7YN2s8AAAABKRoboQ`、`PRR_kwDOT7YN2s8AAAABKVvOlQ` 与 `PRR_kwDOT7YN2s8AAAABKW3ROQ` 只是自动化 review wrapper，均无独立 requested change、defect、question 或 constraint；没有 pending 或 blocked source。
 
