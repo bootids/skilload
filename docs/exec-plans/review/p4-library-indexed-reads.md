@@ -87,7 +87,7 @@ DELETE-mode `-journal` 同样不能与 descriptor-bound open 分离：SQLite 官
 - [x] (2026-08-21) PR #5 第五轮 final-review 的 4 个 inline 问题已由 `ffeea3a7e850712db8b4b89c19dd6bfddf84136b` 修复并通过 focused/workspace validation；4 个 GitHub replies 已成功写入、对应 threads 均 resolved，最终会话 reconciliation 与本 Review Conversation Log 已同步。
 - [x] (2026-08-21) 第六轮 final-review 的 5 个 inline 问题已由 `b581acb63df42a882e0f02d5167a931fdf6e47f0` 修复并推送：malformed FTS schema derived-only repair、recoverable Library export diagnostics、mutation special integrity gate、human recovery assets 与 backup-pair export protection；`SKL-LIB-009` 已提升至 Revision 5。focused tests、core 153 tests、CLI 13+17 tests 与 workspace fmt/clippy/test/build 已通过；5 个 GitHub replies 已写入且 threads 均 resolved。最终完整 conversation reconciliation 现确认 7 个 top-level comments、33 个 reviews、27 个 threads 均已完整记录或不含独立问题。
 - [x] (2026-08-21) 第七轮 final-review 的两个 inline 问题已由 `0a1cad3897588623b77c69b0fe90279a9d770257` 修复并推送：read-only generation gate 现绑定已解析 `data/skilload` directory descriptor并用 relative nonblocking no-follow open 验证 main file；FIFO race 被拒绝而不等待 writer。新增两项 adapter regressions与既有 ABA/WAL regressions通过，workspace fmt/clippy/test/locked build 通过；两个 GitHub replies 已写入并 resolve，final conversation reconciliation 已记录。
-- [ ] (2026-08-21) 第八轮 final-review remediation：已实现 backup companion rejection、snapshot-bound live-sidecar recheck 与 corruption recovery inventory root binding。三个 focused adapter regressions、workspace `cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace`（13 + 17 + 158）与 `cargo build --workspace --locked` 均通过；待创建/推送预备提交、GitHub reply/resolve 与最终 reconciliation。
+- [x] (2026-08-21) 第八轮 final-review remediation 完成：backup companion rejection、snapshot-bound live-sidecar recheck 与 corruption recovery inventory root binding 已由 `8a0d84dc1e6de9959c0423f99273aa214c4f38b8` 推送；三个 GitHub replies 已写入，三个 inline threads 均 resolved。最终完整 reconciliation 读取为 9 个 top-level comments、40 个 reviews、32 个 threads；所有 actual inline source 都有本 Log 条目、reply 与 resolved state，无 pending 或 blocked source。finalized Review Conversation Log 由当前 documentation commit 提交。
 
 ## Surprises & Discoveries
 
@@ -263,6 +263,8 @@ DELETE-mode `-journal` 同样不能与 descriptor-bound open 分离：SQLite 官
 2026-08-21 第六轮 final-review remediation 已由 `b581acb63df42a882e0f02d5167a931fdf6e47f0` 推送：malformed `library_fts` schema 现保持 derived-only、corruption diagnostics 仅在可验证 portable projection 时列出 `library.export`、writes 先运行 special FTS integrity check、human error 显示 recovery assets，且 `SKL-LIB-009` Revision 5 保护已发布 migration backup pair。focused coverage、core 153 tests、CLI 13+17 tests 与 workspace fmt/clippy/test/build 均通过；五个 inline reply URLs 与 resolved state 已逐项记录。最终完整会话读取为 7 个 top-level comments、33 个 reviews、27 个 threads；所有 threads resolved、无未记录/未回答/blocked actual problem。新增 trigger `IC_kwDOT7YN2s8AAAABP8V_-g`、自动化 wrapper `PRR_kwDOT7YN2s8AAAABKWXnaw` 及五个空 `@bootids` reply containers（`PRR_kwDOT7YN2s8AAAABKWmKEw`、`PRR_kwDOT7YN2s8AAAABKWmM3Q`、`PRR_kwDOT7YN2s8AAAABKWmPgw`、`PRR_kwDOT7YN2s8AAAABKWmSXg`、`PRR_kwDOT7YN2s8AAAABKWmVMA`）均未提出独立问题。
 
 2026-08-21 第七轮 final-review remediation 已完成：`0a1cad3897588623b77c69b0fe90279a9d770257` 将 existing-database read gate 绑定到 root-validated `data/skilload` directory descriptor，并以 `O_NOFOLLOW|O_NONBLOCK` relative open 拒绝 FIFO；`read_only_open_rejects_a_replaced_data_directory` 与 `generation_gate_rejects_fifo_without_waiting` 覆盖两个 race，既有 ABA/WAL regressions 继续通过。两个 inline replies 已写入并 resolved。最终完整会话读取为 8 个 top-level comments、36 个 submitted reviews 与 29 个 review threads；所有 threads 均 resolved，且无未记录、未回答或 blocked actual problem。Plan 保持 `review`、PR 保持 ready。
+
+2026-08-21 第八轮 final-review remediation 已完成：`8a0d84dc1e6de9959c0423f99273aa214c4f38b8` 在 Product Baseline 内修复 backup pair companion、descriptor-read sidecar race 与 corruption error-path root mixing。`backup_inventory_rejects_pairs_with_sqlite_sidecars`、`read_snapshot_rejects_a_journal_created_after_generation_gate`、`corruption_details_reject_a_replaced_data_directory` 通过；workspace fmt、clippy、test（13 + 17 + 158）与 locked build 均通过。三条 GitHub 回复 URL 与 `thread resolved: true` 已逐项写入本 Log。最终完整会话读取为 9 个 top-level comments、40 个 review bodies 与 32 个 threads；全部 32 个 actual inline sources 已记录、回复并 resolved，top-level trigger/notification 与 automated wrapper 未提出独立问题。Plan 保持 `review`、PR 保持 ready。
 
 ## Review Conversation Log
 
@@ -730,13 +732,13 @@ Problem: `backup_pair_is_valid` 只验证 held `.db` 与 manifest；published st
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
-Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 的 `backup_pair_is_valid`、`standalone_backup_is_valid` 与 `has_database_sidecar` 通过 held backup-directory descriptor 在打开、SHARED snapshot validation 与返回 inventory 前拒绝全部 SQLite companion；新增 `backup_inventory_rejects_pairs_with_sqlite_sidecars` 覆盖每个 suffix。预备提交：第八轮 final-review remediation（待创建）。
+Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 的 `backup_pair_is_valid`、`standalone_backup_is_valid` 与 `has_database_sidecar` 通过 held backup-directory descriptor 在打开、SHARED snapshot validation 与返回 inventory 前拒绝全部 SQLite companion；新增 `backup_inventory_rejects_pairs_with_sqlite_sidecars` 覆盖每个 suffix。修复提交已推送：`8a0d84dc1e6de9959c0423f99273aa214c4f38b8`。
 
-Evidence: `SKL-OPS-004` Revision 1 要求 diagnostics 只列出 known backups；focused `backup_inventory_rejects_pairs_with_sqlite_sidecars` 通过。workspace `fmt`、`clippy`、`test`（13 + 17 + 158）与 locked build 均通过；待创建并推送预备提交。
+Evidence: `SKL-OPS-004` Revision 1 要求 diagnostics 只列出 known backups；focused `backup_inventory_rejects_pairs_with_sqlite_sidecars` 通过。workspace `fmt`、`clippy`、`test`（13 + 17 + 158）与 locked build 均通过；修复提交 `8a0d84dc1e6de9959c0423f99273aa214c4f38b8` 已推送。
 
-GitHub outcome: 待回复；thread currently unresolved。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/5#discussion_r3828481782；thread resolved: true。
 
 ### PRRT_kwDOT7YN2s6bD4zh - descriptor read 在 snapshot 内重验 sidecars
 
@@ -746,13 +748,13 @@ Problem: live generation gate 仅在 `/dev/fd/<fd>` SQLite connection 前盘点 
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
-Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 的 `begin_existing_read_snapshot`/`run_read_snapshot` 让每个 read-only path 在同一 transaction 用 `PRAGMA schema_version` 取得 SHARED snapshot，再经 held data-directory descriptor 重验 `-journal`、`-wal`、`-shm`，随后才读 schema/data；新增 `read_snapshot_rejects_a_journal_created_after_generation_gate` 覆盖 gate 后 sidecar 与 list/search/get/export/default doctor。预备提交：第八轮 final-review remediation（待创建）。
+Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 的 `begin_existing_read_snapshot`/`run_read_snapshot` 让每个 read-only path 在同一 transaction 用 `PRAGMA schema_version` 取得 SHARED snapshot，再经 held data-directory descriptor 重验 `-journal`、`-wal`、`-shm`，随后才读 schema/data；新增 `read_snapshot_rejects_a_journal_created_after_generation_gate` 覆盖 gate 后 sidecar 与 list/search/get/export/default doctor。修复提交已推送：`8a0d84dc1e6de9959c0423f99273aa214c4f38b8`。
 
-Evidence: `SKL-OPS-004` Revision 1 与 SQLite locking 官方文档规定的 SHARED/RESERVED/EXCLUSIVE 边界；focused `read_snapshot_rejects_a_journal_created_after_generation_gate` 通过。workspace `fmt`、`clippy`、`test`（13 + 17 + 158）与 locked build 均通过；待创建并推送预备提交。
+Evidence: `SKL-OPS-004` Revision 1 与 SQLite locking 官方文档规定的 SHARED/RESERVED/EXCLUSIVE 边界；focused `read_snapshot_rejects_a_journal_created_after_generation_gate` 通过。workspace `fmt`、`clippy`、`test`（13 + 17 + 158）与 locked build 均通过；修复提交 `8a0d84dc1e6de9959c0423f99273aa214c4f38b8` 已推送。
 
-GitHub outcome: 待回复；thread currently unresolved。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/5#discussion_r3828483212；thread resolved: true。
 
 ### PRRT_kwDOT7YN2s6bD4zj - corruption inventory 绑定诊断 root generation
 
@@ -762,13 +764,13 @@ Problem: `database_corrupt_with_known_backups` 和 generic enrichment 在 error 
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
-Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 以 `ValidatedDataDirectory::open_optional_child` 从 held/revalidated `data/skilload` descriptor 相对打开 `backups`；`database_corrupt_for_generation` 与 generation-bound enrichment 前后重验 directory/main identity，replacement 返回 `database_identity_drift`。新增 `corruption_details_reject_a_replaced_data_directory`。预备提交：第八轮 final-review remediation（待创建）。
+Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 以 `ValidatedDataDirectory::open_optional_child` 从 held/revalidated `data/skilload` descriptor 相对打开 `backups`；`database_corrupt_for_generation` 与 generation-bound enrichment 前后重验 directory/main identity，replacement 返回 `database_identity_drift`。新增 `corruption_details_reject_a_replaced_data_directory`。修复提交已推送：`8a0d84dc1e6de9959c0423f99273aa214c4f38b8`。
 
-Evidence: `SKL-OPS-004` observed generation 约束与 `ARCHITECTURE.md` database identity boundary；focused `corruption_details_reject_a_replaced_data_directory` 通过。workspace `fmt`、`clippy`、`test`（13 + 17 + 158）与 locked build 均通过；待创建并推送预备提交。
+Evidence: `SKL-OPS-004` observed generation 约束与 `ARCHITECTURE.md` database identity boundary；focused `corruption_details_reject_a_replaced_data_directory` 通过。workspace `fmt`、`clippy`、`test`（13 + 17 + 158）与 locked build 均通过；修复提交 `8a0d84dc1e6de9959c0423f99273aa214c4f38b8` 已推送。
 
-GitHub outcome: 待回复；thread currently unresolved。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/5#discussion_r3828484555；thread resolved: true。
 
 ## Context and Orientation
 
@@ -1155,3 +1157,5 @@ Evidence: `generation_gate_rejects_fifo_without_waiting` 通过，证明 regular
 GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/5#discussion_r3827813420；thread resolved: true。
 
 2026-08-21 最终完整会话 reconciliation：PR #5 有 8 个 top-level comments、36 个 submitted reviews 与 29 个 review threads。所有 inline thread 的 current `isResolved` 均为 true；所有 thread ID 均已在本 Log 记录。`IC_kwDOT7YN2s8AAAABP9F5SA` 是 `@codex` trigger，`PRR_kwDOT7YN2s8AAAABKRoboQ`、`PRR_kwDOT7YN2s8AAAABKVvOlQ` 与 `PRR_kwDOT7YN2s8AAAABKW3ROQ` 只是自动化 review wrapper，均无独立 requested change、defect、question 或 constraint；没有 pending 或 blocked source。
+
+2026-08-21：第八轮 final-review remediation 与 reconciliation。PRRT_kwDOT7YN2s6bD4zc、PRRT_kwDOT7YN2s6bD4zh 与 PRRT_kwDOT7YN2s6bD4zj 分别修复 standalone backup companion inventory、descriptor-bound live read 的 pre-open/snapshot 双重 census，以及 corruption diagnostics 的 held-root binding。运行时代码、产品 clarification、持久化设计、SQLite reference 与 preliminary Review Conversation Log 由 `8a0d84dc1e6de9959c0423f99273aa214c4f38b8` 推送；三个 reply URL 和 resolved state 已逐项记录。最终完整会话读取为 9 个 top-level comments、40 个 reviews 与 32 个 threads，所有 actual inline sources 都有 Log entry/reply/resolution，无 pending 或 blocked source。本次 revision 完成最终 Plan log evidence，Plan 保持 `review`、PR 保持 ready。
