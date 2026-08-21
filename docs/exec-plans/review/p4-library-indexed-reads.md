@@ -209,6 +209,8 @@ Read兼容性是显式边界。完整 v1 base rows可供 list/get/export只读�
 
 2026-08-21 第四轮 review remediation 已完成：PRRT_kwDOT7YN2s6bAVQR、PRRT_kwDOT7YN2s6bAVQT、PRRT_kwDOT7YN2s6bAVQV 与 PRRT_kwDOT7YN2s6bAVQX 由 `648fb40323f2d35ac1dba6331501d0e03f7ecc6a` 修复。四个 inline replies 均写入并 resolved；新的 coverage 验证 backup compatibility/size cap、migration stale diagnosis 和 orphaned FTS shadow rebuild，完整 validation 为 focused 70 tests、workspace fmt/clippy/test（11+17+146）和 locked build。
 
+最终 reconciliation 读取确认 PR #5 有 5 个 top-level comments、22 个 submitted reviews 与 18 个 review threads；所有 18 inline threads 都 resolved。五个 top-level source（`IC_kwDOT7YN2s8AAAABPzQF5Q`、`IC_kwDOT7YN2s8AAAABPz7oxg`、`IC_kwDOT7YN2s8AAAABPz_YTg`、`IC_kwDOT7YN2s8AAAABP1xCTg`、`IC_kwDOT7YN2s8AAAABP7Xvuw`）均是 bot trigger/notification，无独立问题；review body 的实际问题全部由本 Log 的 18 个 inline entries 覆盖。
+
 ## Review Conversation Log
 
 
@@ -519,6 +521,8 @@ Resolution: 已实现于 `crates/skilload-core/src/adapters/sqlite_library.rs`�
 Evidence: `orphaned_fts_shadow_tables_are_doctor_fixable` 删除 virtual-table schema row、保留 `library_fts_data`，断言 diagnosis `library_fts_invalid`、`doctor --fix` 返回 repair、search 恢复且 final diagnosis healthy。focused 70 tests 与 workspace fmt/clippy/test（11+17+146）/locked build 通过；`git diff --check` clean。
 
 GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/5#discussion_r3826603954；thread resolved: true。
+
+2026-08-21 最终完整会话读取：PR #5 当前有 5 个 top-level comments、22 个 submitted reviews 与 18 个 review threads，所有 threads 均为 resolved。新出现的空 `@bootids` `COMMENTED` review containers `PRR_kwDOT7YN2s8AAAABKV1igQ`（https://github.com/bootids/skilload/pull/5#pullrequestreview-4988953217）、`PRR_kwDOT7YN2s8AAAABKV1lHg`（https://github.com/bootids/skilload/pull/5#pullrequestreview-4988953886）、`PRR_kwDOT7YN2s8AAAABKV1n1Q`（https://github.com/bootids/skilload/pull/5#pullrequestreview-4988954581）和 `PRR_kwDOT7YN2s8AAAABKV1qmg`（https://github.com/bootids/skilload/pull/5#pullrequestreview-4988955290）仅为本轮 inline reply containers，body 为空且无独立问题；不需 GitHub reply 或 disposition。全部 18 个实际 inline source 均有本 Log entry、成功 reply 和 resolved state。
 
 ## Context and Orientation
 
@@ -858,3 +862,5 @@ Backup manifest是private versioned serde record，不进入API-v2或portable ex
 2026-08-21：final reconciliation 后的完整会话读取发现四个新增、空 body 的 `@bootids` submitted review containers；已在 Review Conversation Log 记录其 stable IDs/URLs 和 no-problem assessment。四个修复 thread 已回复并 resolved，未发现未记录、未回答或 blocked 的实际问题；该 source-complete note 已以 `bea597b1b3f5fc6307326520b4dcaf0d1eac4404` 推送并再次核验。
 
 2026-08-21：第四轮 final-review remediation。PRRT_kwDOT7YN2s6bAVQR、PRRT_kwDOT7YN2s6bAVQT、PRRT_kwDOT7YN2s6bAVQV 与 PRRT_kwDOT7YN2s6bAVQX 的 recovery/repair 缺陷均在 Product Baseline 内修复：兼容 standalone backup inventory、锁后 migration re-diagnosis、4 KiB bounded manifest read 与 orphaned FTS shadow separation。实现与回归测试、`docs/design-docs/application-and-persistence.md` 和 preliminary Plan evidence 由 `648fb40323f2d35ac1dba6331501d0e03f7ecc6a` 推送；四个 replies 的 URLs 和 resolved state 已逐项记录到 Review Conversation Log。focused 70 tests、workspace fmt/clippy/test（11+17+146）、locked build与`git diff --check`均通过；Plan 保持 `review`、PR 保持 ready。
+
+2026-08-21：第四轮最终 reconciliation 读取并记录五个 top-level sources、22 个 review bodies 与 18 个 threads；新增四个 empty review containers 不含实际问题。所有 18 个 inline problem source 都有 Plan entry、reply URL 和 `thread resolved: true`，PR head 与本地/remote 均为 ready `review` 状态；本次 Plan revision 专门补齐该 source-complete evidence。
