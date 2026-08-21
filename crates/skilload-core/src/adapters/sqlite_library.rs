@@ -30,8 +30,7 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::fs::{self, File, OpenOptions};
-use std::io::Read;
-use std::io::{self, Write};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::os::fd::AsRawFd;
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
@@ -57,6 +56,7 @@ repository, \
 tokenize = 'unicode61 remove_diacritics 0')";
 const FTS_ROW_COLUMNS: usize = 9;
 const BACKUP_MANIFEST_FORMAT_VERSION: u64 = 1;
+const MAX_BACKUP_MANIFEST_BYTES: usize = 4 * 1024;
 const BASE_INTEGRITY_TABLES: [&str; 5] = [
     "sqlite_master",
     "schema_info",
@@ -996,7 +996,7 @@ impl SqliteLibraryRepository {
         Ok(true)
     }
 
-    fn migrate_v1(&self, roots: &ResolvedRoots) -> Result<DoctorAction, AppError> {
+    fn migrate_v1(&self, roots: &ResolvedRoots) -> Result<Option<DoctorAction>, AppError> {
         let lock_path = roots.state.effective.join("locks/database.lock");
         let lock = acquire_restrictive_lock(roots, "database.lock", "database")?;
         let result = self.migrate_v1_locked(roots);
@@ -1012,7 +1012,7 @@ impl SqliteLibraryRepository {
         result
     }
 
-    fn migrate_v1_locked(&self, roots: &ResolvedRoots) -> Result<DoctorAction, AppError> {
+    fn migrate_v1_locked(&self, roots: &ResolvedRoots) -> Result<Option<DoctorAction>, AppError> {
         let roots = self.root_resolver.revalidate(roots)?;
         let database = Self::database_path(&roots);
         if !Self::database_exists(&database)? {
@@ -1035,6 +1035,9 @@ impl SqliteLibraryRepository {
                 .map_err(|error| database_error(&database, error))?;
             let generation = read_schema_generation(&transaction, &database)?;
             validate_base_database(&transaction, &database)?;
+            if generation == SchemaGeneration::V2 {
+                return Ok(None);
+            }
             if generation != SchemaGeneration::V1 {
                 return Err(AppError::invalid_state(
                     "library_database",
@@ -1130,12 +1133,12 @@ impl SqliteLibraryRepository {
             },
         )?;
         Self::revalidate_database_identity(&database, identity)?;
-        Ok(DoctorAction {
+        Ok(Some(DoctorAction {
             kind: DoctorActionKind::Migrate,
             target: NativePath::new(database),
             before: Some("schema_1".to_owned()),
             after: Some("schema_2".to_owned()),
-        })
+        }))
     }
 
     fn repair_fts(&self, roots: &ResolvedRoots) -> Result<Option<DoctorAction>, AppError> {
@@ -1498,29 +1501,85 @@ fn directory_entry_matches_file(
         .is_some_and(|(held, entry)| held.st_dev == entry.st_dev && held.st_ino == entry.st_ino)
 }
 
+/// Validate a held standalone v1 backup before it is shown in corruption
+/// diagnostics. Its header excludes WAL-mode opens, and the SQLite checks
+/// prove that the manifest's claimed source generation has intact base rows.
+fn standalone_backup_is_valid(database: &mut File, path: &Path) -> bool {
+    let mut header = [0u8; 100];
+    if database.seek(SeekFrom::Start(0)).is_err()
+        || database.read_exact(&mut header).is_err()
+        || !header.starts_with(SQLITE_HEADER_MAGIC)
+        || header[18] != 1
+        || header[19] != 1
+        || database.seek(SeekFrom::Start(0)).is_err()
+    {
+        return false;
+    }
+    let validation = (|| {
+        let held_path = PathBuf::from(format!("/dev/fd/{}", database.as_raw_fd()));
+        let Ok(mut connection) =
+            Connection::open_with_flags(&held_path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+        else {
+            return false;
+        };
+        if configure_connection(&connection, path).is_err() {
+            return false;
+        }
+        let Ok(transaction) = connection.transaction() else {
+            return false;
+        };
+        matches!(
+            read_schema_generation(&transaction, path),
+            Ok(SchemaGeneration::V1)
+        ) && validate_base_database(&transaction, path).is_ok()
+            && transaction.commit().is_ok()
+    })();
+    database.seek(SeekFrom::Start(0)).is_ok() && validation
+}
+
 /// A backup pair counts as validated only when both files are opened through
 /// the held directory with no-follow descriptors, remain linked under their
-/// advertised names, and their manifest and streamed digest agree.
+/// advertised names, have a compatible manifest, and contain the verified
+/// standalone v1 database it describes.
 fn backup_pair_is_valid(directory: &ValidatedDataDirectory, stem: &str) -> bool {
     let database_name = OsString::from(format!("{stem}.db"));
     let manifest_name = OsString::from(format!("{stem}.manifest.json"));
     let Some(mut manifest) = open_regular_file_at(directory, &manifest_name) else {
         return false;
     };
-    let mut record_bytes = Vec::new();
-    if manifest.read_to_end(&mut record_bytes).is_err() {
+    if manifest.metadata().map_or(true, |metadata| {
+        metadata.len() > MAX_BACKUP_MANIFEST_BYTES as u64
+    }) {
+        return false;
+    }
+    let mut record_bytes = Vec::with_capacity(MAX_BACKUP_MANIFEST_BYTES + 1);
+    if Read::by_ref(&mut manifest)
+        .take((MAX_BACKUP_MANIFEST_BYTES + 1) as u64)
+        .read_to_end(&mut record_bytes)
+        .is_err()
+        || record_bytes.len() > MAX_BACKUP_MANIFEST_BYTES
+    {
         return false;
     }
     let Ok(record) = serde_json::from_slice::<BackupManifestRecord>(&record_bytes) else {
         return false;
     };
-    let Some(database) = open_regular_file_at(directory, &database_name) else {
+    if !record.complete
+        || record.format_version != BACKUP_MANIFEST_FORMAT_VERSION
+        || record.source_schema != 1
+        || record.target_schema != SCHEMA_VERSION
+    {
+        return false;
+    }
+    let Some(mut database) = open_regular_file_at(directory, &database_name) else {
         return false;
     };
     let Ok(metadata) = database.metadata() else {
         return false;
     };
-    if !record.complete || record.database_bytes != metadata.len() {
+    if record.database_bytes != metadata.len()
+        || !standalone_backup_is_valid(&mut database, &directory.path.join(&database_name))
+    {
         return false;
     }
     let Ok(digest) = sha256_of_file(&database) else {
@@ -1677,10 +1736,9 @@ impl DatabaseMaintenance for SqliteLibraryRepository {
             .map_err(|error| self.enrich_database_corruption(error))?;
         let action = match classification {
             Diagnosis::Absent | Diagnosis::Healthy | Diagnosis::SchemaNewer => None,
-            Diagnosis::RequiresMigration => Some(
-                self.migrate_v1(&roots)
-                    .map_err(|error| self.enrich_database_corruption(error))?,
-            ),
+            Diagnosis::RequiresMigration => self
+                .migrate_v1(&roots)
+                .map_err(|error| self.enrich_database_corruption(error))?,
             Diagnosis::FtsInvalid => self
                 .repair_fts(&roots)
                 .map_err(|error| self.enrich_database_corruption(error))?,
@@ -1701,12 +1759,13 @@ impl DatabaseMaintenance for SqliteLibraryRepository {
                 })
             }
             None => {
-                let (classification, findings) = if matches!(classification, Diagnosis::FtsInvalid)
-                {
-                    // The drift was repaired by a concurrent `doctor --fix`
-                    // between this diagnosis and acquiring the lock; report
-                    // the state observed after the action instead of the
-                    // stale finding.
+                let (classification, findings) = if matches!(
+                    classification,
+                    Diagnosis::FtsInvalid | Diagnosis::RequiresMigration
+                ) {
+                    // A concurrent `doctor --fix` may have repaired the state
+                    // between this diagnosis and acquiring the durable lock.
+                    // Report the current state rather than the stale finding.
                     self.diagnosis_classification()
                         .map_err(|error| self.enrich_database_corruption(error))?
                 } else {
@@ -2679,10 +2738,10 @@ fn replace_fts_row(
     insert_fts_row(connection, entry, path)
 }
 
-/// True when the FTS5 shadow b-trees are physically damaged (or partially
-/// missing) so that no SQL statement — drop, delete, or vacuum — can clear
-/// them without traversing the malformed cells.
-fn fts_shadow_btree_is_damaged(connection: &Connection) -> bool {
+/// True when rebuilding must first detach the current FTS schema rows.
+/// This includes damaged or partial virtual-table schema and orphaned shadow
+/// tables whose virtual-table row has already disappeared.
+fn fts_schema_requires_detach(connection: &Connection) -> bool {
     let virtual_table_present = matches!(
         connection.query_row(
             "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'library_fts'",
@@ -2691,9 +2750,7 @@ fn fts_shadow_btree_is_damaged(connection: &Connection) -> bool {
         ),
         Ok(1)
     );
-    if !virtual_table_present {
-        return false;
-    }
+    let mut orphaned_shadow_present = false;
     for shadow in LIBRARY_FTS_SHADOW_TABLES {
         let present = matches!(
             connection.query_row(
@@ -2704,7 +2761,14 @@ fn fts_shadow_btree_is_damaged(connection: &Connection) -> bool {
             Ok(1)
         );
         if !present {
-            return true;
+            if virtual_table_present {
+                return true;
+            }
+            continue;
+        }
+        if !virtual_table_present {
+            orphaned_shadow_present = true;
+            continue;
         }
         let integrity =
             connection.query_row(&format!("PRAGMA integrity_check('{shadow}')"), [], |row| {
@@ -2714,7 +2778,7 @@ fn fts_shadow_btree_is_damaged(connection: &Connection) -> bool {
             return true;
         }
     }
-    false
+    orphaned_shadow_present
 }
 
 /// Physically damaged FTS5 shadow b-trees cannot be dropped or cleared
@@ -2747,7 +2811,7 @@ fn detach_damaged_fts_schema(connection: &Connection, path: &Path) -> Result<(),
 /// Drop and recreate the derived index from verified base rows. Base rows
 /// are never rewritten and `state_revision` never advances.
 fn rebuild_derived_index(connection: &Connection, path: &Path) -> Result<(), AppError> {
-    if fts_shadow_btree_is_damaged(connection) {
+    if fts_schema_requires_detach(connection) {
         detach_damaged_fts_schema(connection, path)?;
     } else {
         connection
@@ -5796,6 +5860,47 @@ mod tests {
     }
 
     #[test]
+    fn orphaned_fts_shadow_tables_are_doctor_fixable() {
+        let temporary = tempdir().unwrap();
+        let database = temporary.path().join("data/skilload/skilload.db");
+        let repository = imported_repository(&temporary, vec![searchable_entry("skills/review")]);
+        let connection = Connection::open(&database).unwrap();
+        connection
+            .execute_batch(
+                "PRAGMA writable_schema = ON;
+                 DELETE FROM sqlite_master WHERE name = 'library_fts';
+                 PRAGMA writable_schema = OFF;",
+            )
+            .unwrap();
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT count(*) FROM sqlite_master WHERE name = 'library_fts_data'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            1,
+            "fixture must retain orphaned FTS shadow tables"
+        );
+        let schema_version: i64 = connection
+            .query_row("PRAGMA schema_version", [], |row| row.get(0))
+            .unwrap();
+        connection
+            .pragma_update(None, "schema_version", schema_version + 1)
+            .unwrap();
+        drop(connection);
+
+        let diagnosis = repository.inspect().unwrap();
+        assert_eq!(diagnosis.findings[0].code, "library_fts_invalid");
+        let operation = repository.fix().unwrap();
+        assert_eq!(operation.outcome.as_str(), "changed");
+        assert_eq!(operation.data.actions[0].kind.as_str(), "repair");
+        assert_eq!(search(&repository, "review").len(), 1);
+        assert!(repository.inspect().unwrap().findings.is_empty());
+    }
+
+    #[test]
     fn tampered_or_symlinked_backups_are_never_validated() {
         // Digest drift at equal length must be rejected.
         let temporary = tempdir().unwrap();
@@ -5847,6 +5952,92 @@ mod tests {
         let target = backups_root.join("foreign-target.json");
         fs::rename(&manifest, &target).unwrap();
         symlink(&target, &manifest).unwrap();
+        let mut bytes = fs::read(&database).unwrap();
+        bytes[100..132].fill(0xa5);
+        fs::write(&database, &bytes).unwrap();
+        assert!(matches!(
+            repository.inspect().unwrap_err(),
+            AppError::DatabaseCorrupt { backups, .. } if backups.is_empty()
+        ));
+    }
+
+    #[test]
+    fn incompatible_or_nonstandalone_backups_are_never_advertised() {
+        let temporary = tempdir().unwrap();
+        let database = initialize_v1_database(&temporary);
+        let v1_copy = temporary.path().join("source-v1.db");
+        fs::copy(&database, &v1_copy).unwrap();
+        let repository = SqliteLibraryRepository::with_environment(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(XdgRootResolver),
+        );
+        repository.fix().unwrap();
+        let backups_root = temporary.path().join("data/skilload/backups");
+        fs::remove_dir_all(&backups_root).unwrap();
+        fs::create_dir(&backups_root).unwrap();
+
+        let newer_stem = "newer-schema";
+        seed_foreign_valid_pair(&backups_root, newer_stem, &v1_copy);
+        let newer_manifest = backups_root.join(format!("{newer_stem}.manifest.json"));
+        let mut newer_record: BackupManifestRecord =
+            serde_json::from_slice(&fs::read(&newer_manifest).unwrap()).unwrap();
+        newer_record.target_schema = SCHEMA_VERSION + 1;
+        fs::write(&newer_manifest, serde_json::to_vec(&newer_record).unwrap()).unwrap();
+
+        let foreign_stem = "foreign-sqlite";
+        seed_foreign_valid_pair(&backups_root, foreign_stem, &v1_copy);
+        let foreign_database = backups_root.join(format!("{foreign_stem}.db"));
+        fs::remove_file(&foreign_database).unwrap();
+        Connection::open(&foreign_database)
+            .unwrap()
+            .execute("CREATE TABLE foreign_data (value TEXT NOT NULL)", [])
+            .unwrap();
+        let foreign_manifest = backups_root.join(format!("{foreign_stem}.manifest.json"));
+        let mut foreign_record: BackupManifestRecord =
+            serde_json::from_slice(&fs::read(&foreign_manifest).unwrap()).unwrap();
+        foreign_record.database_bytes = fs::metadata(&foreign_database).unwrap().len();
+        foreign_record.sha256 = format!(
+            "sha256:{}",
+            sha256_of_file(&File::open(&foreign_database).unwrap()).unwrap()
+        );
+        fs::write(
+            &foreign_manifest,
+            serde_json::to_vec(&foreign_record).unwrap(),
+        )
+        .unwrap();
+
+        let mut bytes = fs::read(&database).unwrap();
+        bytes[100..132].fill(0xa5);
+        fs::write(&database, &bytes).unwrap();
+        assert!(matches!(
+            repository.inspect().unwrap_err(),
+            AppError::DatabaseCorrupt { backups, .. } if backups.is_empty()
+        ));
+    }
+
+    #[test]
+    fn oversized_backup_manifest_is_never_advertised() {
+        let temporary = tempdir().unwrap();
+        let database = initialize_v1_database(&temporary);
+        let repository = SqliteLibraryRepository::with_environment(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(XdgRootResolver),
+        );
+        repository.fix().unwrap();
+        let backups_root = temporary.path().join("data/skilload/backups");
+        let manifest = fs::read_dir(&backups_root)
+            .unwrap()
+            .flatten()
+            .find(|entry| {
+                entry
+                    .path()
+                    .extension()
+                    .is_some_and(|extension| extension == "json")
+            })
+            .unwrap()
+            .path();
+        fs::write(&manifest, vec![b' '; MAX_BACKUP_MANIFEST_BYTES + 1]).unwrap();
+
         let mut bytes = fs::read(&database).unwrap();
         bytes[100..132].fill(0xa5);
         fs::write(&database, &bytes).unwrap();
@@ -5916,6 +6107,38 @@ mod tests {
             "migration retains every validated pair when deletion cannot be identity-bound"
         );
         assert!(repository.inspect().unwrap().findings.is_empty());
+    }
+
+    #[test]
+    fn migration_rechecks_state_after_acquiring_lock() {
+        let temporary = tempdir().unwrap();
+        let database = initialize_v1_database(&temporary);
+        let repository = SqliteLibraryRepository::with_environment(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(XdgRootResolver),
+        );
+        let roots = repository.resolve_roots().unwrap();
+        let (stale_diagnosis, _) = repository.diagnosis_classification().unwrap();
+        assert!(matches!(stale_diagnosis, Diagnosis::RequiresMigration));
+
+        assert_eq!(
+            repository
+                .migrate_v1(&roots)
+                .unwrap()
+                .expect("first migration must change schema")
+                .kind
+                .as_str(),
+            "migrate"
+        );
+        assert!(
+            repository.migrate_v1(&roots).unwrap().is_none(),
+            "a v1 diagnosis that waits behind a completed migration is unchanged"
+        );
+        let (current_diagnosis, findings) = repository.diagnosis_classification().unwrap();
+        assert!(matches!(current_diagnosis, Diagnosis::Healthy));
+        assert!(findings.is_empty());
+        assert_eq!(repository.fix().unwrap().outcome.as_str(), "unchanged");
+        assert_eq!(read_schema_version(&database), 2);
     }
 
     #[test]
