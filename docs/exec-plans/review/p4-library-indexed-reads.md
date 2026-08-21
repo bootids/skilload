@@ -86,7 +86,7 @@ DELETE-mode `-journal` 同样不能与 descriptor-bound open 分离：SQLite 官
 - [x] (2026-08-21) 第四轮 remediation 已以 `648fb40323f2d35ac1dba6331501d0e03f7ecc6a` 推送：backup inventory 现验证 manifest/schema/standalone base、migration lock 后重新诊断、manifest 读取受 4 KiB 上限约束、orphaned FTS shadow tables 可重建；focused 70 tests 与 workspace fmt/clippy/test/build 已通过。四个 GitHub replies 已写入且 inline threads 均 resolved，最终 Review Conversation Log 记录如下。
 - [x] (2026-08-21) PR #5 第五轮 final-review 的 4 个 inline 问题已由 `ffeea3a7e850712db8b4b89c19dd6bfddf84136b` 修复并通过 focused/workspace validation；4 个 GitHub replies 已成功写入、对应 threads 均 resolved，最终会话 reconciliation 与本 Review Conversation Log 已同步。
 - [x] (2026-08-21) 第六轮 final-review 的 5 个 inline 问题已由 `b581acb63df42a882e0f02d5167a931fdf6e47f0` 修复并推送：malformed FTS schema derived-only repair、recoverable Library export diagnostics、mutation special integrity gate、human recovery assets 与 backup-pair export protection；`SKL-LIB-009` 已提升至 Revision 5。focused tests、core 153 tests、CLI 13+17 tests 与 workspace fmt/clippy/test/build 已通过；5 个 GitHub replies 已写入且 threads 均 resolved。最终完整 conversation reconciliation 现确认 7 个 top-level comments、33 个 reviews、27 个 threads 均已完整记录或不含独立问题。
-- [x] (2026-08-21) 第七轮 final-review 的两个 inline 问题已由 `0a1cad3897588623b77c69b0fe90279a9d770257` 修复并推送：read-only generation gate 现绑定已解析 `data/skilload` directory descriptor并用 relative nonblocking no-follow open 验证 main file；FIFO race 被拒绝而不等待 writer。新增两项 adapter regressions与既有 ABA/WAL regressions通过，workspace fmt/clippy/test/locked build 通过；待本轮 GitHub reply/resolve 与 final log reconciliation。
+- [x] (2026-08-21) 第七轮 final-review 的两个 inline 问题已由 `0a1cad3897588623b77c69b0fe90279a9d770257` 修复并推送：read-only generation gate 现绑定已解析 `data/skilload` directory descriptor并用 relative nonblocking no-follow open 验证 main file；FIFO race 被拒绝而不等待 writer。新增两项 adapter regressions与既有 ABA/WAL regressions通过，workspace fmt/clippy/test/locked build 通过；两个 GitHub replies 已写入并 resolve，final conversation reconciliation 已记录。
 
 ## Surprises & Discoveries
 
@@ -253,6 +253,8 @@ DELETE-mode `-journal` 同样不能与 descriptor-bound open 分离：SQLite 官
 2026-08-21 第五轮 review remediation 已完成：`ffeea3a7e850712db8b4b89c19dd6bfddf84136b` 修复 rollback journal generation gate、zero schema version classification、complete human `LibraryEntry` projection 与 derived validation operational-error propagation；`53aac2f625ca246fcaf00fc2865f636a60bab5e7` 推送预备 Plan evidence。四个 inline replies 均已写入并 resolved。final complete conversation read 观察到 6 个 top-level comments、27 个 submitted reviews、22 个 review threads；22 个实际 inline problem source 均有本 Plan entry、reply URL 与 resolved state，top-level trigger/notification、自动化 review wrapper 与 empty reply containers 不含独立问题。Plan 保持 `review`，PR 保持 ready。
 
 2026-08-21 第六轮 final-review remediation 已由 `b581acb63df42a882e0f02d5167a931fdf6e47f0` 推送：malformed `library_fts` schema 现保持 derived-only、corruption diagnostics 仅在可验证 portable projection 时列出 `library.export`、writes 先运行 special FTS integrity check、human error 显示 recovery assets，且 `SKL-LIB-009` Revision 5 保护已发布 migration backup pair。focused coverage、core 153 tests、CLI 13+17 tests 与 workspace fmt/clippy/test/build 均通过；五个 inline reply URLs 与 resolved state 已逐项记录。最终完整会话读取为 7 个 top-level comments、33 个 reviews、27 个 threads；所有 threads resolved、无未记录/未回答/blocked actual problem。新增 trigger `IC_kwDOT7YN2s8AAAABP8V_-g`、自动化 wrapper `PRR_kwDOT7YN2s8AAAABKWXnaw` 及五个空 `@bootids` reply containers（`PRR_kwDOT7YN2s8AAAABKWmKEw`、`PRR_kwDOT7YN2s8AAAABKWmM3Q`、`PRR_kwDOT7YN2s8AAAABKWmPgw`、`PRR_kwDOT7YN2s8AAAABKWmSXg`、`PRR_kwDOT7YN2s8AAAABKWmVMA`）均未提出独立问题。
+
+2026-08-21 第七轮 final-review remediation 已完成：`0a1cad3897588623b77c69b0fe90279a9d770257` 将 existing-database read gate 绑定到 root-validated `data/skilload` directory descriptor，并以 `O_NOFOLLOW|O_NONBLOCK` relative open 拒绝 FIFO；`read_only_open_rejects_a_replaced_data_directory` 与 `generation_gate_rejects_fifo_without_waiting` 覆盖两个 race，既有 ABA/WAL regressions 继续通过。两个 inline replies 已写入并 resolved。最终完整会话读取为 8 个 top-level comments、36 个 submitted reviews 与 29 个 review threads；所有 threads 均 resolved，且无未记录、未回答或 blocked actual problem。Plan 保持 `review`、PR 保持 ready。
 
 ## Review Conversation Log
 
@@ -1060,6 +1062,8 @@ Backup manifest是private versioned serde record，不进入API-v2或portable ex
 
 2026-08-21：第七轮 final-review remediation。PRRT_kwDOT7YN2s6bDCYF 与 PRRT_kwDOT7YN2s6bDCYM 都在 Product Baseline 内修复：existing-database read gate 现在将 root-validated data-directory descriptor、relative main-file entry、header/sidecar inspection 与 `/dev/fd` SQLite source 连续绑定，并以 nonblocking open 拒绝 FIFO race。实现、两项新 regression、架构/持久化设计、preliminary Review Conversation Log 由 `0a1cad3897588623b77c69b0fe90279a9d770257` 推送；focused 与 workspace validation 均通过。Plan 保持 `review`、PR 保持 ready；待本 workflow 回复并 resolve 两个 thread 后完成 reconciliation。
 
+2026-08-21：第七轮 final-review reconciliation。PRRT_kwDOT7YN2s6bDCYF 与 PRRT_kwDOT7YN2s6bDCYM 的修复 commit、workspace validation、reply URLs 与 resolved states 已逐项写入 Review Conversation Log。最终完整会话读取为 8 个 top-level comments、36 个 reviews 与 29 个 threads；新增 trigger `IC_kwDOT7YN2s8AAAABP9F5SA` 以及自动化 wrappers `PRR_kwDOT7YN2s8AAAABKRoboQ`、`PRR_kwDOT7YN2s8AAAABKVvOlQ`、`PRR_kwDOT7YN2s8AAAABKW3ROQ` 均未提出独立问题，所有 29 个 inline source 已记录、回复并 resolved。
+
 ### PRRT_kwDOT7YN2s6bDCYF - 将既有数据库读取绑定到已解析的数据目录
 
 
@@ -1069,13 +1073,13 @@ Problem: `resolve_roots` 与 `database_exists` 后、pathname-based generation g
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 增加 `open_bound_data_directory`，在 root anchors 前后绑定 `data/skilload` directory identity；`pre_open_generation_gate` 从 held directory 相对打开并验证 `skilload.db`，所有 read-only list/search/get/export/default doctor 与 dry-run read 都传递该 held directory，transaction 前后继续重验。`0a1cad3897588623b77c69b0fe90279a9d770257` 已推送。
 
 Evidence: `read_only_open_rejects_a_replaced_data_directory`、既有 `export_uses_checked_generation_when_a_read_only_aba_is_restored` 与 `read_only_open_never_creates_sidecars_for_a_replaced_wal_generation` 通过；`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace`、`cargo build --workspace --locked` 通过，提交前 `git diff --check` clean。修复提交：`0a1cad3897588623b77c69b0fe90279a9d770257`。
 
-GitHub outcome: 尚未回复；thread 保持 unresolved。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/5#discussion_r3827811416；thread resolved: true。
 
 ### PRRT_kwDOT7YN2s6bDCYM - no-follow generation open 必须 nonblocking
 
@@ -1086,10 +1090,12 @@ Problem: generation gate 只使用 `O_NOFOLLOW`；regular-file precheck 与实�
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: 已在同一 `pre_open_generation_gate` 的 directory-relative `openat` 加入 `O_NONBLOCK` 与已有 `O_NOFOLLOW`，保留 opened-descriptor regular-file validation；`0a1cad3897588623b77c69b0fe90279a9d770257` 已推送。
 
 Evidence: `generation_gate_rejects_fifo_without_waiting` 通过，证明 regular-file precheck 后的 FIFO replacement 立即返回 typed identity error；同轮 existing ABA/WAL regressions与 `cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace`、`cargo build --workspace --locked` 通过，提交前 `git diff --check` clean。修复提交：`0a1cad3897588623b77c69b0fe90279a9d770257`。
 
-GitHub outcome: 尚未回复；thread 保持 unresolved。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/5#discussion_r3827813420；thread resolved: true。
+
+2026-08-21 最终完整会话 reconciliation：PR #5 有 8 个 top-level comments、36 个 submitted reviews 与 29 个 review threads。所有 inline thread 的 current `isResolved` 均为 true；所有 thread ID 均已在本 Log 记录。`IC_kwDOT7YN2s8AAAABP9F5SA` 是 `@codex` trigger，`PRR_kwDOT7YN2s8AAAABKRoboQ`、`PRR_kwDOT7YN2s8AAAABKVvOlQ` 与 `PRR_kwDOT7YN2s8AAAABKW3ROQ` 只是自动化 review wrapper，均无独立 requested change、defect、question 或 constraint；没有 pending 或 blocked source。
