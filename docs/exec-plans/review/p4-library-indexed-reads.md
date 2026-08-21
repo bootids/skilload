@@ -27,7 +27,7 @@ depends_on: [PLAN-0004]
 
 本交付完整实现并验证以下原子行为。
 
-* `docs/product-specs/library.md` 中 `SKL-LIB-004` Revision 2：使用 embedded FTS5 索引 verified name、description、alias、tag display spelling、tag comparison key、category、note 和 repository。用户查询是纯文本词项 AND，不是 raw FTS5 expression；Unicode 15.1.0 `White_Space` 分词、NFC 原文/完整默认大小写折叠 alternatives、完整 FTS string quoting 与空查询错误都属于本 revision。该 Revision 2 由 2026-08-20 的产品选择确定，替代尚未实现且未规定 query language 的 Revision 1。
+* `docs/product-specs/library.md` 中 `SKL-LIB-004` Revision 2：使用 embedded FTS5 索引 verified name、description、alias、tag display spelling、tag comparison key、category、note 和 repository。用户查询是纯文本词项 AND，不是 raw FTS5 expression；Unicode 15.1.0 `White_Space` 分词、NFC 原文/完整默认大小写折叠 alternatives、完整 FTS string quoting 与空查询错误都属于本 revision。Base metadata保留原始 UTF-8；非 NFC free-text FTS projection保留原值并以 ASCII newline 追加 NFC representation，使 normalized query term可命中规范等价的值而不改变 list/get/export。该 Revision 2 由 2026-08-20 的产品选择确定，替代尚未实现且未规定 query language 的 Revision 1。
 * 同一文件中 `SKL-LIB-005` Revision 1：`library list`、`library search` 和 `library get` 只读本地 durable metadata且不联网、不刷新、不写 derived state。List/search 在分页前按 canonical source binary order 排序；仅二者接受 limit 1..=1,000（默认 100）与完整 `u64` offset（默认 0），并返回 requested page、returned count 和 pre-page total。
 * 同一文件中 `SKL-LIB-011` Revision 1：完成已有 import/export/metadata mutation 与本交付 list/indexed-search/get 的 10,000-entry 组合证据。代表性 release-build exact get、第一页 list 和 full-text search 各使用 10 秒本地验收预算；fixture 构造和 schema migration 不计入单次 query 计时，永久 CI tests 验证语义而不使用容易抖动的 wall-clock assertion。
 * `docs/product-specs/cache-and-operations.md` 中 `SKL-OPS-003` Revision 1：当前唯一 forward migration 在任何 live schema write 前生成 standalone、durable、带 manifest 的 online backup，再以一个 SQLite transaction 从 v1 升到 v2；失败留下 prior readable v1 加完整 backup，或完整 durable v2，绝不留下被报告为成功的部分 schema。Unknown newer schema 和 downgrade 保持 write refusal。
@@ -54,7 +54,7 @@ depends_on: [PLAN-0004]
 
 `docs/design-docs/application-and-persistence.md` 固定 `data/skilload.db`、`state/locks/database.lock`、pairwise-disjoint XDG roots、no-follow main-file identity gate、DELETE journal mode、一个 global durable-database mutation lock、transactional state mutation 与 descriptor-bound durability sync。当前 schema v1 有 `schema_info`、`state_revision`、`library_entries` 和 `library_tags`，没有 FTS。Schema v2只新增普通 content-bearing `library_fts` virtual table；不重建 base tables，也不引入 integer surrogate identity。每个 FTS row保存 unindexed canonical source与八类 indexed text columns；adapter在 import/metadata mutation 的同一 transaction中显式维护，migration/doctor从 base rows完整重建。
 
-FTS tokenizer固定为 bundled SQLite 的 `unicode61 remove_diacritics 0`。Domain 使用 `crates/skilload-core/src/domain/unicode_15_1.rs` 的固定 `is_white_space`、NFC与 `full_case_fold`生成逻辑词项；adapter只负责把每个 literal中的 `"`写成`""`并包围双引号，然后将同一词项的 raw/folded alternatives以括号内 OR组合成一个 group，不同词项的 group之间以显式 `AND` 连接。FTS5 的 implicit AND只存在于裸 quoted phrases之间；括号表达式与后续 phrase或另一个 group之间不存在隐式组合，`("Review" OR "review") "code"` 是 syntax error，因此组合必须显式。用户字符串永远不作为 FTS grammar拼接。Tag display strings与 comparison keys分别用 ASCII newline聚合到不同列；newline是 tokenizer separator，不改变 tag storage。
+FTS tokenizer固定为 bundled SQLite 的 `unicode61 remove_diacritics 0`。Domain 使用 `crates/skilload-core/src/domain/unicode_15_1.rs` 的固定 `is_white_space`、NFC与 `full_case_fold`生成逻辑词项；adapter只负责把每个 literal中的 `"`写成`""`并包围双引号，然后将同一词项的 raw/folded alternatives以括号内 OR组合成一个 group，不同词项的 group之间以显式 `AND` 连接。FTS5 的 implicit AND只存在于裸 quoted phrases之间；括号表达式与后续 phrase或另一个 group之间不存在隐式组合，`("Review" OR "review") "code"` 是 syntax error，因此组合必须显式。用户字符串永远不作为 FTS grammar拼接。每个非 NFC 的 free-text FTS column保留原文并以 ASCII newline 追加 NFC projection；base row不变，newline是 tokenizer separator。Tag display strings与 comparison keys分别用 ASCII newline聚合到不同列，不改变 tag storage。
 
 `docs/references/sqlite-fts5-library-search.md` 记录 FTS5 string quoting、bare-phrase implicit AND的语法边界与显式 `AND` 组合、`unicode61`、content-bearing index、special `integrity-check`/`rebuild` 与 rusqlite backup API事实。`docs/references/sqlite-backup-and-corruption-recovery.md` 规定 live WAL generation不能靠复制 main file备份；migration必须用 SQLite online backup得到 standalone snapshot，并记录 read-only SQLite 打开 WAL-mode generation会创建 `-shm`/`-wal` sidecar、`immutable=1` 会忽略 WAL 内容的实验事实。为 `rusqlite 0.40.2` 启用 `backup` feature，并加入 `sha2 0.11.0`（`default-features = false`）流式计算 SHA-256；不得引入 async runtime、ORM、外部 search service或通用 migration framework。
 Review remediation 固定以下实现约束：`writable_schema=ON` 只在 descriptor-bound connection 上临时容忍 malformed derived schema，以验证 base/portable projection；任何 mutation 继续在 write 前执行 special `integrity-check` 并只将 confirmed derived drift 映射为 `library_fts_invalid`；repair 删除 FTS/shadow schema rows 后以 `RESET` reload schema；recovery export 不依赖 `schema_info`/`state_revision`，但必须验证 entries/tags schema、integrity、foreign keys 和 portable domain document。Published backup-pair target protection 属于 portable adapter，不把 SQLite backup validation helper 反向暴露给 CLI。
@@ -91,6 +91,7 @@ DELETE-mode `-journal` 同样不能与 descriptor-bound open 分离：SQLite 官
 - [x] (2026-08-21) 第七轮 final-review 的两个 inline 问题已由 `0a1cad3897588623b77c69b0fe90279a9d770257` 修复并推送：read-only generation gate 现绑定已解析 `data/skilload` directory descriptor并用 relative nonblocking no-follow open 验证 main file；FIFO race 被拒绝而不等待 writer。新增两项 adapter regressions与既有 ABA/WAL regressions通过，workspace fmt/clippy/test/locked build 通过；两个 GitHub replies 已写入并 resolve，final conversation reconciliation 已记录。
 - [x] (2026-08-21) 第八轮 final-review remediation 完成：backup companion rejection、snapshot-bound live-sidecar recheck 与 corruption recovery inventory root binding 已由 `8a0d84dc1e6de9959c0423f99273aa214c4f38b8` 推送；三个 GitHub replies 已写入，三个 inline threads 均 resolved。最终完整 reconciliation 读取为 9 个 top-level comments、40 个 reviews、32 个 threads；所有 actual inline source 都有本 Log 条目、reply 与 resolved state，无 pending 或 blocked source。finalized Review Conversation Log 由当前 documentation commit 提交。
 - [x] (2026-08-21) 第九轮 final-review 的三个 inline 问题已由 `a140aad0f9fa85c0a9cb74f433793e4644bd2ce4` 修复并推送：三个新 regression 已由 red→green 证明，workspace fmt/clippy/test/build 全部通过；三个 GitHub reply 已写入、对应 thread 均 resolved，最终 complete conversation reconciliation 无未记录或 blocked actual problem。
+- [ ] (2026-08-21) 第十轮 final-review 的两个 inline defect 已分类并在 worktree 处置：共享 FTS projection 为 non-NFC free-text 保留 raw 加 NFC alternative，read snapshot 在 callback 返回 error 前重验 generation；两项新增 adapter regression 均 red→green。待运行 workspace gates、提交/推送 preliminary evidence、回复并 resolve threads，再完成最终 reconciliation。
 
 ## Surprises & Discoveries
 
@@ -141,6 +142,9 @@ DELETE-mode `-journal` 同样不能与 descriptor-bound open 分离：SQLite 官
 - Observation: `SchemaGeneration::Newer` 不能先应用 current v1/v2 base invariants。
   Evidence: `newer_schema_precedes_current_base_validation` 将 `library_entries` 重命名并把 version 设为 9；pre-fix list/search/get/mutation/import 不是 `schema_newer`，generation-first validation 后全部返回 version 9 的 typed refusal，doctor 报 `library_schema_newer`。
 
+
+- Observation: FTS5 `unicode61 remove_diacritics 0` 不会 canonical-normalize arbitrary free-text；query 已 NFC 而 index仅含 decomposed bytes 时，literal MATCH 不命中。读取 snapshot 的 callback error 也必须先完成 generation identity revalidation，否则旧 inode 的 `not_found`/migration/schema error会被错误地归属为 replacement pathname。
+  Evidence: `search_matches_nfc_forms_of_normalizable_free_text_fields` pre-fix 对 composed `café` 查询返回空集而非四个含 decomposed description/alias/category/note 的 entries；`failed_read_revalidates_database_generation_before_returning_error` pre-fix 返回 callback 的 `not_found`，两者修复后均通过。
 
 ## Decision Log
 
@@ -261,6 +265,14 @@ DELETE-mode `-journal` 同样不能与 descriptor-bound open 分离：SQLite 官
   Rationale: PRRT_kwDOT7YN2s6bF0oA 指出未来 schema 可合法替换当前 base table；若旧 binary先验证已知 table shape，会把兼容性拒绝误报 corruption。generation-first helper保持 safe export 的独立 projection，同时让 read/mutation/doctor/migration/repair paths一致拒绝 unknown newer write。
   Date/Author: 2026-08-21 / Codex
 
+
+- Decision: 在 shared FTS row projection 中，仅当 indexed free-text value不是 NFC 时保留原值并以 ASCII newline追加 NFC representation；tag的 display/key 继续使用既有 normalized aggregation，base metadata不作改写。
+  Rationale: `SKL-LIB-004` Revision 2 已规定 query term的 NFC alternative；raw plus NFC 使该 term命中所有可接受的非 NFC free-text，同时不改变 list/get/export 的原始值、FTS row identity或第二 owner。`unicode61 remove_diacritics 0` 不提供 canonical normalization。
+  Date/Author: 2026-08-21 / Codex
+
+- Decision: `run_read_snapshot` 保存 callback `Result`，在返回其成功或错误之前重验 held data-directory/main-file generation；successful path保留既有 commit 前后 revalidation。
+  Rationale: descriptor-bound snapshot只有在结果归属的 pathname仍指向同一 generation时才可安全返回。若 callback 已得到 `not_found`、`migration_required` 或 `schema_newer` 后 pathname被替换，identity drift必须优先，不能向用户归因旧 inode的结果。
+  Date/Author: 2026-08-21 / Codex
 
 ## Outcomes & Retrospective
 
@@ -837,12 +849,44 @@ Evidence: `SKL-OPS-004` Revision 1 只允许 base 完整时 repair derived FTS�
 
 GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/5#discussion_r3828894509；thread resolved: true。
 
+### PRRT_kwDOT7YN2s6bKUKq - free-text FTS 需要 NFC projection
+
+Source: PRRT_kwDOT7YN2s6bKUKq / PRRC_kwDOT7YN2s7kT4Hx（https://github.com/bootids/skilload/pull/5#discussion_r3830415857）
+
+Problem: `LibrarySearchQuery` 已把每个词项规范为 NFC，但 `fts_row_values` 只投影原始 name、description、alias、category、note 与 repository。decomposed free-text（例如 `cafe\u{301}`）在 `unicode61 remove_diacritics 0` 下不会匹配 NFC query `café`，与 `SKL-LIB-004` Revision 2 的 NFC query-term 语义不一致。
+
+Disposition: fixed
+
+Status: open
+
+Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 增加共享 `fts_free_text_projection`：非 NFC value保留原始 indexed text并以 newline-separated NFC projection补充搜索；helper由 import、metadata mutation、migration、doctor rebuild 与 derived validation复用。它应用到 name、description、alias、category、note 与 repository；当前 source grammar使 name/repository display只能是 ASCII，regression因此覆盖实际可接受的 description/alias/category/note。已同步澄清 `docs/product-specs/library.md`、`docs/design-docs/application-and-persistence.md` 和本 Plan。
+
+Evidence: `search_matches_nfc_forms_of_normalizable_free_text_fields` pre-fix 对 composed `café` 返回空集，修复后对 composed/decomposed query均返回四个 preserved-raw entries；focused tests、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace`（13 + 17 + 162）与 `cargo build --workspace --locked` 均通过。待以 `fix(library): preserve indexed read invariants` 提交并推送。
+
+GitHub outcome: pending reply; thread resolved: false.
+
+### PRRT_kwDOT7YN2s6bKUK8 - read error 返回前必须重验 generation
+
+Source: PRRT_kwDOT7YN2s6bKUK8 / PRRC_kwDOT7YN2s7kT4IN（https://github.com/bootids/skilload/pull/5#discussion_r3830415885）
+
+Problem: `run_read_snapshot` 在 callback 返回 `not_found`、`migration_required` 或 `schema_newer` 等应用错误时通过 `?` 提前退出，未执行已存在的 generation revalidation。snapshot 建立后若 pathname 被替换，命令会把旧 inode 的错误归因给 replacement path，而不是返回 `database_identity_drift`。
+
+Disposition: fixed
+
+Status: open
+
+Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 的 `run_read_snapshot` 保留 snapshot callback 的 `Result`，先执行 generation revalidation，再传播原结果；successful read 的 commit 前后 revalidation 保持不变。新增 callback-error 与 same-account replacement race regression，断言 identity drift 优先于原 `not_found`。
+
+Evidence: `failed_read_revalidates_database_generation_before_returning_error` pre-fix 返回 callback 的 `not_found`，修复后返回 `library_database/database_identity_drift`；focused tests、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace`（13 + 17 + 162）与 `cargo build --workspace --locked` 均通过。待以 `fix(library): preserve indexed read invariants` 提交并推送。
+
+GitHub outcome: pending reply; thread resolved: false.
+
 ## Context and Orientation
 
 
 仓库是两个 crate的 Rust workspace。`crates/skilload-core`保存 domain/application/ports/adapters；`crates/skilload-cli`保存 clap schema、dispatch与 JSON/human renderers。`skilload-core/src/domain/library.rs`已有 portable document、metadata mutations与 `LibraryEntry`；`domain/unicode_15_1.rs`暴露 pinned `normalize_tag`、`full_case_fold`和 `is_white_space`。`ports/library.rs`目前只有 transfer/import/export/mutate contracts，`application/library.rs`只有相应 operations。`adapters/sqlite_library.rs`是唯一 durable Library repository，负责 XDG resolution、database identity、schema validation、import/mutation transactions、locks与sync。`skilload-cli/src/args.rs`当前未注册 list/search/get/doctor，`main.rs`只 dispatch现有 config和 Library transfer/metadata leaves。
 
-持久 Library位于有效 `XDG_DATA_HOME/skilload/skilload.db`；durable database process lock位于有效 `XDG_STATE_HOME/skilload/locks/database.lock`。Effective config/data/state/cache application roots必须两两不重叠。Absent read只能建立内存empty view，不能创建任何 root。SQLite main file必须是no-follow regular file；read-only open从 held data-directory descriptor相对读取 generation header并作第一次 companion census，再以同一 descriptor 的 `/dev/fd/<fd>` 路径打开 SQLite。connection在同一 transaction用 `PRAGMA schema_version` 建立 SHARED snapshot并作第二次 census，只有两次均无 `-journal`、`-wal`、`-shm` 后才读取 Library schema/data。directory/main-file replacement 返回 `database_identity_drift`，不让 SQLite 修改 replacement generation。
+持久 Library位于有效 `XDG_DATA_HOME/skilload/skilload.db`；durable database process lock位于有效 `XDG_STATE_HOME/skilload/locks/database.lock`。Effective config/data/state/cache application roots必须两两不重叠。Absent read只能建立内存empty view，不能创建任何 root。SQLite main file必须是no-follow regular file；read-only open从 held data-directory descriptor相对读取 generation header并作第一次 companion census，再以同一 descriptor 的 `/dev/fd/<fd>` 路径打开 SQLite。connection在同一 transaction用 `PRAGMA schema_version` 建立 SHARED snapshot并作第二次 census，只有两次均无 `-journal`、`-wal`、`-shm` 后才读取 Library schema/data。无论 snapshot callback返回 success 还是 application error，都必须先重验 directory/main-file generation；directory/main-file replacement 返回 `database_identity_drift`，不让 SQLite 修改 replacement generation或把旧 inode结果归属到 replacement。
 若任一 census 观察到同名 `-journal`、`-wal` 或 `-shm`，adapter以 `database_corrupt`（含可验证 backups 与 `database-corruption-v1`）返回并保留每个文件；snapshot 后启动的 writer不能将未提交 main image混入当前 read result。backup inventory从同一 held `data/skilload` generation相对打开 `backups`，并拒绝每个有 SQLite companion 的 pair。
 所有 absent return 在接受 empty/not_found 前后也重验已解析 XDG roots；unknown newer generation 在解释已知 base schema 前返回 typed `schema_newer`，但 portable export 仅在其独立 entries/tags projection仍可证明时保留恢复出口。FTS schema row 直删后的 page 回收必须先 commit、无 transaction 执行 `VACUUM`，再以新 transaction重建，以免 unreachable pages躲过 derived-only validation。
 
@@ -863,7 +907,7 @@ Schema v1固定 `schema_info(version=1)`、`state_revision`、以 `canonical_sou
         tokenize = 'unicode61 remove_diacritics 0'
     );
 
-Null optional metadata投影为空字符串。Tags按 comparison key稳定排序，display和comparison分别用 `\n`连接。每个 canonical source必须在 FTS table恰有一行；doctor比较这一完整集合与 base rows，不能只比较 row count。
+Null optional metadata投影为空字符串。任何非 NFC 的 free-text FTS value保留原文并以 `\n`追加 NFC representation；base metadata仍保持原始 UTF-8。Tags按 comparison key稳定排序，display和comparison分别用 `\n`连接。每个 canonical source必须在 FTS table恰有一行；doctor比较这一完整集合与 base rows，不能只比较 row count。
 
 “纯文本词项 AND”指：保留原始 query供 API回显；按 pinned `is_white_space`切分；对每个词项产生 NFC raw与 `full_case_fold(raw).nfc()`，去除同一词项的重复alternative；adapter将 literal `a"b`编码为 FTS string `"a""b"`；同词项 alternatives用括号内 OR组成一个 group，不同词项的 group之间以显式 `AND` 连接（FTS5 的 implicit AND只是裸 quoted phrases间的特例；`("Review" OR "review") "code"` 是 syntax error，`("Review" OR "review") AND "code"` 才有效）。没有词项时不调用 SQLite。Search结果不按 relevance，而在 count/page transaction中按 `canonical_source COLLATE BINARY`排序。
 
@@ -903,11 +947,11 @@ Null optional metadata投影为空字符串。Tags按 comparison key稳定排序
 
 重构 `adapters/sqlite_library.rs` 的schema validation为base与derived两层。Base validation读取schema version、验证v1 tables/foreign keys/domain rows并区分v1、v2、newer；v2 derived validation确认virtual table和columns/tokenizer符合固定SQL、FTS rows与base deterministic projection一一相等。`PRAGMA integrity_check`、`foreign_key_check`和domain deserialization继续是base corruption gate，不能把missing/corrupt FTS误报成可丢弃的base rows。
 
-把first import初始化切换为schema v2。新增一个接受transaction和完整 `PortableLibraryEntry`/stored entry的共享helper，按tag comparison order生成一行FTS projection。`apply_additions`在同一transaction插入base/tags/FTS；`apply_metadata_change`在同一transaction更新base/tags后替换目标FTS row。Changed mutation仍只推进一次 `state_revision`；unchanged不触发FTS DELETE/INSERT、transaction commit或sync。Existing v1 import/mutation在取得现有identity并验证base后返回 `MigrationRequired { found:1, supported:2 }`，不自动upgrade。
+把first import初始化切换为schema v2。新增一个接受transaction和完整 `PortableLibraryEntry`/stored entry的共享helper，按tag comparison order生成一行FTS projection；non-NFC free-text value保留原文并以 newline-separated NFC representation补充搜索，而不改变base row。`apply_additions`在同一transaction插入base/tags/FTS；`apply_metadata_change`在同一transaction更新base/tags后替换目标FTS row。Changed mutation仍只推进一次 `state_revision`；unchanged不触发FTS DELETE/INSERT、transaction commit或sync。Existing v1 import/mutation在取得现有identity并验证base后返回 `MigrationRequired { found:1, supported:2 }`，不自动upgrade。
 
 实现list/search/get read transactions。所有对已存在 database的 read-only opens先经 Design Inputs固化的 pre-open generation gate：WAL-mode header或 `-wal`/`-shm` sibling在 SQLite 前即返回 `database_corrupt`，不创建任何 sidecar；通过 gate 的 held descriptor 必须存活至 SQLite 以 `/dev/fd/<fd>` 打开同一 inode，原 pathname 若在窗口中被替换则 identity revalidation返回 `database_identity_drift`且 replacement 不会产生 sidecar。Absent list/search返回empty page且不创建roots；absent get返回`not_found`。V1 list/get从base rows工作；v1 search返回migration_required。V2 list/search先在同一transaction计算total，再在`offset >= total`时不做SQLite signed offset conversion并返回empty；否则用CTE选择canonical page并一次LEFT JOIN tags，按source/tag comparison order流式组装entries，避免每entry query。Search CTE只接收adapter从domain terms编码的bound MATCH string；用户raw query不得拼入SQL/FTS grammar。完成 base 与 FTS content validation 后，count、paged MATCH preparation或 row iteration的 `SQLITE_CORRUPT`/`SQLITE_NOTADB` 返回`library_fts_invalid`，让用户走doctor repair而不误报base corruption。Get用exact selector和同样single-query tag assembly，missing返回`not_found`。
 
-该里程碑的repository tests必须证明每个字段可搜索、raw/folded tag等价、operators保持literal、same-name sources共存、source-order先于pagination、adjacent pages不重叠、offset==total/`u64::MAX`为空、limit边界在SQL前失败、read transaction在concurrent writer下提供同一snapshot。验证v1 list/get/export继续工作而search/writes要求migration；v2 import/mutations每次保持FTS一致；corrupt/missing/extra FTS rows不会反向改base。
+该里程碑的repository tests必须证明每个字段可搜索、raw/folded tag等价、description/alias/category/note 的 composed/decomposed NFC query 等价且 read/export保留原始 UTF-8、operators保持literal、same-name sources共存、source-order先于pagination、adjacent pages不重叠、offset==total/`u64::MAX`为空、limit边界在SQL前失败、read transaction在concurrent writer下提供同一snapshot。验证v1 list/get/export继续工作而search/writes要求migration；v2 import/mutations每次保持FTS一致；corrupt/missing/extra FTS rows不会反向改base。
 
 ### Milestone 3：实现 backup、v1→v2 migration 与 doctor repair
 
@@ -1014,7 +1058,7 @@ Migration smoke使用core test helper生成真实schema v1 fixture及记录的st
 
 Domain acceptance要求query normalization不依赖运行时Unicode版本：Unicode 15.1 whitespace exact boundaries、NFC composed/decomposed、C/F full fold、Turkish locale independence、quotes/operators均有golden expressions或logical terms。Empty/all-whitespace在repository invocation计数仍为零时返回`validation_failed/library_search_query_empty`。
 
-Repository acceptance使用真实bundled SQLite。每个name/description/alias/tag display/tag key/category/note/repository字段都有独立match fixture；`code review`可跨字段且不相邻；canonical source order在page之前；total/returned/offset/limit准确；offset `u64::MAX`不向SQLite做overflow conversion。Reads不持有mutation lock、不写state revision、不修改FTS或timestamps。V2 import/mutations在同一transaction保持base/index一致，failure rollback两者；unchanged不做derived rewrite。
+Repository acceptance使用真实bundled SQLite。每个name/description/alias/tag display/tag key/category/note/repository字段都有独立match fixture；non-NFC description/alias/category/note 的 composed/decomposed query必须命中同一 entries且 list/get/export保留原始 UTF-8；`code review`可跨字段且不相邻；canonical source order在page之前；total/returned/offset/limit准确；offset `u64::MAX`不向SQLite做overflow conversion。Reads不持有mutation lock、不写state revision、不修改FTS或timestamps。V2 import/mutations在同一transaction保持base/index一致，failure rollback两者；unchanged不做derived rewrite。
 
 Migration acceptance从P2/P3产生的真实v1 schema开始。Default doctor完全filesystem-inert，且该不变性覆盖 corrupt/WAL fixtures：base corruption与 WAL-mode/sidecar generation都返回typed `database_corrupt` error（details完整）而不创建`-shm`/`-wal`、不改动任何 byte/timestamp；fix只在durable validated backup pair发布后开始live transaction；backup digest、manifest、SQLite integrity/foreign keys和source identity均可重验。每个failpoint留下old readable v1加完整/无backup，或完整v2且命令明确报告post-commit uncertainty；从不报告partial success。Schema v2的base rows、portable export和state revision与v1相同。Newer schema无write。FTS-only repair保持base database semantic records byte-equivalent或query-equivalent、state revision不变，并使content comparison与special integrity-check通过。
 

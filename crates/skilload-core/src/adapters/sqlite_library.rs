@@ -37,6 +37,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tempfile::{Builder, NamedTempFile};
+use unicode_normalization::{UnicodeNormalization, is_nfc};
 
 const SCHEMA_VERSION: u64 = 2;
 const API_V1_UINT_MAX: i64 = 9_007_199_254_740_991;
@@ -332,8 +333,9 @@ impl SqliteLibraryRepository {
     ) -> Result<T, AppError> {
         let transaction =
             self.begin_existing_read_snapshot(connection, directory, path, identity)?;
-        let value = operation(&transaction)?;
+        let result = operation(&transaction);
         Self::revalidate_database_generation(directory, path, identity)?;
+        let value = result?;
         transaction
             .commit()
             .map_err(|error| database_error(path, error))?;
@@ -3068,6 +3070,19 @@ fn load_tags(
     Ok(tags)
 }
 
+/// Preserve original free-text bytes in the derived index while adding the
+/// NFC form that `LibrarySearchQuery` uses for literal query alternatives.
+fn fts_free_text_projection(value: &str) -> String {
+    if is_nfc(value) {
+        return value.to_owned();
+    }
+
+    let mut projection = value.to_owned();
+    projection.push('\n');
+    projection.extend(value.nfc());
+    projection
+}
+
 /// Deterministic full-text projection shared by import, metadata mutation,
 /// migration, and doctor rebuild: one row per canonical source with tags
 /// aggregated in comparison-key order using ASCII newline separators.
@@ -3090,14 +3105,26 @@ fn fts_row_values(entry: &PortableLibraryEntry) -> Result<[String; FTS_ROW_COLUM
         .join("\n");
     Ok([
         entry.skill.source.canonical.clone(),
-        entry.skill.name.clone(),
-        entry.skill.description.clone(),
-        entry.alias.clone().unwrap_or_default(),
+        fts_free_text_projection(&entry.skill.name),
+        fts_free_text_projection(&entry.skill.description),
+        entry
+            .alias
+            .as_deref()
+            .map(fts_free_text_projection)
+            .unwrap_or_default(),
         tags_display,
         tags_comparison,
-        entry.category.clone().unwrap_or_default(),
-        entry.note.clone().unwrap_or_default(),
-        entry.skill.source.repository_display.clone(),
+        entry
+            .category
+            .as_deref()
+            .map(fts_free_text_projection)
+            .unwrap_or_default(),
+        entry
+            .note
+            .as_deref()
+            .map(fts_free_text_projection)
+            .unwrap_or_default(),
+        fts_free_text_projection(&entry.skill.source.repository_display),
     ])
 }
 
@@ -5968,6 +5995,33 @@ mod tests {
     }
 
     #[test]
+    fn search_matches_nfc_forms_of_normalizable_free_text_fields() {
+        let temporary = tempdir().unwrap();
+        let decomposed = "cafe\u{301}";
+
+        let mut description = entry("skills/nfc-description", None);
+        description.skill.description = decomposed.to_owned();
+        let mut alias = entry("skills/nfc-alias", None);
+        alias.alias = Some(decomposed.to_owned());
+        let mut category = entry("skills/nfc-category", None);
+        category.category = Some(decomposed.to_owned());
+        let mut note = entry("skills/nfc-note", None);
+        note.note = Some(decomposed.to_owned());
+
+        let entries = vec![description, alias, category, note];
+        let mut expected = entries
+            .iter()
+            .map(|entry| entry.skill.source.canonical.clone())
+            .collect::<Vec<_>>();
+        expected.sort();
+        let repository = imported_repository(&temporary, entries);
+
+        for query in ["caf\u{e9}", decomposed] {
+            assert_eq!(search(&repository, query), expected, "query {query:?}");
+        }
+    }
+
+    #[test]
     fn same_name_sources_coexist_and_search_orders_by_source() {
         let temporary = tempdir().unwrap();
         let one = entry("skills/one/review", None);
@@ -6411,6 +6465,39 @@ mod tests {
             assert_eq!(error.code(), "database_corrupt", "{error:?}");
         }
         assert_eq!(fs::read(&journal).unwrap(), journal_bytes);
+    }
+
+    #[test]
+    fn failed_read_revalidates_database_generation_before_returning_error() {
+        let temporary = tempdir().unwrap();
+        let repository = imported_repository(&temporary, vec![entry("skills/review", None)]);
+        let roots = repository.resolve_roots().unwrap();
+        let database = SqliteLibraryRepository::database_path(&roots);
+        let directory = repository.open_bound_data_directory(&roots).unwrap();
+        let (mut connection, identity) = repository
+            .open_existing_database(&directory, &database, OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .unwrap();
+        let displaced = temporary.path().join("displaced-skilload.db");
+
+        let error = repository
+            .run_read_snapshot(
+                &mut connection,
+                &directory,
+                &database,
+                identity,
+                |_transaction| {
+                    fs::rename(&database, &displaced).unwrap();
+                    fs::copy(&displaced, &database).unwrap();
+                    Err::<(), _>(AppError::not_found("library", "missing".to_owned()))
+                },
+            )
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            AppError::InvalidState { domain, state, .. }
+                if domain == "library_database" && state == "database_identity_drift"
+        ));
     }
 
     struct MigrationFailpoint(&'static str);
