@@ -1,7 +1,7 @@
 use skilload_core::{
     AppError, ConfigEntries, ConfigEntry, ConfigValue, DoctorOperation, LibraryEntriesPage,
     LibraryEntry, LibraryImportResult, LibraryMutationOperation, LibrarySearchPage, NativePath,
-    PortableLibraryDocument, SourceIdentity,
+    PortableLibraryDocument, RefKind, SourceIdentity,
 };
 use std::fmt::Write as _;
 use std::os::unix::ffi::OsStrExt;
@@ -180,6 +180,12 @@ fn append_library_entries(output: &mut String, entries: &[LibraryEntry]) {
 }
 
 fn append_library_entry(output: &mut String, entry: &LibraryEntry) {
+    let source = &entry.skill.source;
+    let ref_kind = match source.ref_kind {
+        RefKind::Branch => "branch",
+        RefKind::Tag => "tag",
+        RefKind::Commit => "commit",
+    };
     let alias = entry
         .alias
         .as_deref()
@@ -197,9 +203,21 @@ fn append_library_entry(output: &mut String, entry: &LibraryEntry) {
         .unwrap_or_else(|| "null".to_owned());
     let _ = writeln!(
         output,
-        "source: {}\nname: {}\nalias: {alias}\ncategory: {category}\ntags: {}\nnote: {note}\ntrust_state: {}",
-        quote_string(&entry.skill.source.canonical),
+        "source: {}\nsource_owner: {}\nsource_repository: {}\nsource_repository_display: {}\nsource_path: {}\nsource_ref_kind: {}\nsource_ref_value: {}\nrepository_id: {}\ncommit: {}\nintegrity: {}\nname: {}\ndescription: {}\nentry_count: {}\nbyte_count: {}\nalias: {alias}\ncategory: {category}\ntags: {}\nnote: {note}\ntrust_state: {}",
+        quote_string(&source.canonical),
+        quote_string(&source.owner),
+        quote_string(&source.repository),
+        quote_string(&source.repository_display),
+        quote_string(&source.path),
+        quote_string(ref_kind),
+        quote_string(&source.ref_value),
+        entry.skill.repository_id,
+        quote_string(&entry.skill.commit),
+        quote_string(&entry.skill.integrity),
         quote_string(&entry.skill.name),
+        quote_string(&entry.skill.description),
+        entry.skill.entry_count,
+        entry.skill.byte_count,
         entry.tags.len(),
         entry.trust_state.as_str(),
     );
@@ -453,6 +471,83 @@ mod tests {
     use std::ffi::OsString;
     use std::os::unix::ffi::OsStringExt;
     use std::path::PathBuf;
+
+    #[test]
+    fn library_read_renderers_project_complete_terminal_safe_entries() {
+        let source = SourceIdentity::new(
+            "github:owner/repository#skills/review@refs/heads/main".to_owned(),
+            "owner".to_owned(),
+            "repository".to_owned(),
+            "Repository".to_owned(),
+            "skills/review".to_owned(),
+            RefKind::Branch,
+            "refs/heads/main".to_owned(),
+        )
+        .unwrap();
+        let entry = LibraryEntry {
+            skill: skilload_core::ResolvedSkill::new(
+                source,
+                42,
+                "0123456789012345678901234567890123456789".to_owned(),
+                "sha256:0123456789012345678901234567890123456789012345678901234567890123"
+                    .to_owned(),
+                "review".to_owned(),
+                "Description\nwith control".to_owned(),
+                3,
+                30,
+            )
+            .unwrap(),
+            alias: Some("alias".to_owned()),
+            category: Some("category".to_owned()),
+            tags: vec!["Review".to_owned()],
+            note: Some("note".to_owned()),
+            trust_state: skilload_core::LibraryTrustState::Missing,
+        };
+        let page = skilload_core::LibraryPage::new(100, 0).unwrap();
+        let list = LibraryEntriesPage {
+            entries: vec![entry.clone()],
+            page,
+            total: 1,
+        };
+        let search = LibrarySearchPage {
+            original: "review".to_owned(),
+            entries: vec![entry.clone()],
+            page,
+            total: 1,
+        };
+        let expected = [
+            "source: \"github:owner/repository#skills/review@refs/heads/main\"",
+            "source_owner: \"owner\"",
+            "source_repository: \"repository\"",
+            "source_repository_display: \"Repository\"",
+            "source_path: \"skills/review\"",
+            "source_ref_kind: \"branch\"",
+            "source_ref_value: \"refs/heads/main\"",
+            "repository_id: 42",
+            "commit: \"0123456789012345678901234567890123456789\"",
+            "integrity: \"sha256:0123456789012345678901234567890123456789012345678901234567890123\"",
+            "name: \"review\"",
+            "description: \"Description\\nwith control\"",
+            "entry_count: 3",
+            "byte_count: 30",
+            "alias: \"alias\"",
+            "category: \"category\"",
+            "tags: 1",
+            "  tag: \"Review\"",
+            "note: \"note\"",
+            "trust_state: missing",
+        ];
+
+        for rendered in [
+            render_library_entries(&list),
+            render_library_search(&search),
+            render_library_get(&entry),
+        ] {
+            for field in expected {
+                assert!(rendered.contains(field), "missing {field} in {rendered}");
+            }
+        }
+    }
 
     #[test]
     fn terminal_encoder_is_injective_for_controls_and_invalid_bytes() {

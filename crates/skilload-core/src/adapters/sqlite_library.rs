@@ -41,7 +41,6 @@ use tempfile::{Builder, NamedTempFile};
 const SCHEMA_VERSION: u64 = 2;
 const API_V1_UINT_MAX: i64 = 9_007_199_254_740_991;
 const DATABASE_SIDECAR_SUFFIXES: [&str; 3] = ["-journal", "-wal", "-shm"];
-const WAL_SIDECAR_SUFFIXES: [&str; 2] = ["-wal", "-shm"];
 const SQLITE_HEADER_MAGIC: &[u8; 16] = b"SQLite format 3\0";
 const LIBRARY_FTS_CREATE_SQL: &str = "CREATE VIRTUAL TABLE library_fts USING fts5(\
 canonical_source UNINDEXED, \
@@ -722,7 +721,7 @@ impl SqliteLibraryRepository {
         {
             return Err(self.database_corrupt_with_known_backups(path));
         }
-        for suffix in WAL_SIDECAR_SUFFIXES {
+        for suffix in DATABASE_SIDECAR_SUFFIXES {
             let sidecar = Self::database_sidecar_path(path, suffix)?;
             match fs::symlink_metadata(&sidecar) {
                 Ok(_) => return Err(self.database_corrupt_with_known_backups(path)),
@@ -828,7 +827,7 @@ impl SqliteLibraryRepository {
             }
             (ReadFilter::FtsMatch(expression), SchemaGeneration::V2) => {
                 validate_derived_database(&transaction, database)
-                    .map_err(|_| fts_index_invalid())?;
+                    .map_err(map_derived_validation_error)?;
                 count_fts_matches(&transaction, database, expression)?
             }
         };
@@ -970,8 +969,10 @@ impl SqliteLibraryRepository {
         connection: &Connection,
         database: &Path,
     ) -> Result<bool, AppError> {
-        if validate_derived_database(connection, database).is_err() {
-            return Ok(false);
+        match validate_derived_database(connection, database) {
+            Ok(()) => {}
+            Err(AppError::DatabaseCorrupt { .. }) => return Ok(false),
+            Err(error) => return Err(error),
         }
         let mut copy =
             Connection::open_in_memory().map_err(|error| database_error(database, error))?;
@@ -981,19 +982,19 @@ impl SqliteLibraryRepository {
             .run_to_completion(512, Duration::ZERO, None)
             .map_err(|error| database_error(database, error))?;
         drop(backup);
-        // The copy is an in-memory scratch database: any failure of the
-        // special command there is derived-index invalidity (a doctor-fixable
-        // finding), not a reason to abort the diagnosis.
-        if copy
-            .execute(
-                "INSERT INTO library_fts(library_fts) VALUES('integrity-check')",
-                [],
-            )
-            .is_err()
-        {
-            return Ok(false);
+        // A corruption/content failure in the scratch FTS check is derived
+        // drift. Operational failures must escape so doctor never advertises
+        // a repair without establishing an index inconsistency.
+        match copy.execute(
+            "INSERT INTO library_fts(library_fts) VALUES('integrity-check')",
+            [],
+        ) {
+            Ok(_) => Ok(true),
+            Err(error) => match database_error(database, error) {
+                AppError::DatabaseCorrupt { .. } => Ok(false),
+                error => Err(error),
+            },
         }
-        Ok(true)
     }
 
     fn migrate_v1(&self, roots: &ResolvedRoots) -> Result<Option<DoctorAction>, AppError> {
@@ -2311,7 +2312,7 @@ fn read_schema_generation(
         .execute_batch("PRAGMA foreign_keys = ON;")
         .map_err(|error| database_error(path, error))?;
     let raw_version = singleton_i64(connection, "SELECT version FROM schema_info", path)?;
-    if !(0..=API_V1_UINT_MAX).contains(&raw_version) {
+    if !(1..=API_V1_UINT_MAX).contains(&raw_version) {
         return Err(AppError::database_corrupt(NativePath::new(
             path.to_path_buf(),
         )));
@@ -2451,6 +2452,13 @@ fn fts_index_invalid() -> AppError {
     )
 }
 
+fn map_derived_validation_error(error: AppError) -> AppError {
+    match error {
+        AppError::DatabaseCorrupt { .. } => fts_index_invalid(),
+        error => error,
+    }
+}
+
 fn fts_match_error(path: &Path, error: SqlError) -> AppError {
     match &error {
         SqlError::SqliteFailure(code, _)
@@ -2481,7 +2489,7 @@ fn validate_database(connection: &Connection, path: &Path) -> Result<(), AppErro
         }),
         SchemaGeneration::Newer(found) => Err(schema_newer(found)),
         SchemaGeneration::V2 => {
-            validate_derived_database(connection, path).map_err(|_| fts_index_invalid())
+            validate_derived_database(connection, path).map_err(map_derived_validation_error)
         }
     }
 }
@@ -4632,6 +4640,30 @@ mod tests {
     }
 
     #[test]
+    fn derived_validation_preserves_busy_errors() {
+        let temporary = tempdir().unwrap();
+        let repository = imported_repository(&temporary, vec![entry("skills/review", None)]);
+        let database = temporary.path().join("data/skilload/skilload.db");
+        let reader = Connection::open(&database).unwrap();
+        reader.busy_timeout(Duration::ZERO).unwrap();
+        let writer = Connection::open(&database).unwrap();
+        writer.execute_batch("BEGIN EXCLUSIVE").unwrap();
+
+        let error = repository
+            .derived_index_is_consistent(&reader, &database)
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            AppError::Busy {
+                lock_domain,
+                waited_ms,
+            } if lock_domain == "database" && waited_ms == LOCK_WAIT.as_millis() as u64
+        ));
+        writer.execute_batch("ROLLBACK").unwrap();
+    }
+
+    #[test]
     fn database_sync_error_preserves_native_path_bytes() {
         let raw = b"/tmp/library-database-\xff.db";
         let path = PathBuf::from(OsString::from_vec(raw.to_vec()));
@@ -4728,6 +4760,40 @@ mod tests {
             .unwrap();
 
         assert_eq!(repository.export().unwrap_err().code(), "database_corrupt");
+    }
+
+    #[test]
+    fn schema_version_zero_is_database_corrupt() {
+        let temporary = tempdir().unwrap();
+        let repository = SqliteLibraryRepository::with_environment(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(XdgRootResolver),
+        );
+        repository
+            .import(&document(vec![entry("skills/review", None)]), false)
+            .unwrap();
+        let database = temporary.path().join("data/skilload/skilload.db");
+        Connection::open(&database)
+            .unwrap()
+            .execute_batch(
+                "PRAGMA ignore_check_constraints = ON;
+                 UPDATE schema_info SET version = 0;
+                 PRAGMA ignore_check_constraints = OFF;",
+            )
+            .unwrap();
+        let query = Query::new("review".to_owned()).unwrap();
+        for error in [
+            repository.export().unwrap_err(),
+            repository.list(&page(100, 0)).unwrap_err(),
+            repository.search(&query, &page(100, 0)).unwrap_err(),
+            repository
+                .get("github:owner/repository#skills/review@refs/heads/main")
+                .unwrap_err(),
+            repository.inspect().unwrap_err(),
+            repository.fix().unwrap_err(),
+        ] {
+            assert_eq!(error.code(), "database_corrupt", "{error:?}");
+        }
     }
 
     #[test]
@@ -5580,6 +5646,44 @@ mod tests {
         );
     }
 
+    #[test]
+    fn rollback_journal_generation_is_rejected_before_sqlite_opens() {
+        let temporary = tempdir().unwrap();
+        let repository = imported_repository(&temporary, vec![entry("skills/review", None)]);
+        let database = temporary.path().join("data/skilload/skilload.db");
+        let journal = temporary.path().join("data/skilload/skilload.db-journal");
+        let database_before = fs::read(&database).unwrap();
+        let journal_before = b"unrecovered DELETE-mode rollback journal".to_vec();
+        fs::write(&journal, &journal_before).unwrap();
+        let query = Query::new("review".to_owned()).unwrap();
+
+        for error in [
+            repository.export().unwrap_err(),
+            repository.list(&page(100, 0)).unwrap_err(),
+            repository.search(&query, &page(100, 0)).unwrap_err(),
+            repository
+                .get("github:owner/repository#skills/review@refs/heads/main")
+                .unwrap_err(),
+            repository.inspect().unwrap_err(),
+        ] {
+            assert_eq!(error.code(), "database_corrupt", "{error:?}");
+        }
+        assert_eq!(fs::read(&database).unwrap(), database_before);
+        assert_eq!(fs::read(&journal).unwrap(), journal_before);
+        assert!(
+            !temporary
+                .path()
+                .join("data/skilload/skilload.db-wal")
+                .exists()
+        );
+        assert!(
+            !temporary
+                .path()
+                .join("data/skilload/skilload.db-shm")
+                .exists()
+        );
+    }
+
     struct MigrationFailpoint(&'static str);
 
     impl PersistenceHooks for MigrationFailpoint {
@@ -5737,7 +5841,7 @@ mod tests {
     }
 
     #[test]
-    fn reads_use_one_snapshot_under_a_concurrent_writer() {
+    fn reads_reject_live_rollback_journals_before_descriptor_opens() {
         let temporary = tempdir().unwrap();
         let repository = imported_repository(&temporary, vec![entry("skills/review", None)]);
         let database = temporary.path().join("data/skilload/skilload.db");
@@ -5750,11 +5854,14 @@ mod tests {
             &database,
         )
         .unwrap();
-        let listed = repository.list(&page(100, 0)).unwrap();
-        assert_eq!(listed.total, 1);
+        assert!(database.with_file_name("skilload.db-journal").exists());
         let query = Query::new("review".to_owned()).unwrap();
-        let searched = repository.search(&query, &page(100, 0)).unwrap();
-        assert_eq!(searched.total, 1);
+        for error in [
+            repository.list(&page(100, 0)).unwrap_err(),
+            repository.search(&query, &page(100, 0)).unwrap_err(),
+        ] {
+            assert_eq!(error.code(), "database_corrupt", "{error:?}");
+        }
         writer_transaction.commit().unwrap();
 
         let listed = repository.list(&page(100, 0)).unwrap();
