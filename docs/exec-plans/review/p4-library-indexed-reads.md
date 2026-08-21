@@ -78,7 +78,7 @@ Read兼容性是显式边界。完整 v1 base rows可供 list/get/export只读�
 - [x] (2026-08-20 13:44Z) Implementation、acceptance、documentation与 retrospective已全部提交并推送：implementation commit `7f9fd769b12eb75f051c1f29aaece9dd4a292c6b`（29 files，+4985/−1367）。执行 `gh pr ready` 后验证 `isDraft: false`、`state: OPEN`且 `headRefOid` 等于该提交；本 Plan 随即移入 `docs/exec-plans/review/`、`status` 改为 `review`并推送本 status commit。
 - [x] (2026-08-20 14:39Z) 处理 PR #5 第二轮实现评审的 7 个 inline 问题（FTS shadow 分类、backups 目录项同步、backup digest/symlink 校验、prune 保护当前 backup、mutation 路径 corruption 补全、锁内 FTS 重诊断、doctor identity 重验）并回复/resolve 全部 thread。
 - [x] (2026-08-21) final review 第三轮的 4 个 inline 问题已在 Product Baseline 边界内实现并通过 focused 与 workspace validation：只读 descriptor-bound SQLite open、保守保留 migration backups、MATCH-derived corruption mapping、no-follow backup validation；修复与 preliminary Review Conversation Log 已以 `7e5a7bda7ce2dc3804a687a4e7249944a7908980` 推送，四个 GitHub replies 已成功写入且 threads 均 resolved；final log reconciliation 已推送，完整会话读取未发现未记录、未回答或 blocked 的实际问题。
-- [x] (2026-08-21) 处理第四轮 final-review 的 4 个 inline 问题：backup inventory 现验证 manifest/schema/standalone base、migration lock 后重新诊断、manifest 读取受 4 KiB 上限约束、orphaned FTS shadow tables 可重建；`sqlite_library` focused 70 tests 与 workspace fmt/clippy/test/build 已通过。preliminary evidence 已写入 Review Conversation Log，等待 remediation commit、GitHub replies 与 final reconciliation。
+- [x] (2026-08-21) 第四轮 remediation 已以 `648fb40323f2d35ac1dba6331501d0e03f7ecc6a` 推送：backup inventory 现验证 manifest/schema/standalone base、migration lock 后重新诊断、manifest 读取受 4 KiB 上限约束、orphaned FTS shadow tables 可重建；focused 70 tests 与 workspace fmt/clippy/test/build 已通过。四个 GitHub replies 已写入且 inline threads 均 resolved，最终 Review Conversation Log 记录如下。
 
 ## Surprises & Discoveries
 
@@ -206,6 +206,8 @@ Read兼容性是显式边界。完整 v1 base rows可供 list/get/export只读�
 实现已完成（2026-08-20 13:36Z），全部 Product Baseline 行为已交付并验证。`SKL-LIB-004` Revision 2：嵌入式 FTS5 索引八类字段（含 tag display/key 双列），纯文本词项 AND 查询经 pinned Unicode 15.1.0 分词 + NFC/case-fold alternatives + 完整 FTS5 string quoting 编码（同词项括号 OR group、跨词项显式 `AND`），操作符/引号/列过滤全部保持 literal，空查询在 SQLite 前以 `validation_failed/library_search_query_empty` 拒绝。`SKL-LIB-005` Revision 1：`library list/search/get` 离线读取 canonical-source binary order、确定性分页（limit 1..=1000 默认 100、全量 u64 offset 默认 0、offset≥total 返回空页）、不创建任何 root、不改变 database bytes/mtime。`SKL-LIB-011` Revision 1：10,000-entry release 实测 exact get 0.06s、first list page 0.06s、full-text search 0.12s、deep-offset search 0.12s（Apple M4 Pro，预算各 10 秒），count/order 确定性由永久 tests 断言。`SKL-OPS-003` Revision 1：v1→v2 migration 在任何 live write 前发布 standalone online-backup pair（`data/backups/` + completed manifest：SHA-256/size/source identity/epoch-ns）并验证 digest/schema/base/revision，随后单事务创建+填充 FTS+更新 schema version，state revision 前后不变；failpoint 证据区分"v1+完整 backup"与"durable v2 但命令报错"；unknown newer schema 与 downgrade 保持拒绝。Doctor：默认只读（online backup 到 `:memory:` 运行 FTS5 integrity-check，filesystem 完全惰性，覆盖 absent/healthy/v1/FTS-drift/corrupt/WAL fixtures），`--fix` 交付 migrate/repair action 并可重复（healthy 重复 fix 返回 unchanged 且不产生第二个 backup）。Base corruption 与 WAL/sidecar generation 返回 typed `database_corrupt`（含已验证 backups 与 `database-corruption-v1`）；FTS-only drift 是 fixable finding。验证：`cargo test --workspace` 135 core + 28 CLI（11 bin + 17 contract）全部通过；focused 过滤覆盖 domain query（`library_search`）、repository/migration（`sqlite_library`）与 CLI（`library_reads`、`doctor`）；debug binary smoke 与 10k release 测量记录于 Artifacts。遗留：无——本计划范围内的所有 acceptance 均已满足；跨产品尚未满足的行为（`SKL-CLI-001` 完整 50 leaves、`SKL-OPS-002` 完整 ownership、`SKL-CACHE-006/007` 跨域 doctor）保持 planned 且未被误报为完成。
 
 2026-08-21 review remediation 已完成：PRRT_kwDOT7YN2s6a3XAK、PRRT_kwDOT7YN2s6a3XAV、PRRT_kwDOT7YN2s6a3XAd 与 PRRT_kwDOT7YN2s6a3XAk 均由 `7e5a7bda7ce2dc3804a687a4e7249944a7908980` 修复并通过 focused/workspace validation。四个 GitHub replies 已成功写入、对应 inline threads 均为 resolved；完整会话读取验证所有 14 threads resolved、17 submitted reviews均已记录或不含问题。Plan 保持 `review`、PR 保持 ready。
+
+2026-08-21 第四轮 review remediation 已完成：PRRT_kwDOT7YN2s6bAVQR、PRRT_kwDOT7YN2s6bAVQT、PRRT_kwDOT7YN2s6bAVQV 与 PRRT_kwDOT7YN2s6bAVQX 由 `648fb40323f2d35ac1dba6331501d0e03f7ecc6a` 修复。四个 inline replies 均写入并 resolved；新的 coverage 验证 backup compatibility/size cap、migration stale diagnosis 和 orphaned FTS shadow rebuild，完整 validation 为 focused 70 tests、workspace fmt/clippy/test（11+17+146）和 locked build。
 
 ## Review Conversation Log
 
@@ -462,13 +464,13 @@ Problem: `known_validated_backups` 目前只验证 `complete`、大小、digest 
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
-Resolution: 已实现于 `crates/skilload-core/src/adapters/sqlite_library.rs`：`backup_pair_is_valid` 现在要求 current manifest format、source schema 1、target schema 2、complete/size/digest/entry identity，并通过 held descriptor 的 `standalone_backup_is_valid` 验证 DELETE-journal header、SQLite schema v1 与完整 base rows；`docs/design-docs/application-and-persistence.md` 同步该 inventory 规则。Intended commit: `fix(library): harden doctor recovery diagnostics`。
+Resolution: 已实现于 `crates/skilload-core/src/adapters/sqlite_library.rs`：`backup_pair_is_valid` 现在要求 current manifest format、source schema 1、target schema 2、complete/size/digest/entry identity，并通过 held descriptor 的 `standalone_backup_is_valid` 验证 DELETE-journal header、SQLite schema v1 与完整 base rows；`docs/design-docs/application-and-persistence.md` 同步该 inventory 规则。修复提交：`648fb40323f2d35ac1dba6331501d0e03f7ecc6a`。
 
-Evidence: 新增 `incompatible_or_nonstandalone_backups_are_never_advertised`；`mise exec -- cargo test -p skilload-core adapters::sqlite_library::tests` 70 passed。workspace `cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace`（11+17+146）与 `cargo build --workspace --locked` 通过；`git diff --check` clean。
+Evidence: `incompatible_or_nonstandalone_backups_are_never_advertised`；focused SQLite adapter tests 70 passed。workspace fmt/clippy/test（11+17+146）与 locked build 通过；`git diff --check` clean。
 
-GitHub outcome: 待回复；thread resolved: false。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/5#discussion_r3826602054；thread resolved: true。
 
 ### PRRT_kwDOT7YN2s6bAVQT - 在 migration lock 内重诊断 schema
 
@@ -478,13 +480,13 @@ Problem: 两个 `doctor --fix` 都在取得 `database.lock` 前观察到 schema 
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
-Resolution: 已实现于 `crates/skilload-core/src/adapters/sqlite_library.rs`：`migrate_v1_locked` 在 durable lock 内确认完整 v2 后返回 `None`，而 `fix()` 对由 migration 或 FTS repair 消除的 stale finding 重跑 diagnosis 并返回当前 `unchanged`；backup 发布后仍保留原有 baseline drift error。Intended commit: `fix(library): harden doctor recovery diagnostics`。
+Resolution: 已实现于 `crates/skilload-core/src/adapters/sqlite_library.rs`：`migrate_v1_locked` 在 durable lock 内确认完整 v2 后返回 `None`，而 `fix()` 对由 migration 或 FTS repair 消除的 stale finding 重跑 diagnosis 并返回当前 `unchanged`；backup 发布后仍保留原有 baseline drift error。修复提交：`648fb40323f2d35ac1dba6331501d0e03f7ecc6a`。
 
-Evidence: 新增 `migration_rechecks_state_after_acquiring_lock`，先记录 v1 diagnosis、完成一次 migration、再模拟等待者进入 locked path 并断言 `None`、healthy diagnosis 与 public `fix()` 的 unchanged。focused 70 tests 与 workspace fmt/clippy/test（11+17+146）/locked build 通过；`git diff --check` clean。
+Evidence: `migration_rechecks_state_after_acquiring_lock` 先记录 v1 diagnosis、完成一次 migration、再模拟等待者进入 locked path 并断言 `None`、healthy diagnosis 与 public `fix()` 的 unchanged。focused 70 tests 与 workspace fmt/clippy/test（11+17+146）/locked build 通过；`git diff --check` clean。
 
-GitHub outcome: 待回复；thread resolved: false。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/5#discussion_r3826602675；thread resolved: true。
 
 ### PRRT_kwDOT7YN2s6bAVQV - 限制 backup manifest 的读取大小
 
@@ -494,13 +496,13 @@ Problem: 每个 `database_corrupt` path 都会对候选 manifest 无界 `read_to
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
-Resolution: 已实现于 `crates/skilload-core/src/adapters/sqlite_library.rs`：候选 manifest 在 allocation 前按 held descriptor 长度拒绝超过 4 KiB 的文件，随后以 `Read::take(4 KiB + 1)` bounded read 防止 metadata/read race 产生无界 allocation；超限 pair 不会进入 backup inventory。Intended commit: `fix(library): harden doctor recovery diagnostics`。
+Resolution: 已实现于 `crates/skilload-core/src/adapters/sqlite_library.rs`：候选 manifest 在 allocation 前按 held descriptor 长度拒绝超过 4 KiB 的文件，随后以 `Read::take(4 KiB + 1)` bounded read 防止 metadata/read race 产生无界 allocation；超限 pair 不会进入 backup inventory。修复提交：`648fb40323f2d35ac1dba6331501d0e03f7ecc6a`。
 
-Evidence: 新增 `oversized_backup_manifest_is_never_advertised`，损坏 live database 后验证 4 KiB+1 regular manifest 不会出现在 `DatabaseCorrupt.backups`。focused 70 tests 与 workspace fmt/clippy/test（11+17+146）/locked build 通过；`git diff --check` clean。
+Evidence: `oversized_backup_manifest_is_never_advertised` 在损坏 live database 后验证 4 KiB+1 regular manifest 不会出现在 `DatabaseCorrupt.backups`。focused 70 tests 与 workspace fmt/clippy/test（11+17+146）/locked build 通过；`git diff --check` clean。
 
-GitHub outcome: 待回复；thread resolved: false。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/5#discussion_r3826603317；thread resolved: true。
 
 ### PRRT_kwDOT7YN2s6bAVQX - 重建前分离 orphaned FTS shadow tables
 
@@ -510,13 +512,13 @@ Problem: `library_fts` virtual-table row 缺失而 `library_fts_*` shadow table 
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
-Resolution: 已实现于 `crates/skilload-core/src/adapters/sqlite_library.rs`：`fts_schema_requires_detach` 将缺失 `library_fts` virtual-table row 而存在任一 shadow row 的状态加入 `writable_schema` removal；随后 schema cookie 更新、fixed virtual table 创建与 base projection refill 复用既有 repair transaction。`docs/design-docs/application-and-persistence.md` 同步该 derived repair rule。Intended commit: `fix(library): harden doctor recovery diagnostics`。
+Resolution: 已实现于 `crates/skilload-core/src/adapters/sqlite_library.rs`：`fts_schema_requires_detach` 将缺失 `library_fts` virtual-table row 而存在任一 shadow row 的状态加入 `writable_schema` removal；随后 schema cookie 更新、fixed virtual table 创建与 base projection refill 复用既有 repair transaction。`docs/design-docs/application-and-persistence.md` 同步该 derived repair rule。修复提交：`648fb40323f2d35ac1dba6331501d0e03f7ecc6a`。
 
-Evidence: 新增 `orphaned_fts_shadow_tables_are_doctor_fixable`，fixture 删除 virtual-table schema row、保留 `library_fts_data`，断言 diagnosis `library_fts_invalid`、`doctor --fix` 返回 repair、search 恢复且 final diagnosis healthy。focused 70 tests 与 workspace fmt/clippy/test（11+17+146）/locked build 通过；`git diff --check` clean。
+Evidence: `orphaned_fts_shadow_tables_are_doctor_fixable` 删除 virtual-table schema row、保留 `library_fts_data`，断言 diagnosis `library_fts_invalid`、`doctor --fix` 返回 repair、search 恢复且 final diagnosis healthy。focused 70 tests 与 workspace fmt/clippy/test（11+17+146）/locked build 通过；`git diff --check` clean。
 
-GitHub outcome: 待回复；thread resolved: false。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/5#discussion_r3826603954；thread resolved: true。
 
 ## Context and Orientation
 
@@ -831,6 +833,8 @@ SQLite私有helper至少形成一条共享projection路径：base row与sorted t
 
 Backup manifest是private versioned serde record，不进入API-v2或portable export。Digest用`sha2::Sha256`分块读取同一个 no-follow opened backup descriptor；大小、regular-file type和identity也来自该 descriptor，并在 held backup-directory descriptor的相对 directory entry上重验。Manifest枚举、validation与live migration只使用validated directory handles、`openat(..., O_NOFOLLOW)`和single-component relative names，复用现有native identity规则；本交付不执行无法以 inode 绑定的 backup pruning，也不创建general filesystem abstraction。
 
+`known_validated_backups` 是 recovery diagnostic 的保守 inventory，而非 filename scan：每个 pair 的 held manifest 限制为 4 KiB，必须同时符合 current manifest format、source schema 1、target schema 2、complete marker、size/digest 和 directory-entry identity；held backup descriptor 还必须证明 DELETE-journal SQLite header、schema v1 与完整 base rows。任何不兼容或无界 candidate 都不进入 `DatabaseCorrupt.backups`。`doctor --fix` 的 v1 diagnosis 在取得 lock 后若已被另一 contender 完成，则重新报告 healthy `unchanged`；derived repair 也必须先分离 orphaned FTS shadow schema 才可重建。
+
 ## Plan Revision Note
 
 
@@ -852,3 +856,5 @@ Backup manifest是private versioned serde record，不进入API-v2或portable ex
 2026-08-21：第三轮 review conversation 已完成 reconciliation。PRRT_kwDOT7YN2s6a3XAK、PRRT_kwDOT7YN2s6a3XAV、PRRT_kwDOT7YN2s6a3XAd 与 PRRT_kwDOT7YN2s6a3XAk 均回复了 `7e5a7bda7ce2dc3804a687a4e7249944a7908980` 的实现与验证证据，reply URLs 和 `thread resolved: true` 已逐项写入 Review Conversation Log。final log commit `590b88b0a6aa71d7848d423abd68f10cce880e46` 已推送；其后完整 conversation read 未发现 pending/blocked source。
 
 2026-08-21：final reconciliation 后的完整会话读取发现四个新增、空 body 的 `@bootids` submitted review containers；已在 Review Conversation Log 记录其 stable IDs/URLs 和 no-problem assessment。四个修复 thread 已回复并 resolved，未发现未记录、未回答或 blocked 的实际问题；该 source-complete note 已以 `bea597b1b3f5fc6307326520b4dcaf0d1eac4404` 推送并再次核验。
+
+2026-08-21：第四轮 final-review remediation。PRRT_kwDOT7YN2s6bAVQR、PRRT_kwDOT7YN2s6bAVQT、PRRT_kwDOT7YN2s6bAVQV 与 PRRT_kwDOT7YN2s6bAVQX 的 recovery/repair 缺陷均在 Product Baseline 内修复：兼容 standalone backup inventory、锁后 migration re-diagnosis、4 KiB bounded manifest read 与 orphaned FTS shadow separation。实现与回归测试、`docs/design-docs/application-and-persistence.md` 和 preliminary Plan evidence 由 `648fb40323f2d35ac1dba6331501d0e03f7ecc6a` 推送；四个 replies 的 URLs 和 resolved state 已逐项记录到 Review Conversation Log。focused 70 tests、workspace fmt/clippy/test（11+17+146）、locked build与`git diff --check`均通过；Plan 保持 `review`、PR 保持 ready。
