@@ -104,7 +104,7 @@ DELETE-mode `-journal` 同样不能与 descriptor-bound open 分离：SQLite 官
 - [x] (2026-08-22) 第十八轮 final-review remediation 已由 `f7a9b476e151c1d071573a2655d9ccd33efd3b91` 推送、preliminary evidence 已由 `87801e5` 推送：base validation现在验证完整 fixed foreign-key inventory；recovery export probe区分 content failure与 operational error；snapshot-budget doctor finding不再伪报 database 不可写。新增三个 deterministic adapter regression；focused `sqlite_library` 109 tests与 workspace fmt/clippy/test（13+17+190）/locked build均通过。三个 GitHub replies 已写入且 threads均 resolved；完整 reconciliation确认 20 个 comments、83 个 reviews、65 个 actual threads均 source-complete，Plan保持 `review`、PR保持 ready/Open。
 - [x] (2026-08-22) 第十九轮 final-review 的四个 inline defect 已在当前 Product Baseline 内完成并 reconcile：base autoindex inventory改为 exact、migration backup保持 validated SHARED snapshot并在最终 transaction比较完整 entries、online backup的 `More` 立即前进、free-text FTS projection追加 full-folded NFC spelling。新增四项 deterministic adapter regression；focused `sqlite_library` 113 tests、fmt、all-features clippy、workspace locked tests（core 194、CLI 13+17）和 locked build均通过。remediation commit `f84bfdc2b8d88c5511ce71bcb04e8439707d7557` 与 preliminary evidence `9c39e6493ef6a8bb6e6c04ec123696ae22bac34a` 已推送；四个 GitHub replies均成功写入、对应 threads均 resolved，最终 Plan reconciliation documentation commit将发布本记录，Plan保持 `review`、PR保持 ready/Open。
 
-- [ ] (2026-08-23) 第二十轮 final-review 的六个 inline defect已在当前 Product Baseline 内完成 code、规格/设计澄清与验证：staging backup digest/cleanup、header operational I/O、fixed base-schema collation、backup contention deadline与 manifest-candidate ceiling。focused `sqlite_library` 119 tests、workspace fmt、all-features clippy、locked workspace tests（core 200、CLI 13+17）和 locked build均通过；preliminary remediation commit `69afa98c1c0c3bd4d15a99c1ca74f9bf48a8dd0f` 已推送且与 PR head一致，待回复并 resolve 六个 thread，再完成最终 reconciliation。
+- [x] (2026-08-23) 第二十轮 final-review 的六个 inline defect已在当前 Product Baseline 内完成 code、规格/设计澄清、验证、GitHub 回复与 resolve：staging backup digest/cleanup、header operational I/O、fixed base-schema collation、backup contention deadline与 manifest-candidate ceiling。focused `sqlite_library` 119 tests、workspace fmt、all-features clippy、locked workspace tests（core 200、CLI 13+17）和 locked build均通过；remediation commit `69afa98c1c0c3bd4d15a99c1ca74f9bf48a8dd0f` 已推送且与 PR head一致。六个 thread均已回复、`isResolved: true`，最终 reconciliation确认无 pending、blocked、unlogged 或 unanswered non-blocked source；Plan保持 `review`、PR保持 ready/Open。
 
 ## Surprises & Discoveries
 
@@ -1633,99 +1633,101 @@ GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/5#discussion_
 
 ### PRRT_kwDOT7YN2s6bZyus - 在验证快照内重算并保留 backup digest
 
-Source: PRRT_kwDOT7YN2s6bZyus / PRRC_kwDOT7YN2s7kq14A（https://github.com/bootids/skilload/pull/5#discussion_r3836435968；`chatgpt-codex-connector`；current `isResolved: false`）
+Source: PRRT_kwDOT7YN2s6bZyus / PRRC_kwDOT7YN2s7kq14A（https://github.com/bootids/skilload/pull/5#discussion_r3836435968；`chatgpt-codex-connector`；initial `isResolved: false`，current `isResolved: true`）
 
 Problem: `publish_validated_backup` 在 standalone staging database 的 SQLite validation 前计算 SHA-256，validation transaction结束后才构造 manifest并发布。另一个 connection 可在 hash 后替换为仍通过 base validation 的 bytes，导致 published manifest digest与已验证、已发布 backup不一致，使必须存在的 recovery pair 后续被 `backup_pair_is_valid` 排除。
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: `crates/skilload-core/src/adapters/sqlite_library.rs` 的 `publish_validated_backup` 现在在 SHA-256 前打开并验证 `validation_snapshot`，将该 SHARED snapshot显式保持到 final DB/manifest pair publication、sync和 revalidation后才 drop；digest与 manifest因而始终描述同一已验证 image。新增 `MigrationBackupDigestSnapshotWriter` 与 `migration_backup_digest_stays_with_the_validated_staging_snapshot`，在 `after_backup_hash` 尝试改写 staging entry并证明 commit被阻塞。
 
 Evidence: focused `sqlite_library` 119 tests通过（含新增 snapshot/digest regression）；`mise exec -- cargo fmt --all -- --check`、`mise exec -- cargo clippy --workspace --all-targets --all-features -- -D warnings`、`mise exec -- cargo test --workspace --all-features --locked`（core 200、CLI 13+17）和 `mise exec -- cargo build --workspace --all-features --locked`均通过。preliminary remediation commit `69afa98c1c0c3bd4d15a99c1ca74f9bf48a8dd0f` 已推送。
 
-GitHub outcome: 尚未回复；thread unresolved。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/5#discussion_r3836500484；thread resolved: true。
 
 ### PRRT_kwDOT7YN2s6bZyux - 传播 backup staging-entry 删除失败
 
-Source: PRRT_kwDOT7YN2s6bZyux / PRRC_kwDOT7YN2s7kq14E（https://github.com/bootids/skilload/pull/5#discussion_r3836435972；`chatgpt-codex-connector`；current `isResolved: false`）
+Source: PRRT_kwDOT7YN2s6bZyux / PRRC_kwDOT7YN2s7kq14E（https://github.com/bootids/skilload/pull/5#discussion_r3836435972；`chatgpt-codex-connector`；initial `isResolved: false`，current `isResolved: true`）
 
 Problem: final backup pair发布后，匹配 held staging entry的 `unlinkat` 返回值在 `sqlite_library.rs:1733` 被丢弃，随后两个 `NamedTempFile` cleanup 被禁用。backup directory变为不可写时，migration仍可报告 success，却永久留下隐藏且最多 268,435,456-byte 的 staging duplicate。
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: `remove_held_backup_staging_entry` 只对仍匹配 held inode的 staging name执行 descriptor-relative `unlinkat`，并将 inspect/unlink failure映射为 typed `library_database` error；publication后两个 `NamedTempFile` 都禁用 path-based cleanup，因此 foreign replacement不被删除。新增 `before_backup_staging_cleanup` test hook与 `migration_propagates_backup_staging_cleanup_failure`，在 pair发布后去除 directory write permission并断言 migration不成功。
 
 Evidence: focused `sqlite_library` 119 tests通过（含 permission cleanup regression）；workspace fmt、all-features clippy、locked workspace tests（core 200、CLI 13+17）和 locked build均通过。preliminary remediation commit `69afa98c1c0c3bd4d15a99c1ca74f9bf48a8dd0f` 已推送。
 
-GitHub outcome: 尚未回复；thread unresolved。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/5#discussion_r3836501057；thread resolved: true。
 
 ### PRRT_kwDOT7YN2s6bZyu1 - 传播 database-header operational I/O
 
-Source: PRRT_kwDOT7YN2s6bZyu1 / PRRC_kwDOT7YN2s7kq14K（https://github.com/bootids/skilload/pull/5#discussion_r3836435978；`chatgpt-codex-connector`；current `isResolved: false`）
+Source: PRRT_kwDOT7YN2s6bZyu1 / PRRC_kwDOT7YN2s7kq14K（https://github.com/bootids/skilload/pull/5#discussion_r3836435978；`chatgpt-codex-connector`；initial `isResolved: false`，current `isResolved: true`）
 
 Problem: `pre_open_generation_gate` 以 `file.read_exact(...).is_err()` 将 short/malformed SQLite header与任意 operational read failure等同处理，后者被包装成 `database_corrupt` recovery diagnostic。短 header应仍是 corruption；I/O、descriptor等实际环境故障必须保留 typed `XDG_DATA_HOME` failure。
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: 共享 `sqlite_header_is_valid` 现在把 `UnexpectedEof`/invalid magic/journal bytes返回 content-invalid，而其他 read failure映射为 typed `XDG_DATA_HOME` error；`pre_open_generation_gate` 在传播后者前重验 held generation，standalone backup reader也复用同一分类。新增 `sqlite_header_reader_preserves_operational_errors` 覆盖 injected permission error与 short header。
 
 Evidence: focused `sqlite_library` 119 tests通过（含 header classification regression）；workspace fmt、all-features clippy、locked workspace tests（core 200、CLI 13+17）和 locked build均通过。preliminary remediation commit `69afa98c1c0c3bd4d15a99c1ca74f9bf48a8dd0f` 已推送。
 
-GitHub outcome: 尚未回复；thread unresolved。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/5#discussion_r3836501516；thread resolved: true。
 
 ### PRRT_kwDOT7YN2s6bZyu5 - 验证固定 base-column definition 与 BINARY collation
 
-Source: PRRT_kwDOT7YN2s6bZyu5 / PRRC_kwDOT7YN2s7kq14O（https://github.com/bootids/skilload/pull/5#discussion_r3836435982；`chatgpt-codex-connector`；current `isResolved: false`）
+Source: PRRT_kwDOT7YN2s6bZyu5 / PRRC_kwDOT7YN2s7kq14O（https://github.com/bootids/skilload/pull/5#discussion_r3836435982；`chatgpt-codex-connector`；initial `isResolved: false`，current `isResolved: true`）
 
 Problem: `validate_library_schema_inventory` 仅允许 fixed table/autoindex names与owner；外部重建 `library_entries(canonical_source TEXT PRIMARY KEY COLLATE NOCASE, ...)` 可保留相同 object names。此 schema按 case-insensitive collation排序，违反 `SKL-LIB-005` 的 canonical UTF-8 binary order，并可能在 migration前被接受。
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: shared base validation新增 `BASE_TABLE_COLUMNS`/`validate_base_table_definitions` 与 `BASE_AUTOINDEX_COLUMNS`/`validate_base_autoindex_collations`，用 `PRAGMA table_info`和`PRAGMA index_xinfo`证明 exact column shape、primary key sequence、ascending BINARY collations。`COLLATE NOCASE` reconstructed v1现在在任何 metadata write或 backup publication前返回 `database_corrupt`；`docs/product-specs/cache-and-operations.md` 与 `docs/design-docs/application-and-persistence.md` 已同步澄清既有 Revision 1 proof。
 
 Evidence: `migration_rejects_nocase_canonical_source_before_backup_or_write` 通过；focused `sqlite_library` 119 tests、workspace fmt、all-features clippy、locked workspace tests（core 200、CLI 13+17）和 locked build均通过。preliminary remediation commit `69afa98c1c0c3bd4d15a99c1ca74f9bf48a8dd0f` 已推送。
 
-GitHub outcome: 尚未回复；thread unresolved。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/5#discussion_r3836502886；thread resolved: true。
 
 ### PRRT_kwDOT7YN2s6bZyu9 - 从实际 backup contention 开始 deadline
 
-Source: PRRT_kwDOT7YN2s6bZyu9 / PRRC_kwDOT7YN2s7kq14T（https://github.com/bootids/skilload/pull/5#discussion_r3836435987；`chatgpt-codex-connector`；current `isResolved: false`）
+Source: PRRT_kwDOT7YN2s6bZyu9 / PRRC_kwDOT7YN2s7kq14T（https://github.com/bootids/skilload/pull/5#discussion_r3836435987；`chatgpt-codex-connector`；initial `isResolved: false`，current `isResolved: true`）
 
 Problem: `copy_bounded_backup` 在任何 page copy前初始化 `retry_started`，随后成功 `StepResult::More` 不重置它。慢但持续成功的 copy耗尽 deadline后遇到首个 transient `Busy`/`Locked`，会立即返回 `busy`，把实际 progress错误计入 contention budget。
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: `copy_bounded_backup` 将 `retry_started` 改为 `Option<Instant>`；`More` 清除 deadline，首次及连续 `Busy`/`Locked` 通过 `backup_retry_started_after_step` 建立/保留 deadline。新增 `online_backup_retry_deadline_starts_at_contention_and_resets_after_progress`，直接覆盖 expired prior timer、first contention与进展后的 renewed contention。
 
 Evidence: focused `sqlite_library` 119 tests通过（含 contention regression）；workspace fmt、all-features clippy、locked workspace tests（core 200、CLI 13+17）和 locked build均通过。preliminary remediation commit `69afa98c1c0c3bd4d15a99c1ca74f9bf48a8dd0f` 已推送。
 
-GitHub outcome: 尚未回复；thread unresolved。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/5#discussion_r3836503783；thread resolved: true。
 
 ### PRRT_kwDOT7YN2s6bZyu_ - 限制 backup manifest candidate 数量
 
-Source: PRRT_kwDOT7YN2s6bZyu_ / PRRC_kwDOT7YN2s7kq14W（https://github.com/bootids/skilload/pull/5#discussion_r3836435990；`chatgpt-codex-connector`；current `isResolved: false`）
+Source: PRRT_kwDOT7YN2s6bZyu_ / PRRC_kwDOT7YN2s7kq14W（https://github.com/bootids/skilload/pull/5#discussion_r3836435990；`chatgpt-codex-connector`；initial `isResolved: false`，current `isResolved: true`）
 
 Problem: `backup_manifest_stems` 在排序、验证任何 entry前将全部 `*.manifest.json` stem clone进 `Vec<String>`。受损或外部填充的 backups directory可使 corruption diagnostic与 protected-output inventory以无界内存和时间扫描候选。
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: `MAX_BACKUP_MANIFEST_CANDIDATES` 固定为 64；`backup_manifest_stems` 在 clone第 65 个 suffix-matching stem前返回带 held backup-directory path的 `library_database/backup_manifest_candidate_limit_exceeded` typed `invalid_state`，不会截断 inventory。新增 `backup_manifest_candidate_enumeration_is_bounded`；产品规格与持久化设计已记录同一有限 diagnostic boundary。
 
 Evidence: `backup_manifest_candidate_enumeration_is_bounded` 通过；focused `sqlite_library` 119 tests、workspace fmt、all-features clippy、locked workspace tests（core 200、CLI 13+17）和 locked build均通过。preliminary remediation commit `69afa98c1c0c3bd4d15a99c1ca74f9bf48a8dd0f` 已推送。
 
-GitHub outcome: 尚未回复；thread unresolved。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/5#discussion_r3836504840；thread resolved: true。
+
+2026-08-23 第二十轮 final reconciliation（final Plan documentation commit前）：六个 reply/resolve 后，`mise exec -- node .agents/skills/address-pr-threads/scripts/pr_threads.cjs list` 返回零个 unresolved in-scope inline thread。PRRT_kwDOT7YN2s6bZyus、PRRT_kwDOT7YN2s6bZyux、PRRT_kwDOT7YN2s6bZyu1、PRRT_kwDOT7YN2s6bZyu5、PRRT_kwDOT7YN2s6bZyu9 与 PRRT_kwDOT7YN2s6bZyu_ 分别对应 reply `#discussion_r3836500484`、`#discussion_r3836501057`、`#discussion_r3836501516`、`#discussion_r3836502886`、`#discussion_r3836503783` 与 `#discussion_r3836504840`，全部报告 `thread resolved: true`。初始 conversation read中的唯一 nonempty top-level body“Didn’t find any major issues”仍是信息性结论；20 个 connector review body中 19 个是 automated wrapper，唯一 substantive body已在第十五轮记录并 resolved。无 pending、blocked、unlogged 或 unanswered non-blocked source；Plan继续保持 `review`、PR保持 ready/Open。
 
 ## Context and Orientation
 
