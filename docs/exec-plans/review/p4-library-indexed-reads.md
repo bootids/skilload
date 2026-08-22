@@ -101,7 +101,7 @@ DELETE-mode `-journal` 同样不能与 descriptor-bound open 分离：SQLite 官
 - [x] (2026-08-22) 第十六轮 final-review 的五个 inline defect 已由 `eb7bf5dd140a6caf9df8af1d74e18b06193c2f58` 修复并推送：migration backup child与最终 pair绑定 held generation、online backup retry有界、diagnostic backup匹配 source identity、existing-output export cleanup failure可见。五个 focused regression及 `cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets --all-features -- -D warnings`、`cargo test --workspace --all-features --locked`（13+17+184）和 `cargo build --workspace --all-features --locked` 已通过；五个 GitHub replies均已写入、对应 threads均 resolved，final reconciliation 已记录，Plan保持 `review`、PR保持 ready/Open。
 - [x] (2026-08-22) 第十七轮 final-review 已完成：remediation commit `5a01cc6664fb2a3aa1b12bf7d6234b686b97bddc` 修复 scoped `sqlite_sequence` integrity、FTS content materialization 前的 diagnostic budget，以及完整 transfer-size proof 后才广告 recoverable export；focused `sqlite_library`（106）与 workspace fmt/clippy/test（core 187、CLI 13+17）/locked build通过。三个 GitHub reply 均已写入、对应 threads均 resolved；本 review documentation commit 的最终 reconciliation确认 19 comments、79 reviews、62 threads全部 source-complete，Plan保持 `review`、PR保持 ready/Open。
 
-- [x] (2026-08-22) 第十八轮 final-review remediation 已完成，待以当前 preliminary remediation commit 推送：base validation现在验证完整 fixed foreign-key inventory；recovery export probe区分 content failure与 operational error；snapshot-budget doctor finding不再伪报 database 不可写。新增三个 deterministic adapter regression；focused `sqlite_library` 109 tests与 workspace fmt/clippy/test（13+17+190）/locked build均通过，Plan保持 `review`、PR保持 ready/Open。
+- [x] (2026-08-22) 第十八轮 final-review remediation 已由 preliminary remediation commit `f7a9b476e151c1d071573a2655d9ccd33efd3b91` 推送：base validation现在验证完整 fixed foreign-key inventory；recovery export probe区分 content failure与 operational error；snapshot-budget doctor finding不再伪报 database 不可写。新增三个 deterministic adapter regression；focused `sqlite_library` 109 tests与 workspace fmt/clippy/test（13+17+190）/locked build均通过，GitHub已验证 PR head同为该 SHA，Plan保持 `review`、PR保持 ready/Open。
 
 ## Surprises & Discoveries
 
@@ -410,7 +410,7 @@ DELETE-mode `-journal` 同样不能与 descriptor-bound open 分离：SQLite 官
 
 2026-08-22 第十七轮 final-review remediation 已完成。`5a01cc6664fb2a3aa1b12bf7d6234b686b97bddc` 使 base schema proof验证 retained `sqlite_sequence`、FTS diagnostic先于 content materialization施加 budget，并要求 recovery export先通过完整 deterministic transfer-size proof；新增三项 adapter regression。focused `sqlite_library` 106 tests与 workspace fmt/clippy/test（core 187、CLI 13+17）/locked build全部通过。PRRT_kwDOT7YN2s6bX34u、PRRT_kwDOT7YN2s6bX34w 与 PRRT_kwDOT7YN2s6bX34z 的 replies已写入且各自 `thread resolved: true`；完整会话读取无 unlogged、unanswered 或 blocked actual problem，Plan保持 `review`、PR保持 ready/Open。
 
-2026-08-22 第十八轮 final-review remediation 已完成并通过验证，待推送 preliminary evidence：完整 fixed foreign-key inventory在任何 migration write前拒绝 extra relation；recovery export operational probe failure向上传播；snapshot-budget finding保持 `doctor --fix` unchanged但不再使 `database_writable` 为 false。新增 `migration_rejects_unexpected_entry_foreign_key_before_backup`、`corruption_details_propagate_recovery_export_probe_operational_failures` 和 `diagnostic_snapshot_budget_keeps_a_healthy_database_writable`。focused `sqlite_library` 109 tests、`cargo fmt --all -- --check`、all-features clippy、workspace locked tests（core 190、CLI 13+17）和 locked build均通过；Plan保持 `review`、PR保持 ready/Open，三个 inline source尚待本 workflow reply/resolve。
+2026-08-22 第十八轮 final-review remediation 已由 `f7a9b476e151c1d071573a2655d9ccd33efd3b91` 推送并通过验证：完整 fixed foreign-key inventory在任何 migration write前拒绝 extra relation；recovery export operational probe failure向上传播；snapshot-budget finding保持 `doctor --fix` unchanged但不再使 `database_writable` 为 false。新增 `migration_rejects_unexpected_entry_foreign_key_before_backup`、`corruption_details_propagate_recovery_export_probe_operational_failures` 和 `diagnostic_snapshot_budget_keeps_a_healthy_database_writable`。focused `sqlite_library` 109 tests、`cargo fmt --all -- --check`、all-features clippy、workspace locked tests（core 190、CLI 13+17）和 locked build均通过；GitHub已验证 PR head为同一 SHA，Plan保持 `review`、PR保持 ready/Open，三个 inline source尚待本 workflow reply/resolve。
 
 ## Review Conversation Log
 
@@ -1490,9 +1490,9 @@ Disposition: fixed
 
 Status: open
 
-Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 的 shared base validation增加 `validate_foreign_key_inventory`，拒绝 `schema_info`、`state_revision` 与 `library_entries` 的任一 relation；`validate_library_tags_schema` 现同时证明固定 relation的 `ON UPDATE NO ACTION`、`ON DELETE CASCADE` 与 `MATCH NONE`。所有检查在 backup publication、FTS write与 `schema_info.version` update前执行。新增 `migration_rejects_unexpected_entry_foreign_key_before_backup`，构造可满足的 external cascade后断言 version、`repository_id`与 backup state均未变化；本条将随当前 preliminary remediation commit 推送。
+Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 的 shared base validation增加 `validate_foreign_key_inventory`，拒绝 `schema_info`、`state_revision` 与 `library_entries` 的任一 relation；`validate_library_tags_schema` 现同时证明固定 relation的 `ON UPDATE NO ACTION`、`ON DELETE CASCADE` 与 `MATCH NONE`。所有检查在 backup publication、FTS write与 `schema_info.version` update前执行。新增 `migration_rejects_unexpected_entry_foreign_key_before_backup`，构造可满足的 external cascade后断言 version、`repository_id`与 backup state均未变化；remediation commit `f7a9b476e151c1d071573a2655d9ccd33efd3b91` 已推送。
 
-Evidence: focused `migration_rejects_unexpected_entry_foreign_key_before_backup` passed；focused `sqlite_library` 109 passed；`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets --all-features -- -D warnings`、`cargo test --workspace --all-features --locked`（core 190、CLI 13+17）与 `cargo build --workspace --all-features --locked`均通过。
+Evidence: focused `migration_rejects_unexpected_entry_foreign_key_before_backup` passed；focused `sqlite_library` 109 passed；`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets --all-features -- -D warnings`、`cargo test --workspace --all-features --locked`（core 190、CLI 13+17）与 `cargo build --workspace --all-features --locked`均通过；GitHub PR head已验证为 `f7a9b476e151c1d071573a2655d9ccd33efd3b91`。
 
 GitHub outcome: 尚未回复；thread resolved: false。
 
@@ -1506,9 +1506,9 @@ Disposition: fixed
 
 Status: open
 
-Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 将 recovery export probe保留为 `Result`，在 probe后先重验 generation；仅 `DatabaseCorrupt`、`Validation` 与 `LibraryInputLimit` 产生空 identifier，其他 `AppError` 原样向上传播。新增 `before_recovery_export_probe` test hook和 `corruption_details_propagate_recovery_export_probe_operational_failures`，断言 injected `Busy` 不被伪装为 incomplete `database_corrupt` details；本条将随当前 preliminary remediation commit 推送。
+Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 将 recovery export probe保留为 `Result`，在 probe后先重验 generation；仅 `DatabaseCorrupt`、`Validation` 与 `LibraryInputLimit` 产生空 identifier，其他 `AppError` 原样向上传播。新增 `before_recovery_export_probe` test hook和 `corruption_details_propagate_recovery_export_probe_operational_failures`，断言 injected `Busy` 不被伪装为 incomplete `database_corrupt` details；remediation commit `f7a9b476e151c1d071573a2655d9ccd33efd3b91` 已推送。
 
-Evidence: focused `corruption_details_propagate_recovery_export_probe_operational_failures` passed；focused `sqlite_library` 109 passed；`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets --all-features -- -D warnings`、`cargo test --workspace --all-features --locked`（core 190、CLI 13+17）与 `cargo build --workspace --all-features --locked`均通过。
+Evidence: focused `corruption_details_propagate_recovery_export_probe_operational_failures` passed；focused `sqlite_library` 109 passed；`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets --all-features -- -D warnings`、`cargo test --workspace --all-features --locked`（core 190、CLI 13+17）与 `cargo build --workspace --all-features --locked`均通过；GitHub PR head已验证为 `f7a9b476e151c1d071573a2655d9ccd33efd3b91`。
 
 GitHub outcome: 尚未回复；thread resolved: false。
 
@@ -1522,9 +1522,9 @@ Disposition: fixed
 
 Status: open
 
-Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 以 `diagnosis_allows_durable_mutations` 统一 inspect与unchanged-fix的 field mapping，使 `FtsDiagnosticSnapshotTooLarge` 保持 non-fixable/unchanged却不单独拒绝 durable mutation。新增 `diagnostic_snapshot_budget_keeps_a_healthy_database_writable`，对 sparse healthy-v2 image断言 inspect/fix皆为 `database_writable: true`，并证明 metadata mutation继续经过真实 integrity gate成功。`docs/product-specs/api-v2.md`、`docs/product-specs/cache-and-operations.md` 与 `docs/design-docs/application-and-persistence.md` 已同步；本条将随当前 preliminary remediation commit 推送。
+Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 以 `diagnosis_allows_durable_mutations` 统一 inspect与unchanged-fix的 field mapping，使 `FtsDiagnosticSnapshotTooLarge` 保持 non-fixable/unchanged却不单独拒绝 durable mutation。新增 `diagnostic_snapshot_budget_keeps_a_healthy_database_writable`，对 sparse healthy-v2 image断言 inspect/fix皆为 `database_writable: true`，并证明 metadata mutation继续经过真实 integrity gate成功。`docs/product-specs/api-v2.md`、`docs/product-specs/cache-and-operations.md` 与 `docs/design-docs/application-and-persistence.md` 已同步；remediation commit `f7a9b476e151c1d071573a2655d9ccd33efd3b91` 已推送。
 
-Evidence: focused `diagnostic_snapshot_budget_keeps_a_healthy_database_writable` passed；focused `sqlite_library` 109 passed；`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets --all-features -- -D warnings`、`cargo test --workspace --all-features --locked`（core 190、CLI 13+17）与 `cargo build --workspace --all-features --locked`均通过。
+Evidence: focused `diagnostic_snapshot_budget_keeps_a_healthy_database_writable` passed；focused `sqlite_library` 109 passed；`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets --all-features -- -D warnings`、`cargo test --workspace --all-features --locked`（core 190、CLI 13+17）与 `cargo build --workspace --all-features --locked`均通过；GitHub PR head已验证为 `f7a9b476e151c1d071573a2655d9ccd33efd3b91`。
 
 GitHub outcome: 尚未回复；thread resolved: false。
 
