@@ -82,7 +82,7 @@ After a correct replacement is verified and promoted, skilload MUST delete the f
 
 **Behavior.** Before a database schema upgrade, skilload MUST create a recoverable backup and then apply a transactional forward migration. A database with an unknown newer schema or a requested downgrade MUST refuse writes rather than guessing or rewriting.
 
-在创建 backup、写入 FTS 或更新 schema version 前，migration MUST 验证完整固定 base schema inventory，包括 foreign-key inventory；未违反约束的 extra relation 也必须作为 `database_corrupt` 拒绝，不能让 schema-side cascade 改写 Library row。
+在创建 backup、写入 FTS 或更新 schema version 前，migration MUST 验证完整固定 base schema inventory，包括 foreign-key 与 base-table autoindex inventory；每个 base-table autoindex都必须精确对应 fixed primary-key/unique constraint，缺失、重命名或额外 autoindex均作为 `database_corrupt` 拒绝。backup MUST 在完成 baseline validation的同一 SQLite SHARED snapshot内复制，并在最终 schema transaction前重新比较完整 base entries；成功的 `More` backup chunk不得消耗 `Busy`/`Locked` contention retry budget。未违反约束的 extra relation也必须作为 `database_corrupt` 拒绝，不能让 schema-side cascade 改写 Library row。
 
 **Acceptance.** Fault injection leaves either the prior readable database plus backup or the complete new schema. A newer-schema fixture permits safe diagnostics/export where possible but rejects mutation.
 

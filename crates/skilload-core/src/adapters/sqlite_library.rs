@@ -16,7 +16,7 @@ use crate::domain::library::{
     MAX_PORTABLE_LIBRARY_ENTRIES, PortableLibraryDocument, PortableLibraryEntry,
 };
 use crate::domain::source::{RefKind, ResolvedSkill, SourceIdentity, parse_decimal_u64};
-use crate::domain::unicode_15_1::normalize_tag;
+use crate::domain::unicode_15_1::{full_case_fold, normalize_tag};
 use crate::error::{AppError, Conflict};
 use crate::ports::configuration::{Environment, ResolvedRoots, StateRootResolver};
 use crate::ports::doctor::DatabaseMaintenance;
@@ -41,7 +41,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tempfile::{Builder, NamedTempFile};
-use unicode_normalization::{UnicodeNormalization, is_nfc};
+use unicode_normalization::UnicodeNormalization;
 
 const SCHEMA_VERSION: u64 = 2;
 const API_V1_UINT_MAX: i64 = 9_007_199_254_740_991;
@@ -68,6 +68,11 @@ const BASE_SCHEMA_TABLES: [&str; 4] = [
     "state_revision",
     "library_entries",
     "library_tags",
+];
+const BASE_AUTOINDICES: [(&str, &str); 3] = [
+    ("sqlite_autoindex_library_entries_1", "library_entries"),
+    ("sqlite_autoindex_library_entries_2", "library_entries"),
+    ("sqlite_autoindex_library_tags_1", "library_tags"),
 ];
 const SQLITE_INTERNAL_TABLES: [&str; 1] = ["sqlite_sequence"];
 const BASE_INTEGRITY_TABLES: [&str; 5] = [
@@ -1296,7 +1301,7 @@ impl SqliteLibraryRepository {
             data_directory.revalidate()?;
             Self::revalidate_database_identity(&database, identity)?;
 
-            let state_revision_baseline = {
+            let (state_revision_baseline, entries) = {
                 let transaction = connection
                     .transaction()
                     .map_err(|error| database_error(&database, error))?;
@@ -1311,28 +1316,24 @@ impl SqliteLibraryRepository {
                     "SELECT revision FROM state_revision",
                     &database,
                 )?;
+                let entries = load_validated_entries(&transaction, &database)?;
+                // Keep this SHARED snapshot alive until the recovery image is
+                // durable, so the validated rows and backup cannot diverge.
+                self.publish_validated_backup(
+                    &data_directory,
+                    &transaction,
+                    &database,
+                    identity,
+                    revision,
+                )?;
                 transaction
                     .commit()
                     .map_err(|error| database_error(&database, error))?;
-                revision
+                (revision, entries)
             };
+
             data_directory.revalidate()?;
             Self::revalidate_database_identity(&database, identity)?;
-
-            let entries = {
-                let transaction = connection
-                    .transaction()
-                    .map_err(|error| database_error(&database, error))?;
-                load_validated_entries(&transaction, &database)?
-            };
-
-            self.publish_validated_backup(
-                &data_directory,
-                &connection,
-                &database,
-                identity,
-                state_revision_baseline,
-            )?;
 
             let transaction = connection
                 .transaction()
@@ -1359,6 +1360,13 @@ impl SqliteLibraryRepository {
                     "library_database",
                     "migration_state_revision_changed",
                     ["the state revision recorded with the backup"],
+                ));
+            }
+            if load_validated_entries(&transaction, &database)? != entries {
+                return Err(AppError::invalid_state(
+                    "library_database",
+                    "migration_baseline_changed",
+                    ["the validated base rows recorded with the backup"],
                 ));
             }
             transaction
@@ -3119,6 +3127,7 @@ fn validate_library_schema_inventory(
         })
         .map_err(|error| database_error(path, error))?;
     let mut sqlite_internal_tables = Vec::new();
+    let mut seen_base_autoindices = [false; BASE_AUTOINDICES.len()];
     for object in objects {
         let (object_type, name, table_name, sql) =
             object.map_err(|error| database_error(path, error))?;
@@ -3131,15 +3140,32 @@ fn validate_library_schema_inventory(
             .find(|table| *table == name.as_str());
         let allowed_table = object_type == "table"
             && (base_table || derived_table || sqlite_internal_table.is_some());
-        let owner_is_base_table = BASE_SCHEMA_TABLES.contains(&table_name.as_str());
         let owner_is_derived_table = matches!(generation, SchemaGeneration::V2)
             && (table_name == "library_fts"
                 || LIBRARY_FTS_SHADOW_TABLES.contains(&table_name.as_str()));
         let owner_is_sqlite_internal_table = SQLITE_INTERNAL_TABLES.contains(&table_name.as_str());
-        let allowed_autoindex = object_type == "index"
+        let expected_base_autoindex =
+            BASE_AUTOINDICES
+                .iter()
+                .position(|(expected_name, expected_owner)| {
+                    name == *expected_name && table_name == *expected_owner
+                });
+        let allowed_base_autoindex =
+            object_type == "index" && sql.is_none() && expected_base_autoindex.is_some();
+        if let Some(index) = expected_base_autoindex.filter(|_| allowed_base_autoindex) {
+            seen_base_autoindices[index] = true;
+        }
+        let allowed_derived_autoindex = object_type == "index"
             && name.starts_with("sqlite_autoindex_")
             && sql.is_none()
-            && (owner_is_base_table || owner_is_derived_table || owner_is_sqlite_internal_table);
+            && owner_is_derived_table;
+        let allowed_sqlite_internal_autoindex = object_type == "index"
+            && name.starts_with("sqlite_autoindex_")
+            && sql.is_none()
+            && owner_is_sqlite_internal_table;
+        let allowed_autoindex = allowed_base_autoindex
+            || allowed_derived_autoindex
+            || allowed_sqlite_internal_autoindex;
         if !(allowed_table || allowed_autoindex) {
             return Err(AppError::database_corrupt(NativePath::new(
                 path.to_path_buf(),
@@ -3148,6 +3174,11 @@ fn validate_library_schema_inventory(
         if allowed_table && let Some(table) = sqlite_internal_table {
             sqlite_internal_tables.push(table);
         }
+    }
+    if !seen_base_autoindices.into_iter().all(|seen| seen) {
+        return Err(AppError::database_corrupt(NativePath::new(
+            path.to_path_buf(),
+        )));
     }
     Ok(sqlite_internal_tables)
 }
@@ -3324,9 +3355,13 @@ fn migration_backup_too_large() -> AppError {
     )
 }
 
-/// Apply the database contention budget to every incomplete online-backup
-/// step. `More` can repeat forever when a writer keeps invalidating the
-/// snapshot, so it must not be treated as unbounded forward progress.
+/// Apply the database contention budget only when SQLite reports a lock.
+/// `More` means a chunk copied successfully and is bounded by the backup
+/// size ceiling rather than the contention deadline.
+fn backup_step_is_contention(result: &StepResult) -> bool {
+    matches!(result, StepResult::Busy | StepResult::Locked)
+}
+
 fn wait_for_backup_retry(started: Instant) -> Result<(), AppError> {
     let elapsed = started.elapsed();
     if elapsed >= LOCK_WAIT {
@@ -3362,7 +3397,8 @@ fn copy_bounded_backup(
         }
         match result {
             StepResult::Done => return Ok(()),
-            StepResult::More | StepResult::Busy | StepResult::Locked => {
+            StepResult::More => {}
+            result if backup_step_is_contention(&result) => {
                 wait_for_backup_retry(retry_started)?;
             }
             _ => wait_for_backup_retry(retry_started)?,
@@ -3668,16 +3704,20 @@ fn load_tags(
     Ok(tags)
 }
 
-/// Preserve original free-text bytes in the derived index while adding the
-/// NFC form that `LibrarySearchQuery` uses for literal query alternatives.
+/// Preserve original free-text bytes in the derived index, then append
+/// distinct NFC and full-case-folded NFC forms for literal query alternatives.
 fn fts_free_text_projection(value: &str) -> String {
-    if is_nfc(value) {
-        return value.to_owned();
-    }
-
+    let normalized = value.nfc().collect::<String>();
+    let folded = full_case_fold(&normalized).nfc().collect::<String>();
     let mut projection = value.to_owned();
-    projection.push('\n');
-    projection.extend(value.nfc());
+    if normalized != value {
+        projection.push('\n');
+        projection.push_str(&normalized);
+    }
+    if folded != normalized {
+        projection.push('\n');
+        projection.push_str(&folded);
+    }
     projection
 }
 
@@ -4415,6 +4455,7 @@ mod tests {
         ffi::{OsStrExt, OsStringExt},
         fs::{FileTypeExt, symlink},
     };
+    use std::sync::atomic::{AtomicBool, Ordering};
     use tempfile::tempdir;
 
     #[derive(Default)]
@@ -6145,6 +6186,13 @@ mod tests {
     }
 
     #[test]
+    fn online_backup_waits_only_for_contention() {
+        assert!(!backup_step_is_contention(&StepResult::More));
+        assert!(backup_step_is_contention(&StepResult::Busy));
+        assert!(backup_step_is_contention(&StepResult::Locked));
+    }
+
+    #[test]
     fn database_sync_error_preserves_native_path_bytes() {
         let raw = b"/tmp/library-database-\xff.db";
         let path = PathBuf::from(OsString::from_vec(raw.to_vec()));
@@ -7074,6 +7122,29 @@ mod tests {
     }
 
     #[test]
+    fn search_matches_expanding_full_case_fold_in_free_text_fields() {
+        let temporary = tempdir().unwrap();
+        let mut description = entry("skills/fold-description", None);
+        description.skill.description = "Straße".to_owned();
+        let mut alias = entry("skills/fold-alias", None);
+        alias.alias = Some("Straße".to_owned());
+        let mut category = entry("skills/fold-category", None);
+        category.category = Some("Straße".to_owned());
+        let mut note = entry("skills/fold-note", None);
+        note.note = Some("Straße".to_owned());
+        let entries = vec![description, alias, category, note];
+        let mut expected = entries
+            .iter()
+            .map(|entry| entry.skill.source.canonical.clone())
+            .collect::<Vec<_>>();
+        expected.sort();
+        let repository = imported_repository(&temporary, entries);
+
+        assert_eq!(search(&repository, "STRASSE"), expected);
+        assert_eq!(fts_free_text_projection("Straße"), "Straße\nstrasse");
+    }
+
+    #[test]
     fn same_name_sources_coexist_and_search_orders_by_source() {
         let temporary = tempdir().unwrap();
         let one = entry("skills/one/review", None);
@@ -7375,6 +7446,68 @@ mod tests {
         let error = repository.fix().unwrap_err();
 
         assert!(matches!(error, AppError::DatabaseCorrupt { .. }));
+        assert_eq!(read_schema_version(&database), 1);
+        assert!(!temporary.path().join("data/skilload/backups").exists());
+    }
+
+    #[test]
+    fn migration_rejects_unrecognized_base_autoindex_before_backup_or_write() {
+        let temporary = tempdir().unwrap();
+        let database = initialize_v1_database(&temporary);
+        Connection::open(&database)
+            .unwrap()
+            .execute_batch(
+                "PRAGMA foreign_keys = OFF;
+                 CREATE TABLE library_entries_replacement (
+                    canonical_source TEXT PRIMARY KEY NOT NULL,
+                    owner TEXT NOT NULL,
+                    repository TEXT NOT NULL,
+                    repository_display TEXT NOT NULL,
+                    skill_path TEXT NOT NULL,
+                    ref_kind TEXT NOT NULL,
+                    ref_value TEXT NOT NULL,
+                    repository_id TEXT NOT NULL,
+                    commit_sha TEXT NOT NULL,
+                    integrity TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    description TEXT NOT NULL,
+                    entry_count TEXT NOT NULL,
+                    byte_count TEXT NOT NULL,
+                    alias TEXT UNIQUE,
+                    category TEXT UNIQUE ON CONFLICT REPLACE,
+                    note TEXT
+                 );
+                 INSERT INTO library_entries_replacement (
+                    canonical_source, owner, repository, repository_display, skill_path, ref_kind,
+                    ref_value, repository_id, commit_sha, integrity, name, description, entry_count,
+                    byte_count, alias, category, note
+                 )
+                 SELECT
+                    canonical_source, owner, repository, repository_display, skill_path, ref_kind,
+                    ref_value, repository_id, commit_sha, integrity, name, description, entry_count,
+                    byte_count, alias, category, note
+                 FROM library_entries;
+                 DROP TABLE library_entries;
+                 ALTER TABLE library_entries_replacement RENAME TO library_entries;
+                 PRAGMA foreign_keys = ON;",
+            )
+            .unwrap();
+        let repository = SqliteLibraryRepository::with_environment(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(XdgRootResolver),
+        );
+
+        assert!(matches!(
+            repository.mutate_metadata(&metadata_mutation(
+                "github:owner/repository#skills/review@refs/heads/main",
+                LibraryMetadataChange::NoteSet("blocked".to_owned()),
+            )),
+            Err(AppError::DatabaseCorrupt { .. })
+        ));
+        assert!(matches!(
+            repository.fix(),
+            Err(AppError::DatabaseCorrupt { .. })
+        ));
         assert_eq!(read_schema_version(&database), 1);
         assert!(!temporary.path().join("data/skilload/backups").exists());
     }
@@ -7766,6 +7899,55 @@ mod tests {
             }
             Ok(())
         }
+    }
+
+    struct MigrationBackupSnapshotWriter {
+        database: PathBuf,
+        commit_was_blocked: AtomicBool,
+        observed: AtomicBool,
+    }
+
+    impl PersistenceHooks for MigrationBackupSnapshotWriter {
+        fn after_backup_copy(&self, _staging: &Path) -> Result<(), AppError> {
+            let connection = Connection::open(&self.database).unwrap();
+            connection.busy_timeout(Duration::ZERO).unwrap();
+            connection
+                .execute_batch(
+                    "BEGIN IMMEDIATE;
+                     UPDATE state_revision SET revision = revision + 1;",
+                )
+                .unwrap();
+            let commit_was_blocked = connection.execute_batch("COMMIT").is_err();
+            if commit_was_blocked {
+                connection.execute_batch("ROLLBACK").unwrap();
+            }
+            self.commit_was_blocked
+                .store(commit_was_blocked, Ordering::Relaxed);
+            self.observed.store(true, Ordering::Relaxed);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn migration_backup_stays_with_the_validated_live_snapshot() {
+        let temporary = tempdir().unwrap();
+        let database = initialize_v1_database(&temporary);
+        let hook = Arc::new(MigrationBackupSnapshotWriter {
+            database: database.clone(),
+            commit_was_blocked: AtomicBool::new(false),
+            observed: AtomicBool::new(false),
+        });
+        let repository = SqliteLibraryRepository::with_hooks(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(XdgRootResolver),
+            hook.clone(),
+        );
+
+        repository.fix().unwrap();
+
+        assert!(hook.observed.load(Ordering::Relaxed));
+        assert!(hook.commit_was_blocked.load(Ordering::Relaxed));
+        assert_eq!(read_schema_version(&database), 2);
     }
 
     #[test]
