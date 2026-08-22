@@ -98,7 +98,7 @@ DELETE-mode `-journal` 同样不能与 descriptor-bound open 分离：SQLite 官
 - [x] (2026-08-22) 第十四轮 final-review 的四个 inline defect 已在现有 Product Baseline 内完成：FTS read diagnostic 使用 536,870,912-byte page budget、backup candidate 在 268,435,456 bytes 前拒绝、base schema 拒绝 user trigger、search 在 count/page 前运行 special integrity check。三条 new regression 已 red→green，另有 budget boundary regression；`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets --all-features -- -D warnings`、`cargo test --workspace --all-features --locked`（174 passed）、`cargo build --workspace --all-features --locked` 与 `git diff --check` 已通过。修复与 preliminary log 的 `d9791172fdfcdec82f0adbdb0d96505cffc87e65` 已推送并与 PR head 验证一致；四个 GitHub replies 已写入、对应 inline threads 均 resolved，final reconciliation 已记录在本 Log。
 - [x] (2026-08-22) 第十五轮 final-review 的 review body 加四个 inline defect已由 `3f1e563d74aef7d0a83e1d65a23e8d7dd7a28bf4` 修复并推送：existing-output export现在清理仍匹配 captured identity的 displaced link；doctor区分 snapshot-budget resource finding；migration backup在 copy/hash 前及每个 online-backup chunk受 268,435,456-byte ceiling；base proof要求 exact schema inventory；backup candidate operational failure传播。全 workspace fmt/clippy/test（13+17+179）/all-features locked build通过；review body已获 reply，四个 inline threads均已回复并 resolved。
 - [x] (2026-08-22) finalized Review Conversation Log documentation commit `063ceb6fc3c484af6527a2e44119e888dd756ea1` 已推送；post-push `list --all` 再次确认 17 个 comments、69 个 reviews、54 个 threads，全部 source已记录、无 unresolved/blocked，PR head与本地同为该 commit，Plan保持 `review`、PR保持 ready/Open。
-- [x] (2026-08-22) 第十六轮 final-review 的五个 inline defect 已在当前 Product Baseline 内完成本地 remediation：migration backup child与最终 pair绑定 held generation、online backup retry有界、diagnostic backup匹配 source identity、existing-output export cleanup failure可见。五个 focused regression及 `cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets --all-features -- -D warnings`、`cargo test --workspace --all-features --locked`（13+17+184）和 `cargo build --workspace --all-features --locked` 已通过；preliminary remediation commit `eb7bf5dd140a6caf9df8af1d74e18b06193c2f58` 已推送并与 PR head一致，GitHub replies与thread resolution待完成。
+- [x] (2026-08-22) 第十六轮 final-review 的五个 inline defect 已由 `eb7bf5dd140a6caf9df8af1d74e18b06193c2f58` 修复并推送：migration backup child与最终 pair绑定 held generation、online backup retry有界、diagnostic backup匹配 source identity、existing-output export cleanup failure可见。五个 focused regression及 `cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets --all-features -- -D warnings`、`cargo test --workspace --all-features --locked`（13+17+184）和 `cargo build --workspace --all-features --locked` 已通过；五个 GitHub replies均已写入、对应 threads均 resolved，final reconciliation 已记录，Plan保持 `review`、PR保持 ready/Open。
 
 ## Surprises & Discoveries
 
@@ -371,6 +371,8 @@ DELETE-mode `-journal` 同样不能与 descriptor-bound open 分离：SQLite 官
 2026-08-22 第十三轮 final-review remediation 已由 `513799b4adc5a57cde34a1d1d977636293c93600` 修复并推送：`validate_library_tags_schema` 新增 composite-key proof，`with_validated_standalone_backup_snapshot` 使 backup digest保持在已验证 SHARED snapshot 内，`validate_library_entry_count` 在 load 前最多检查第 10,001 个 row。新增 tests 覆盖 duplicated tags、snapshot-held writer 与 oversized base rows；focused tests及全 workspace fmt/clippy/test（13+17+170）/all-features locked build均通过。三个 GitHub replies 已写入、对应 thread均 resolved，Plan 保持 `review`、PR 保持 ready。
 
 2026-08-22 第十五轮 final-review remediation 已完成。`3f1e563d74aef7d0a83e1d65a23e8d7dd7a28bf4` 修复 five actual problems：existing-output export cleanup、FTS snapshot-budget resource classification、migration backup ceiling、exact schema inventory与backup candidate operational-error propagation；新增五项 regression，workspace fmt/clippy/test（13+17+179）/all-features locked build均通过。review body已获 top-level reply，四个 inline sources均已回复并 resolved；finalized Review Conversation Log documentation commit待推送，Plan继续保持 `review`、PR保持 ready/Open。
+
+2026-08-22 第十六轮 final-review remediation 已完成。`eb7bf5dd140a6caf9df8af1d74e18b06193c2f58` 将 migration recovery pair绑定到 held data generation、在 schema write前重验 published pair、限制 online backup retry、拒绝 source identity不匹配的 diagnostic backup，并将 export cleanup I/O failure转为 visible error；五项新增 regression与 workspace fmt/clippy/test（13+17+184）/all-features locked build均通过。五个 inline replies已写入且 resolved；最终完整会话读取为 18 个 top-level comments、75 个 submitted reviews 与 59 个 review threads，全部 actual thread source有本 Log entry，无 pending、blocked 或 unanswered problem。Plan保持 `review`、PR保持 ready/Open。
 
 ## Review Conversation Log
 
@@ -1312,13 +1314,13 @@ Problem: `publish_validated_backup` 从 pathname `roots.data.effective.join("bac
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 将 held `data_directory` 传入 backup publication，并通过 `ValidatedDataDirectory::create_restrictive_child` descriptor-relative创建/打开 `backups`；final `linkat` publication仍使用该 child descriptor。新增 `backup_directory_creation_uses_the_held_data_generation`，证明 pathname replacement时 child进入 held generation；remediation commit `eb7bf5dd140a6caf9df8af1d74e18b06193c2f58` 已推送。
 
 Evidence: 五个 focused regression与 `cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets --all-features -- -D warnings`、`cargo test --workspace --all-features --locked`（13+17+184）及 `cargo build --workspace --all-features --locked` 均通过；PR head已验证为 remediation commit `eb7bf5dd140a6caf9df8af1d74e18b06193c2f58`。
 
-GitHub outcome: 尚未回复；thread resolved: false。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/5#discussion_r3835662820；thread resolved: true。
 
 ### PRRT_kwDOT7YN2s6bXbBn - migration 前重验已发布 backup pair
 
@@ -1328,13 +1330,13 @@ Problem: `verify_published_entry` 在 directory sync 前执行；`after_backup_p
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 于 final backup-directory sync和 `after_backup_publish` hook后重验 held directory及 database/manifest pair identity，再允许 migration transaction。新增 `migration_revalidates_the_published_backup_before_schema_write`，替换 published DB后断言 schema保持 v1；remediation commit `eb7bf5dd140a6caf9df8af1d74e18b06193c2f58` 已推送。
 
 Evidence: 五个 focused regression与 `cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets --all-features -- -D warnings`、`cargo test --workspace --all-features --locked`（13+17+184）及 `cargo build --workspace --all-features --locked` 均通过；PR head已验证为 remediation commit `eb7bf5dd140a6caf9df8af1d74e18b06193c2f58`。
 
-GitHub outcome: 尚未回复；thread resolved: false。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/5#discussion_r3835663126；thread resolved: true。
 
 ### PRRT_kwDOT7YN2s6bXbBp - 限制 online backup 的重试时间
 
@@ -1344,13 +1346,13 @@ Problem: `copy_bounded_backup` 对 `StepResult::More`、`Busy` 与 `Locked` 无�
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 以 `wait_for_backup_retry` 为每个 `More`/`Busy`/`Locked` step应用 `LOCK_RETRY` 与 `LOCK_WAIT` deadline，超时返回既有 typed database `busy`。新增 `online_backup_retry_window_returns_the_bounded_database_busy_error`；remediation commit `eb7bf5dd140a6caf9df8af1d74e18b06193c2f58` 已推送。
 
 Evidence: 五个 focused regression与 `cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets --all-features -- -D warnings`、`cargo test --workspace --all-features --locked`（13+17+184）及 `cargo build --workspace --all-features --locked` 均通过；PR head已验证为 remediation commit `eb7bf5dd140a6caf9df8af1d74e18b06193c2f58`。
 
-GitHub outcome: 尚未回复；thread resolved: false。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/5#discussion_r3835663410；thread resolved: true。
 
 ### PRRT_kwDOT7YN2s6bXbBu - 传播 displaced export 的 unlink failure
 
@@ -1360,13 +1362,13 @@ Problem: existing-output `RENAME_EXCHANGE` success path确认 displaced entry仍
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: 已在 `crates/skilload-core/src/adapters/portable_library.rs` 将 captured displaced entry的 `unlinkat` failure映射为 typed `library_export_io` validation error，同时保持 identity-mismatch的 foreign replacement保护。新增 `export_reports_a_displaced_output_cleanup_failure`，以 parent permission failure断言 command不报告 success；remediation commit `eb7bf5dd140a6caf9df8af1d74e18b06193c2f58` 已推送。
 
 Evidence: 五个 focused regression与 `cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets --all-features -- -D warnings`、`cargo test --workspace --all-features --locked`（13+17+184）及 `cargo build --workspace --all-features --locked` 均通过；PR head已验证为 remediation commit `eb7bf5dd140a6caf9df8af1d74e18b06193c2f58`。
 
-GitHub outcome: 尚未回复；thread resolved: false。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/5#discussion_r3835663797；thread resolved: true。
 
 ### PRRT_kwDOT7YN2s6bXbBx - 只广告匹配诊断 generation 的 backup
 
@@ -1376,13 +1378,15 @@ Problem: `backup_pair_is_valid` 验证 manifest format/schema/digest/standalone 
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 将 diagnosed identity传给 `known_validated_backups`/`backup_pair_is_valid`，只接受 manifest source device/inode相同的 pair；orphan-sidecar path无 identity时返回 empty inventory。新增 `backup_manifest_must_match_the_diagnosed_database_generation`，篡改 manifest source inode后断言 `database_corrupt` 不广告 backup；remediation commit `eb7bf5dd140a6caf9df8af1d74e18b06193c2f58` 已推送。
 
 Evidence: 五个 focused regression与 `cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets --all-features -- -D warnings`、`cargo test --workspace --all-features --locked`（13+17+184）及 `cargo build --workspace --all-features --locked` 均通过；PR head已验证为 remediation commit `eb7bf5dd140a6caf9df8af1d74e18b06193c2f58`。
 
-GitHub outcome: 尚未回复；thread resolved: false。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/5#discussion_r3835664126；thread resolved: true。
+
+2026-08-22 第十六轮 final reconciliation：五个 remediation reply 后的 `list --all` 读取到 18 个 top-level comments、75 个 submitted reviews 与 59 个 review threads。59 个 root thread ID全部有本 Log `Source`，无 unresolved thread；本轮五个 reply URL均与各条目一致并报告 `thread resolved: true`。新增的五个 submitted review records是 inline reply container，不含独立问题；top-level trigger、automated wrapper与 empty review container同样不构成独立问题。无 pending、blocked、unlogged 或 unanswered non-blocked actual problem。
 
 ## Context and Orientation
 
