@@ -58,11 +58,11 @@ FTS tokenizer固定为 bundled SQLite 的 `unicode61 remove_diacritics 0`。Doma
 
 `docs/references/sqlite-fts5-library-search.md` 记录 FTS5 string quoting、bare-phrase implicit AND的语法边界与显式 `AND` 组合、`unicode61`、content-bearing index、special `integrity-check`/`rebuild` 与 rusqlite backup API事实。`docs/references/sqlite-backup-and-corruption-recovery.md` 规定 live WAL generation不能靠复制 main file备份；migration必须用 SQLite online backup得到 standalone snapshot，并记录 read-only SQLite 打开 WAL-mode generation会创建 `-shm`/`-wal` sidecar、`immutable=1` 会忽略 WAL 内容的实验事实。为 `rusqlite 0.40.2` 启用 `backup` feature，并加入 `sha2 0.11.0`（`default-features = false`）流式计算 SHA-256；不得引入 async runtime、ORM、外部 search service或通用 migration framework。
 Review remediation 固定以下实现约束：`writable_schema=ON` 只在 descriptor-bound connection 上临时容忍 malformed derived schema，以验证 base/portable projection；任何 mutation 继续在 write 前执行 special `integrity-check` 并只将 confirmed derived drift 映射为 `library_fts_invalid`；repair 删除 FTS/shadow schema rows 后以 `RESET` reload schema；recovery export 不依赖 `schema_info`/`state_revision`，但必须验证 entries/tags schema、integrity、foreign keys 和 portable domain document。Published backup-pair target protection 属于 portable adapter，不把 SQLite backup validation helper 反向暴露给 CLI。
-本轮 remediation 还要求：unknown newer schema 在任何当前 base-table validation 前以 `schema_newer` 分类；共用 absent-database probe 在 roots 重验前后执行，不能把 resolution 后替换的空 root 当成功 empty state。物理 FTS shadow 损坏先提交 schema detach、在 durable lock 内无 open transaction 时 `VACUUM` 回收不可达 pages并重验 database identity，随后用新 transaction 重建；中断状态保持 FTS missing/invalid 而非带 orphan pages 的伪 healthy。
+本轮 remediation 还要求：unknown newer schema 在任何当前 base-table validation 前以 `schema_newer` 分类；共用 absent-database probe 对已存在 `data/skilload` 使用 held no-follow directory descriptor 的相对 main-file/sidecar census，并在结果返回前后复核 descriptor 与 roots，不能把临时换入的空目录当成功 empty state；portable export 对 `data/backups` 使用同样 root-bound held directory inventory，entry identity 随 protection 保留，不能让 temporary empty-directory ABA 漏掉 published pair。物理 FTS shadow 损坏先提交 schema detach、在 durable lock 内无 open transaction 时 `VACUUM` 回收不可达 pages并重验 database identity，随后用新 transaction 重建；中断状态保持 FTS missing/invalid 而非带 orphan pages 的伪 healthy。
 
 Read兼容性是显式边界。完整 v1 base rows可供 list/get/export只读；search和所有 database writes返回现有 API-v2 `migration_required`，直到 `doctor --fix`。Default doctor从 identity-bound read-only source向内存 SQLite destination做 online backup，在副本上执行需要 writable connection的 FTS5 special check，因此 live XDG state保持不变。该不变性不能仅由 read-only flag推出：read-only SQLite connection打开 WAL-mode generation时会在可写 data directory创建并保留 `-shm`（header 为 WAL 而 sidecar缺失时连 `-wal` 一并创建），`immutable=1` 虽不创建 sidecar却忽略 WAL 内容。因此所有对已存在 live database的 read-only opens（list/get/search/export/doctor inspect）先在 root anchors 前后持有并重验 `data/skilload` 的 no-follow directory descriptor，再从该 descriptor 以 `openat(..., O_RDONLY|O_NOFOLLOW|O_NONBLOCK)` 打开单组件 main-file；`fstat` regular type、relative entry identity、100-byte header和相对 `-journal`/`-wal`/`-shm` 盘点均针对同一 held directory generation。journal-mode bytes（偏移18/19）非 (1,1) 或存在任一 sibling的 generation不属于任何 skilload 二进制可能发布的 DELETE-journal state，不经 SQLite open 即返回 `database_corrupt`；directory 或 main-file identity/ABA replacement 返回 `database_identity_drift`，symlink、FIFO及其他 non-regular entry 一律拒绝，且 FIFO 不会等待 writer。SQLite read-only connection仅从 held main-file descriptor的 `/dev/fd/<fd>` 打开；transaction 前后持续重验 held directory、relative entry和 pathname identity。
 DELETE-mode `-journal` 同样不能与 descriptor-bound open 分离：SQLite 官方文档说明 active writer 的 RESERVED lock 与 hot journal 的 crash recovery 有不同含义，但 `/dev/fd/<fd>` 不能安全关联 pathname journal。当前 Plan 选择可证明 filesystem-inert 的保守边界：任意在 gate 时已观察到的 `-journal`、`-wal`、`-shm` 都在 SQLite 前按 `database_corrupt` 拒绝；这牺牲 active writer 期间的 read availability，避免误读可能未恢复的 main image。
-同一 root-binding 规则也适用于 absent return：`database_exists_with_details` 在 pathname absence probe 前后重验 `ResolvedRoots`，所以目录在 `resolve_roots` 与返回 empty/not_found 之间被替换时返回 root identity error，不采纳 replacement generation。
+同一 root-binding 规则也适用于 absent return：`database_exists_with_details` 在已存在 `data/skilload` 时先持有 descriptor，再以 relative `statat` 检查 main file 与 sidecars，并在 probe、错误 enrichment 和返回结果前后重验 `ResolvedRoots` 与 held directory；因此 temporary empty-directory ABA 不能被 list/search/get/export/default doctor 当作 empty/not_found generation。`data/skilload` 本身 truly absent 时不创建任何 root，仍在返回前后重验 roots。
 
 ## Purpose / Big Picture
 
@@ -93,6 +93,7 @@ DELETE-mode `-journal` 同样不能与 descriptor-bound open 分离：SQLite 官
 - [x] (2026-08-21) 第九轮 final-review 的三个 inline 问题已由 `a140aad0f9fa85c0a9cb74f433793e4644bd2ce4` 修复并推送：三个新 regression 已由 red→green 证明，workspace fmt/clippy/test/build 全部通过；三个 GitHub reply 已写入、对应 thread 均 resolved，最终 complete conversation reconciliation 无未记录或 blocked actual problem。
 - [x] (2026-08-21) 第十轮 final-review 的两个 inline defect 已由 `9dc0fd058d54cf67f4d9e3edea5e9d7cdabc34f0` 推送：共享 FTS projection 为 non-NFC free-text 保留 raw 加 NFC alternative，read snapshot 在 callback 返回 error 前重验 generation；两项新增 adapter regression red→green，workspace fmt/clippy/test/locked build 均通过。两个 GitHub reply 已成功写入且 threads 均 resolved；最终 reconciliation 无未记录、未回答或 blocked source，final Review Conversation Log documentation commit 已推送。
 - [x] (2026-08-22) 第十一轮 final-review 的三个 inline defect 已在现有 Product Baseline 内完成 remediation：portable export 对不可完整枚举的 migration backup inventory fail closed、writable SQLite connection 在最终 generation revalidation 后再次执行 `SQLITE_FCNTL_HAS_MOVED`、FTS reference 记录 detach commit → `VACUUM` → fresh rebuild transaction。两项新增 regression、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace`（13+17+164）与 `cargo build --workspace --locked` 已通过；预备 remediation commit `f032f9c1f087fa72b7ca55666e8b5d92e3149f27`、preliminary evidence `b6c0410` 已推送，三个 GitHub reply 已写入且 inline threads 均 resolved，Plan 保持 `review`、PR 保持 ready。
+- [x] (2026-08-22) 第十二轮 final-review 的三个 inline defect 已在本地完成 remediation：existing `data/skilload` 的 absence/sidecar probe 现在使用 held descriptor，portable published-backup protection 使用 root-bound held `backups` descriptor 与 entry identity，corruption backup manifest enumeration 错误不再伪装为空 inventory。三项新 deterministic regression 通过；`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace`（13+17+167）与 `cargo build --workspace --locked` 均通过。剩余：inspect diff、提交并推送 preliminary evidence，随后回复/resolve 三个 thread。
 
 ## Surprises & Discoveries
 
@@ -284,6 +285,10 @@ DELETE-mode `-journal` 同样不能与 descriptor-bound open 分离：SQLite 官
 
 - Decision: writable `open_existing_database` 保留 open 后的早期 `SQLITE_FCNTL_HAS_MOVED` 检查，并在 held directory entry/path identity revalidation 后重复同一 check。
   Rationale: 早期检查快速拒绝 stable replacement；第二次检查覆盖 replacement 在第一次通过后被攻击者恢复原 pathname 的 ABA 窗口。所有 existing import、metadata mutation、migration 和 FTS repair 都通过此 helper，因此不新增调用方分支。
+  Date/Author: 2026-08-22 / Codex
+
+- Decision: existing-database absence、corruption backup inventory 与 portable backup protection 都以 held no-follow directory descriptor 枚举，并把 confirmed regular entry identity保留到 alias comparison；backup manifest directory 的初始化或逐项读取错误不再折叠为空 inventory。
+  Rationale: PRRT_kwDOT7YN2s6bVO6b 证明 root revalidation不能单独检测在 pathname probe 内完成的 empty-directory ABA；PRRT_kwDOT7YN2s6bVO6e 证明 pathname `read_dir` 会让 export 在已持有 output-parent descriptor时漏掉 published recovery pair；PRRT_kwDOT7YN2s6bVO6g 证明 held descriptor 的 enumeration error同样不能伪装 absence。descriptor-relative census + returned identity + fail-closed errors同时保持 `SKL-OPS-004` recovery evidence与 `SKL-LIB-009` Revision 5 recovery asset protection。
   Date/Author: 2026-08-22 / Codex
 
 ## Outcomes & Retrospective
@@ -984,6 +989,56 @@ Evidence: `fts_shadow_corruption_stays_doctor_fixable` 的既有 whole-database 
 GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/5#discussion_r3832027255；thread resolved: true。
 
 2026-08-22 第十一轮 final reconciliation：PR #5 当前有 12 个 top-level comments、51 个 submitted reviews 与 40 个 review threads；40 个 thread 的 current `isResolved` 均为 true。新 top-level `IC_kwDOT7YN2s8AAAABQDWwtw` 是 `@codex` trigger，`PRR_kwDOT7YN2s8AAAABKbzRzA` 是 automated wrapper，均无独立问题；三个新 empty `@bootids` review containers `PRR_kwDOT7YN2s8AAAABKcDnuw`、`PRR_kwDOT7YN2s8AAAABKcDvsA`、`PRR_kwDOT7YN2s8AAAABKcD3lQ` 仅承载本轮 inline replies。PRRT_kwDOT7YN2s6bN3dy、PRRT_kwDOT7YN2s6bN3d2、PRRT_kwDOT7YN2s6bN3d7 的 `f032f9c1f087fa72b7ca55666e8b5d92e3149f27` evidence、reply URL 和 resolved state 已完整记录；无 pending、blocked 或未记录 actual problem。
+
+2026-08-22 第十二轮 final-review 初始分类：`mise exec -- node .agents/skills/address-pr-threads/scripts/pr_threads.cjs list --all` 读取到 13 个 top-level comments、52 个 submitted reviews 与 43 个 review threads。既有 40 个 thread 均已在本 Log 中记录且仍为 resolved；新 top-level `IC_kwDOT7YN2s8AAAABP9dtnA`、`IC_kwDOT7YN2s8AAAABP-r9xQ`、`IC_kwDOT7YN2s8AAAABQBR4Lg`、`IC_kwDOT7YN2s8AAAABQH3QOg` 均仅为 `@codex` trigger，四个 automated wrapper `PRR_kwDOT7YN2s8AAAABKXP6ag`、`PRR_kwDOT7YN2s8AAAABKYIB0Q`、`PRR_kwDOT7YN2s8AAAABKaLoUg`、`PRR_kwDOT7YN2s8AAAABKe5_5Q` 及 24 个 empty review container 均无独立问题。以下三个未 resolved inline thread 是本次全部实际问题，均在 Product Baseline 的 ordinary final-review remediation 边界内。
+
+### PRRT_kwDOT7YN2s6bVO6b - absent database probe 必须绑定 held data directory
+
+Source: PRRT_kwDOT7YN2s6bVO6b / PRRC_kwDOT7YN2s7kkGgk（https://github.com/bootids/skilload/pull/5#discussion_r3834669092）
+
+Problem: `database_exists_with_details` 在两次 root revalidation 之间以 pathname `symlink_metadata` 探测 `skilload.db`。同账号进程可暂时将 `data/skilload` 替换为空目录并在第二次 root revalidation 前恢复，使 list/search/export/default doctor 错报 empty、get 错报 `not_found`，而本次解析的 generation 实际仍含 database。
+
+Disposition: fixed
+
+Status: open
+
+Resolution: 将 `crates/skilload-core/src/adapters/sqlite_library.rs` 的现有 data-directory held descriptor 扩展到 existing `data/skilload` 的 database-absence 与 orphan-sidecar probe；探测、sidecar census 和结果返回前后均以 descriptor-relative `statat(..., SYMLINK_NOFOLLOW)`、directory identity 与 root binding 复核，避免 pathname ABA 采纳临时空 generation。新增确定性回归覆盖。
+
+Evidence: pre-commit worktree 已通过 `database_existence_probe_uses_the_held_data_directory_after_an_aba_swap`、`backup_manifest_enumeration_failure_is_propagated`、`published_backup_inventory_uses_the_held_directory_after_an_aba_swap`；`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace`（13+17+167）和 `cargo build --workspace --locked` 均通过。待 `git diff --check`、commit/push 后记录 SHA。
+
+GitHub outcome: 未回复；thread resolved: false。
+
+### PRRT_kwDOT7YN2s6bVO6e - backup protection inventory 必须绑定 held generation
+
+Source: PRRT_kwDOT7YN2s6bVO6e / PRRC_kwDOT7YN2s7kkGgp（https://github.com/bootids/skilload/pull/5#discussion_r3834669097）
+
+Problem: `portable_library.rs` 的 `protected_paths` 以 pathname `fs::read_dir(data/backups)` 枚举 published migration backup。若同账号进程只在每次枚举期间换入空目录再恢复，export 会遗漏 recovery pair，随后可经已持有的 output-parent descriptor exchange/delete 原 backup。
+
+Disposition: fixed
+
+Status: open
+
+Resolution: 将 `crates/skilload-core/src/adapters/portable_library.rs` 的 backup inventory 改为在 root-revalidated `data/skilload` 与 `backups` held no-follow directory descriptors 上相对枚举，并在返回前复核两个 directory identity；将 published pair 的 held regular-file identity 保留到 direct-path 与 same-inode alias protection，任何 child/open/enumeration/revalidation drift 都 fail closed。新增临时替换 `backups` 的 deterministic regression。
+
+Evidence: pre-commit worktree 已通过 `published_backup_inventory_uses_the_held_directory_after_an_aba_swap`；`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace`（13+17+167）和 `cargo build --workspace --locked` 均通过。待 `git diff --check`、commit/push 后记录 SHA。
+
+GitHub outcome: 未回复；thread resolved: false。
+
+### PRRT_kwDOT7YN2s6bVO6g - backup inventory enumeration error 必须传播
+
+Source: PRRT_kwDOT7YN2s6bVO6g / PRRC_kwDOT7YN2s7kkGgt（https://github.com/bootids/skilload/pull/5#discussion_r3834669101）
+
+Problem: `backup_manifest_stems` 把 `Dir::read_from` 或逐项 `entries.read()` 的错误折叠为空 inventory，导致 `database_corrupt` diagnostics 成功但遗漏已发布 migration backup，违反 `SKL-OPS-004` 的 recovery evidence 边界。
+
+Disposition: fixed
+
+Status: open
+
+Resolution: 将 `crates/skilload-core/src/adapters/sqlite_library.rs` 的 held backup-directory manifest enumeration 改为返回并向 `known_validated_backups` 传播具体 environment I/O error；仅 genuinely absent `backups` child 仍表示空 inventory。新增 descriptor/enumeration failure regression。
+
+Evidence: pre-commit worktree 已通过 `backup_manifest_enumeration_failure_is_propagated`；`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace`（13+17+167）和 `cargo build --workspace --locked` 均通过。待 `git diff --check`、commit/push 后记录 SHA。
+
+GitHub outcome: 未回复；thread resolved: false。
 
 ## Context and Orientation
 

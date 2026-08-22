@@ -24,7 +24,7 @@ use rusqlite::{
     Connection, Error as SqlError, ErrorCode, OpenFlags, OptionalExtension, Transaction,
     backup::Backup, ffi, params,
 };
-use rustix::fs::{AtFlags, Dir, Mode, OFlags, fstat, linkat, openat, statat, unlinkat};
+use rustix::fs::{AtFlags, Dir, FileType, Mode, OFlags, fstat, linkat, openat, statat, unlinkat};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -134,11 +134,13 @@ impl SqliteLibraryRepository {
         roots.data.effective.join("skilload.db")
     }
 
-    fn database_exists(path: &Path) -> Result<bool, AppError> {
-        match fs::symlink_metadata(path) {
-            Ok(metadata)
-                if metadata.file_type().is_file() && !metadata.file_type().is_symlink() =>
-            {
+    fn database_exists(
+        directory: &ValidatedDataDirectory,
+        database_name: &OsStr,
+        path: &Path,
+    ) -> Result<bool, AppError> {
+        match statat(&directory.handle, database_name, AtFlags::SYMLINK_NOFOLLOW) {
+            Ok(entry) if FileType::from_raw_mode(entry.st_mode) == FileType::RegularFile => {
                 Ok(true)
             }
             Ok(_) => Err(AppError::invalid_state(
@@ -146,27 +148,40 @@ impl SqliteLibraryRepository {
                 "database_path_is_not_a_regular_file",
                 ["a regular data/skilload.db file"],
             )),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                Self::ensure_no_orphaned_database_sidecars(path)?;
+            Err(error) if error == rustix::io::Errno::NOENT => {
+                Self::ensure_no_orphaned_database_sidecars(directory, database_name, path)?;
                 Ok(false)
             }
             Err(error) => Err(environment_io(
                 "XDG_DATA_HOME",
                 path,
                 "inspect skilload.db",
-                error,
+                io::Error::from(error),
             )),
         }
     }
+
     fn database_exists_with_details(
         &self,
         roots: &ResolvedRoots,
         path: &Path,
     ) -> Result<bool, AppError> {
         let roots = self.root_resolver.revalidate(roots)?;
-        let result = Self::database_exists(path)
-            .map_err(|error| self.enrich_absent_database_corruption(error, &roots, path));
+        let Some(directory) = ValidatedDataDirectory::open_optional(&roots.data.effective)? else {
+            self.root_resolver.revalidate(&roots)?;
+            return Ok(false);
+        };
         self.root_resolver.revalidate(&roots)?;
+        directory.revalidate()?;
+        self.hooks.before_existing_database_existence_probe(path)?;
+        let database_name = path.file_name().ok_or_else(Self::database_identity_drift)?;
+        let result = Self::database_exists(&directory, database_name, path).map_err(|error| {
+            self.enrich_absent_database_corruption(error, &roots, path, &directory)
+        });
+        self.hooks.after_existing_database_existence_probe(path)?;
+        directory.revalidate()?;
+        self.root_resolver.revalidate(&roots)?;
+        directory.revalidate()?;
         result
     }
 
@@ -175,22 +190,25 @@ impl SqliteLibraryRepository {
         error: AppError,
         roots: &ResolvedRoots,
         path: &Path,
+        directory: &ValidatedDataDirectory,
     ) -> AppError {
         let AppError::DatabaseCorrupt { database, .. } = error else {
             return error;
         };
         (|| {
-            let roots = self.root_resolver.revalidate(roots)?;
-            let directory = self.open_bound_data_directory(&roots)?;
+            self.root_resolver.revalidate(roots)?;
+            directory.revalidate()?;
             let database_name = path.file_name().ok_or_else(Self::database_identity_drift)?;
             match statat(&directory.handle, database_name, AtFlags::SYMLINK_NOFOLLOW) {
                 Err(error) if error == rustix::io::Errno::NOENT => {}
                 _ => return Err(Self::database_identity_drift()),
             }
-            if !has_database_sidecar(&directory, database_name) {
+            if !has_database_sidecar(directory, database_name) {
                 return Err(Self::database_identity_drift());
             }
-            let backups = Self::known_validated_backups(&directory)?;
+            let backups = Self::known_validated_backups(directory)?;
+            directory.revalidate()?;
+            self.root_resolver.revalidate(roots)?;
             directory.revalidate()?;
             Ok(AppError::DatabaseCorrupt {
                 database,
@@ -201,22 +219,27 @@ impl SqliteLibraryRepository {
         .unwrap_or_else(|error| error)
     }
 
-    fn ensure_no_orphaned_database_sidecars(path: &Path) -> Result<(), AppError> {
+    fn ensure_no_orphaned_database_sidecars(
+        directory: &ValidatedDataDirectory,
+        database_name: &OsStr,
+        path: &Path,
+    ) -> Result<(), AppError> {
         for suffix in DATABASE_SIDECAR_SUFFIXES {
+            let sidecar_name = database_sidecar_name(database_name, suffix);
             let sidecar = Self::database_sidecar_path(path, suffix)?;
-            match fs::symlink_metadata(&sidecar) {
+            match statat(&directory.handle, &sidecar_name, AtFlags::SYMLINK_NOFOLLOW) {
                 Ok(_) => {
                     return Err(AppError::database_corrupt(NativePath::new(
                         path.to_path_buf(),
                     )));
                 }
-                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) if error == rustix::io::Errno::NOENT => {}
                 Err(error) => {
                     return Err(environment_io(
                         "XDG_DATA_HOME",
                         &sidecar,
                         "inspect SQLite database sidecar",
-                        error,
+                        io::Error::from(error),
                     ));
                 }
             }
@@ -1008,7 +1031,7 @@ impl SqliteLibraryRepository {
         else {
             return Ok(Vec::new());
         };
-        let mut stems = backup_manifest_stems(&directory);
+        let mut stems = backup_manifest_stems(&directory)?;
         stems.sort();
         let mut validated = Vec::new();
         for stem in stems {
@@ -1717,15 +1740,25 @@ fn has_database_sidecar(directory: &ValidatedDataDirectory, database_name: &OsSt
 
 /// List candidate manifest stems through a held directory descriptor so a
 /// replacement of the directory pathname cannot redirect later validation.
-fn backup_manifest_stems(directory: &ValidatedDataDirectory) -> Vec<String> {
-    let Ok(mut entries) = Dir::read_from(&directory.handle) else {
-        return Vec::new();
-    };
+fn backup_manifest_stems(directory: &ValidatedDataDirectory) -> Result<Vec<String>, AppError> {
+    let mut entries = Dir::read_from(&directory.handle).map_err(|error| {
+        environment_io(
+            "XDG_DATA_HOME",
+            &directory.path,
+            "enumerate database backup manifests",
+            io::Error::from(error),
+        )
+    })?;
     let mut stems = Vec::new();
     while let Some(entry) = entries.read() {
-        let Ok(entry) = entry else {
-            return Vec::new();
-        };
+        let entry = entry.map_err(|error| {
+            environment_io(
+                "XDG_DATA_HOME",
+                &directory.path,
+                "enumerate database backup manifests",
+                io::Error::from(error),
+            )
+        })?;
         let Ok(name) = entry.file_name().to_str() else {
             continue;
         };
@@ -1733,7 +1766,7 @@ fn backup_manifest_stems(directory: &ValidatedDataDirectory) -> Vec<String> {
             stems.push(stem.to_owned());
         }
     }
-    stems
+    Ok(stems)
 }
 
 fn open_regular_file_at(
@@ -2207,6 +2240,14 @@ trait PersistenceHooks: Send + Sync {
         Ok(())
     }
 
+    fn before_existing_database_existence_probe(&self, _database: &Path) -> Result<(), AppError> {
+        Ok(())
+    }
+
+    fn after_existing_database_existence_probe(&self, _database: &Path) -> Result<(), AppError> {
+        Ok(())
+    }
+
     fn before_existing_database_generation_open(&self, _database: &Path) -> Result<(), AppError> {
         Ok(())
     }
@@ -2347,6 +2388,19 @@ struct ValidatedDataDirectory {
 }
 
 impl ValidatedDataDirectory {
+    fn open_optional(path: &Path) -> Result<Option<Self>, AppError> {
+        match fs::symlink_metadata(path) {
+            Ok(_) => Self::open(path).map(Some),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(environment_io(
+                "XDG_DATA_HOME",
+                path,
+                "inspect data directory",
+                error,
+            )),
+        }
+    }
+
     fn open(path: &Path) -> Result<Self, AppError> {
         let metadata = fs::symlink_metadata(path).map_err(|error| {
             environment_io("XDG_DATA_HOME", path, "inspect data directory", error)
@@ -7407,5 +7461,77 @@ mod tests {
         let diagnosis = repository.inspect().unwrap();
         assert_eq!(diagnosis.findings[0].code, "library_schema_newer");
         assert_eq!(repository.fix().unwrap().outcome.as_str(), "unchanged");
+    }
+    struct ExistingDatabaseAbsenceAba {
+        data_directory: PathBuf,
+        displaced_directory: PathBuf,
+    }
+
+    impl PersistenceHooks for ExistingDatabaseAbsenceAba {
+        fn before_existing_database_existence_probe(
+            &self,
+            _database: &Path,
+        ) -> Result<(), AppError> {
+            fs::rename(&self.data_directory, &self.displaced_directory).unwrap();
+            fs::create_dir(&self.data_directory).unwrap();
+            Ok(())
+        }
+
+        fn after_existing_database_existence_probe(
+            &self,
+            _database: &Path,
+        ) -> Result<(), AppError> {
+            fs::remove_dir(&self.data_directory).unwrap();
+            fs::rename(&self.displaced_directory, &self.data_directory).unwrap();
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn database_existence_probe_uses_the_held_data_directory_after_an_aba_swap() {
+        let temporary = tempdir().unwrap();
+        let environment = Arc::new(TestEnvironment::with_roots(temporary.path()));
+        let initial = SqliteLibraryRepository::with_environment(
+            environment.clone(),
+            Arc::new(XdgRootResolver),
+        );
+        initial
+            .import(&document(vec![entry("skills/review", None)]), false)
+            .unwrap();
+        let data_directory = temporary.path().join("data/skilload");
+        let repository = SqliteLibraryRepository::with_hooks(
+            environment,
+            Arc::new(XdgRootResolver),
+            Arc::new(ExistingDatabaseAbsenceAba {
+                data_directory: data_directory.clone(),
+                displaced_directory: temporary.path().join("displaced-data-directory"),
+            }),
+        );
+
+        let result = repository.list(&page(100, 0)).unwrap();
+
+        assert_eq!(result.entries.len(), 1);
+        assert!(data_directory.join("skilload.db").is_file());
+    }
+
+    #[test]
+    fn backup_manifest_enumeration_failure_is_propagated() {
+        let temporary = tempdir().unwrap();
+        let backup_directory = temporary.path().join("backups");
+        let non_directory = temporary.path().join("not-a-directory");
+        fs::create_dir(&backup_directory).unwrap();
+        File::create(&non_directory).unwrap();
+        let directory = ValidatedDataDirectory {
+            path: backup_directory.clone(),
+            identity: metadata_identity(&fs::metadata(&backup_directory).unwrap()),
+            handle: File::open(&non_directory).unwrap(),
+        };
+
+        let error = backup_manifest_stems(&directory).unwrap_err();
+
+        assert!(matches!(
+            error,
+            AppError::InvalidEnvironment { variable, .. } if variable == "XDG_DATA_HOME"
+        ));
     }
 }
