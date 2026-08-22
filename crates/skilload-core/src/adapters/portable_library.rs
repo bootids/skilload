@@ -6,7 +6,10 @@ use crate::domain::library::{
 use crate::error::AppError;
 use crate::ports::configuration::{Environment, ResolvedRoots, StateRootResolver};
 use crate::ports::library::LibraryTransferStore;
-use rustix::fs::{AtFlags, FileType, RenameFlags, fstat, linkat, renameat_with, statat, unlinkat};
+use rustix::fs::{
+    AtFlags, Dir, FileType, Mode, OFlags, RenameFlags, fstat, linkat, openat, renameat_with,
+    statat, unlinkat,
+};
 use std::collections::HashSet;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
@@ -77,7 +80,13 @@ impl PortableLibraryTransferStore {
         let roots = self.resolve_roots()?;
         let output_path = output.as_path();
         let parent = validated_output_parent(output_path, output)?;
-        reject_protected_output(output_path, &parent.path, &roots, output)?;
+        reject_protected_output(
+            output_path,
+            &parent.path,
+            self.root_resolver.as_ref(),
+            &roots,
+            output,
+        )?;
         ensure_regular_output(output_path, output)?;
 
         let bytes = document.serialize_for_transfer()?;
@@ -103,7 +112,13 @@ impl PortableLibraryTransferStore {
 
         let roots = self.root_resolver.revalidate(&roots)?;
         parent.revalidate(output)?;
-        reject_protected_output(output_path, &parent.path, &roots, output)?;
+        reject_protected_output(
+            output_path,
+            &parent.path,
+            self.root_resolver.as_ref(),
+            &roots,
+            output,
+        )?;
         ensure_regular_output(output_path, output)?;
         parent.revalidate(output)?;
         let expected_output = observe_output_target(output_path, output)?;
@@ -112,7 +127,10 @@ impl PortableLibraryTransferStore {
         publish_staging(
             &mut staging,
             &parent,
-            &roots,
+            ProtectedInventoryContext {
+                root_resolver: self.root_resolver.as_ref(),
+                roots: &roots,
+            },
             expected_output,
             output_path,
             output,
@@ -348,6 +366,108 @@ fn validated_output_parent(
     })
 }
 
+/// Holds an XDG data directory or its `backups` child through a no-follow
+/// descriptor so protection checks cannot be redirected by a pathname swap.
+struct ValidatedProtectedDirectory {
+    path: PathBuf,
+    identity: (u64, u64),
+    directory: File,
+}
+
+impl ValidatedProtectedDirectory {
+    fn open_optional(path: &Path, output: &NativePath) -> Result<Option<Self>, AppError> {
+        match fs::symlink_metadata(path) {
+            Ok(_) => Self::open(path, output).map(Some),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(_) => Err(protected_inventory_error(output)),
+        }
+    }
+
+    fn open(path: &Path, output: &NativePath) -> Result<Self, AppError> {
+        let metadata = fs::symlink_metadata(path).map_err(|_| protected_inventory_error(output))?;
+        if metadata.file_type().is_symlink() || !metadata.file_type().is_dir() {
+            return Err(protected_inventory_error(output));
+        }
+        let mut options = OpenOptions::new();
+        options
+            .read(true)
+            .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_NONBLOCK);
+        let directory = options
+            .open(path)
+            .map_err(|_| protected_inventory_error(output))?;
+        let descriptor_metadata = directory
+            .metadata()
+            .map_err(|_| protected_inventory_error(output))?;
+        if !descriptor_metadata.file_type().is_dir()
+            || metadata_identity(&metadata) != metadata_identity(&descriptor_metadata)
+        {
+            return Err(protected_inventory_error(output));
+        }
+        Ok(Self {
+            path: path.to_path_buf(),
+            identity: metadata_identity(&metadata),
+            directory,
+        })
+    }
+
+    fn open_optional_child(
+        &self,
+        name: &std::ffi::OsStr,
+        output: &NativePath,
+    ) -> Result<Option<Self>, AppError> {
+        self.revalidate(output)?;
+        let handle = match openat(
+            &self.directory,
+            name,
+            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::NONBLOCK,
+            Mode::empty(),
+        ) {
+            Ok(handle) => File::from(handle),
+            Err(error) if error == rustix::io::Errno::NOENT => {
+                self.revalidate(output)?;
+                return Ok(None);
+            }
+            Err(_) => return Err(protected_inventory_error(output)),
+        };
+        let descriptor_metadata = handle
+            .metadata()
+            .map_err(|_| protected_inventory_error(output))?;
+        let entry = statat(&self.directory, name, AtFlags::SYMLINK_NOFOLLOW)
+            .map_err(|_| protected_inventory_error(output))?;
+        let identity = metadata_identity(&descriptor_metadata);
+        if !descriptor_metadata.file_type().is_dir()
+            || FileType::from_raw_mode(entry.st_mode) != FileType::Directory
+            || stat_identity(entry.st_dev, entry.st_ino) != Some(identity)
+        {
+            return Err(protected_inventory_error(output));
+        }
+        self.revalidate(output)?;
+        Ok(Some(Self {
+            path: self.path.join(name),
+            identity,
+            directory: handle,
+        }))
+    }
+
+    fn revalidate(&self, output: &NativePath) -> Result<(), AppError> {
+        let path_metadata =
+            fs::symlink_metadata(&self.path).map_err(|_| protected_inventory_error(output))?;
+        let descriptor_metadata = self
+            .directory
+            .metadata()
+            .map_err(|_| protected_inventory_error(output))?;
+        if path_metadata.file_type().is_symlink()
+            || !path_metadata.file_type().is_dir()
+            || !descriptor_metadata.file_type().is_dir()
+            || metadata_identity(&path_metadata) != self.identity
+            || metadata_identity(&descriptor_metadata) != self.identity
+        {
+            return Err(protected_inventory_error(output));
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Copy)]
 enum OutputTargetIdentity {
     Existing((u64, u64)),
@@ -374,6 +494,12 @@ fn observe_output_target(
     }
 }
 
+#[derive(Clone, Copy)]
+struct ProtectedInventoryContext<'a> {
+    root_resolver: &'a dyn StateRootResolver,
+    roots: &'a ResolvedRoots,
+}
+
 struct OutputPublicationGuard<'parent> {
     parent: &'parent ValidatedOutputParent,
     name: std::ffi::OsString,
@@ -383,7 +509,7 @@ struct OutputPublicationGuard<'parent> {
 impl<'parent> OutputPublicationGuard<'parent> {
     fn capture(
         parent: &'parent ValidatedOutputParent,
-        roots: &ResolvedRoots,
+        protection: ProtectedInventoryContext<'_>,
         expected_identity: (u64, u64),
         output_name: std::ffi::OsString,
         output: &NativePath,
@@ -420,11 +546,10 @@ impl<'parent> OutputPublicationGuard<'parent> {
                 Some(output.clone()),
             ));
         }
-        if protected_paths(roots).iter().any(|protected| {
-            fs::symlink_metadata(protected)
-                .ok()
-                .is_some_and(|metadata| metadata_identity(&metadata) == guard.identity)
-        }) {
+        if protected_paths(protection, output)?
+            .iter()
+            .any(|protected| protected.matches_identity(guard.identity))
+        {
             return Err(AppError::validation(
                 "library_export_protected_target",
                 Some(output.clone()),
@@ -463,7 +588,7 @@ fn publish_staging<
 >(
     staging: &mut NamedTempFile,
     parent: &ValidatedOutputParent,
-    roots: &ResolvedRoots,
+    protection: ProtectedInventoryContext<'_>,
     expected_output: OutputTargetIdentity,
     output_path: &Path,
     output: &NativePath,
@@ -515,7 +640,7 @@ where
         OutputTargetIdentity::Existing(expected_identity) => {
             match OutputPublicationGuard::capture(
                 parent,
-                roots,
+                protection,
                 expected_identity,
                 output_name.clone(),
                 output,
@@ -611,6 +736,16 @@ where
         if let Err(error) = after_existing_output_exchange_before_cleanup() {
             cleanup_staging_if_owned(staging, parent, &staging_name);
             return Err(error);
+        }
+        if output_guard.matches(&publication_name)
+            && let Err(error) = unlinkat(&parent.directory, &publication_name, AtFlags::empty())
+        {
+            cleanup_staging_if_owned(staging, parent, &staging_name);
+            return Err(export_io(
+                output,
+                "remove displaced export after successful replacement",
+                error.into(),
+            ));
         }
     } else {
         if let Err(error) = after_publication_identity_check_before_exchange() {
@@ -757,6 +892,7 @@ fn cleanup_staging_if_owned(
 fn reject_protected_output(
     output_path: &Path,
     output_parent: &Path,
+    root_resolver: &dyn StateRootResolver,
     roots: &ResolvedRoots,
     output: &NativePath,
 ) -> Result<(), AppError> {
@@ -774,8 +910,14 @@ fn reject_protected_output(
         })?;
     let output_metadata = fs::symlink_metadata(output_path).ok();
 
-    for protected in protected_paths(roots) {
-        let protected_absolute = absolute_path(&protected).map_err(|error| {
+    for protected in protected_paths(
+        ProtectedInventoryContext {
+            root_resolver,
+            roots,
+        },
+        output,
+    )? {
+        let protected_absolute = absolute_path(&protected.path).map_err(|error| {
             AppError::invalid_state(
                 "library_export",
                 format!("cannot normalize protected target: {error}"),
@@ -788,7 +930,7 @@ fn reject_protected_output(
                 Some(output.clone()),
             ));
         }
-        if let Some(protected_resolved) = resolved_existing_path(&protected)
+        if let Some(protected_resolved) = resolved_existing_path(&protected.path)
             && output_resolved == protected_resolved
         {
             return Err(AppError::validation(
@@ -796,9 +938,9 @@ fn reject_protected_output(
                 Some(output.clone()),
             ));
         }
-        if let (Some(output_metadata), Ok(protected_metadata)) =
-            (output_metadata.as_ref(), fs::symlink_metadata(&protected))
-            && same_identity(output_metadata, &protected_metadata)
+        if output_metadata
+            .as_ref()
+            .is_some_and(|metadata| protected.matches_identity(metadata_identity(metadata)))
         {
             return Err(AppError::validation(
                 "library_export_protected_target",
@@ -809,15 +951,106 @@ fn reject_protected_output(
     Ok(())
 }
 
-fn protected_paths(roots: &ResolvedRoots) -> [PathBuf; 5] {
+struct ProtectedPath {
+    path: PathBuf,
+    identity: Option<(u64, u64)>,
+}
+
+impl ProtectedPath {
+    fn current(path: PathBuf) -> Self {
+        Self {
+            path,
+            identity: None,
+        }
+    }
+
+    fn held(path: PathBuf, identity: Option<(u64, u64)>) -> Self {
+        Self { path, identity }
+    }
+
+    fn matches_identity(&self, expected: (u64, u64)) -> bool {
+        self.identity == Some(expected)
+            || self.identity.is_none()
+                && fs::symlink_metadata(&self.path)
+                    .ok()
+                    .is_some_and(|metadata| metadata_identity(&metadata) == expected)
+    }
+}
+
+fn protected_inventory_error(output: &NativePath) -> AppError {
+    AppError::validation(
+        "library_export_protected_inventory_unavailable",
+        Some(output.clone()),
+    )
+}
+
+fn protected_paths(
+    protection: ProtectedInventoryContext<'_>,
+    output: &NativePath,
+) -> Result<Vec<ProtectedPath>, AppError> {
+    let root_resolver = protection.root_resolver;
+    let roots = root_resolver.revalidate(protection.roots)?;
     let database = roots.data.effective.join("skilload.db");
-    [
-        database.clone(),
-        database.with_file_name("skilload.db-journal"),
-        database.with_file_name("skilload.db-wal"),
-        database.with_file_name("skilload.db-shm"),
-        roots.state.effective.join("locks/database.lock"),
-    ]
+    let mut protected = vec![
+        ProtectedPath::current(database.clone()),
+        ProtectedPath::current(database.with_file_name("skilload.db-journal")),
+        ProtectedPath::current(database.with_file_name("skilload.db-wal")),
+        ProtectedPath::current(database.with_file_name("skilload.db-shm")),
+        ProtectedPath::current(roots.state.effective.join("locks/database.lock")),
+    ];
+    let Some(data_directory) =
+        ValidatedProtectedDirectory::open_optional(&roots.data.effective, output)?
+    else {
+        root_resolver.revalidate(&roots)?;
+        return Ok(protected);
+    };
+    root_resolver.revalidate(&roots)?;
+    data_directory.revalidate(output)?;
+    let Some(backups_directory) =
+        data_directory.open_optional_child(std::ffi::OsStr::new("backups"), output)?
+    else {
+        data_directory.revalidate(output)?;
+        root_resolver.revalidate(&roots)?;
+        data_directory.revalidate(output)?;
+        return Ok(protected);
+    };
+    let backup_paths = published_backup_paths(&backups_directory, output)?;
+    backups_directory.revalidate(output)?;
+    data_directory.revalidate(output)?;
+    root_resolver.revalidate(&roots)?;
+    backups_directory.revalidate(output)?;
+    data_directory.revalidate(output)?;
+    protected.extend(backup_paths);
+    Ok(protected)
+}
+
+fn published_backup_paths(
+    directory: &ValidatedProtectedDirectory,
+    output: &NativePath,
+) -> Result<Vec<ProtectedPath>, AppError> {
+    let mut entries =
+        Dir::read_from(&directory.directory).map_err(|_| protected_inventory_error(output))?;
+    let mut protected = Vec::new();
+    while let Some(entry) = entries.read() {
+        let entry = entry.map_err(|_| protected_inventory_error(output))?;
+        let name = entry.file_name();
+        let Ok(name) = name.to_str() else {
+            continue;
+        };
+        if !name.starts_with("skilload-db-v1-to-v2-")
+            || !(name.ends_with(".db") || name.ends_with(".manifest.json"))
+        {
+            continue;
+        }
+        let name = std::ffi::OsStr::new(name);
+        let entry = statat(&directory.directory, name, AtFlags::SYMLINK_NOFOLLOW)
+            .map_err(|_| protected_inventory_error(output))?;
+        let identity = (FileType::from_raw_mode(entry.st_mode) == FileType::RegularFile)
+            .then(|| stat_identity(entry.st_dev, entry.st_ino))
+            .flatten();
+        protected.push(ProtectedPath::held(directory.path.join(name), identity));
+    }
+    Ok(protected)
 }
 
 fn resolved_existing_path(path: &Path) -> Option<PathBuf> {
@@ -1471,6 +1704,70 @@ mod tests {
     }
 
     #[test]
+    fn output_refuses_published_migration_backup_pair_before_staging() {
+        let temporary = tempdir().unwrap();
+        let backups = temporary.path().join("data/skilload/backups");
+        fs::create_dir_all(&backups).unwrap();
+        let backup = backups.join("skilload-db-v1-to-v2-1.db");
+        let manifest = backups.join("skilload-db-v1-to-v2-1.manifest.json");
+        fs::write(&backup, b"recovery database").unwrap();
+        fs::write(&manifest, b"recovery manifest").unwrap();
+        let alias = temporary.path().join("backup-alias.db");
+        fs::hard_link(&backup, &alias).unwrap();
+
+        let store = PortableLibraryTransferStore::with_environment(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(XdgRootResolver),
+        );
+        for target in [&backup, &manifest, &alias] {
+            let before = fs::read(target).unwrap();
+            let error = store
+                .write_export(&NativePath::new(target.clone()), &document())
+                .unwrap_err();
+            assert_eq!(error.code(), "validation_failed");
+            assert_eq!(fs::read(target).unwrap(), before);
+        }
+        assert!(fs::read_dir(&backups).unwrap().all(|entry| {
+            !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".skilload-library-")
+        }));
+    }
+
+    #[test]
+    fn output_rejects_an_unreadable_migration_backup_inventory_before_staging() {
+        let temporary = tempdir().unwrap();
+        let backups = temporary.path().join("data/skilload/backups");
+        let output_parent = temporary.path().join("output");
+        let output = NativePath::new(output_parent.join("library.json"));
+        fs::create_dir_all(&backups).unwrap();
+        fs::create_dir(&output_parent).unwrap();
+        let backup = backups.join("skilload-db-v1-to-v2-1.db");
+        fs::write(&backup, b"recovery database").unwrap();
+        let original_permissions = fs::metadata(&backups).unwrap().permissions();
+        fs::set_permissions(&backups, fs::Permissions::from_mode(0o300)).unwrap();
+        assert!(fs::read_dir(&backups).is_err());
+
+        let store = PortableLibraryTransferStore::with_environment(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(XdgRootResolver),
+        );
+        let result = store.write_export(&output, &document());
+
+        fs::set_permissions(&backups, original_permissions).unwrap();
+        let error = result.unwrap_err();
+        assert_eq!(error.code(), "validation_failed");
+        assert_eq!(fs::read(&backup).unwrap(), b"recovery database");
+        assert!(!output.as_path().exists());
+        assert!(
+            fs::read_dir(&output_parent).unwrap().next().is_none(),
+            "the unavailable inventory must reject before staging"
+        );
+    }
+
+    #[test]
     fn output_refuses_a_live_delete_mode_rollback_journal_before_staging() {
         let temporary = tempdir().unwrap();
         let data = temporary.path().join("data/skilload");
@@ -1953,6 +2250,79 @@ mod tests {
     }
 
     #[test]
+    fn export_removes_displaced_output_after_successful_replacement() {
+        let temporary = tempdir().unwrap();
+        let output_parent = temporary.path().join("output");
+        let output = NativePath::new(output_parent.join("library.json"));
+        fs::create_dir(&output_parent).unwrap();
+        fs::write(output.as_path(), b"old output").unwrap();
+        let expected = document().serialize_for_transfer().unwrap();
+        let store = PortableLibraryTransferStore::with_environment(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(XdgRootResolver),
+        );
+
+        store.write_export(&output, &document()).unwrap();
+
+        assert_eq!(fs::read(output.as_path()).unwrap(), expected);
+        assert!(
+            fs::read_dir(&output_parent)
+                .unwrap()
+                .flatten()
+                .all(|entry| !entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".skilload-publish-"))
+        );
+    }
+
+    struct DisplacedOutputCleanupPermissionFailure;
+
+    impl TransferWriteHooks for DisplacedOutputCleanupPermissionFailure {
+        fn after_existing_output_exchange_before_cleanup(
+            &self,
+            output_parent: &Path,
+        ) -> Result<(), AppError> {
+            fs::set_permissions(output_parent, fs::Permissions::from_mode(0o500)).unwrap();
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn export_reports_a_displaced_output_cleanup_failure() {
+        let temporary = tempdir().unwrap();
+        let output_parent = temporary.path().join("output");
+        let output = NativePath::new(output_parent.join("library.json"));
+        fs::create_dir(&output_parent).unwrap();
+        fs::write(output.as_path(), b"old output").unwrap();
+        let expected = document().serialize_for_transfer().unwrap();
+        let store = PortableLibraryTransferStore::with_write_hooks(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(XdgRootResolver),
+            Arc::new(DisplacedOutputCleanupPermissionFailure),
+        );
+
+        let result = store.write_export(&output, &document());
+        fs::set_permissions(&output_parent, fs::Permissions::from_mode(0o700)).unwrap();
+        let error = result.unwrap_err();
+
+        assert_eq!(error.code(), "validation_failed");
+        assert!(
+            format!("{error:?}").contains("remove displaced export after successful replacement")
+        );
+        assert_eq!(fs::read(output.as_path()).unwrap(), expected);
+        assert!(
+            fs::read_dir(&output_parent)
+                .unwrap()
+                .flatten()
+                .any(|entry| entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".skilload-publish-"))
+        );
+    }
+
+    #[test]
     fn export_removes_publication_link_when_rename_fails() {
         let temporary = tempdir().unwrap();
         let output_parent = temporary.path().join("output");
@@ -2223,5 +2593,30 @@ mod tests {
                 ..
             } if path == output
         ));
+    }
+    #[test]
+    fn published_backup_inventory_uses_the_held_directory_after_an_aba_swap() {
+        let temporary = tempdir().unwrap();
+        let backups = temporary.path().join("data/skilload/backups");
+        let backup = backups.join("skilload-db-v1-to-v2-1.db");
+        let output = NativePath::new(temporary.path().join("output/library.json"));
+        fs::create_dir_all(&backups).unwrap();
+        fs::write(&backup, b"recovery database").unwrap();
+        let expected_identity = metadata_identity(&fs::metadata(&backup).unwrap());
+        let directory = ValidatedProtectedDirectory::open(&backups, &output).unwrap();
+        let displaced = temporary.path().join("displaced-backups");
+
+        fs::rename(&backups, &displaced).unwrap();
+        fs::create_dir(&backups).unwrap();
+        let protected = published_backup_paths(&directory, &output).unwrap();
+        fs::remove_dir(&backups).unwrap();
+        fs::rename(&displaced, &backups).unwrap();
+
+        directory.revalidate(&output).unwrap();
+        assert!(
+            protected
+                .iter()
+                .any(|path| { path.path == backup && path.identity == Some(expected_identity) })
+        );
     }
 }

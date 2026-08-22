@@ -1,6 +1,7 @@
 use skilload_core::{
-    AppError, ConfigEntries, ConfigEntry, ConfigValue, LibraryImportResult,
-    LibraryMutationOperation, NativePath, PortableLibraryDocument, SourceIdentity,
+    AppError, ConfigEntries, ConfigEntry, ConfigValue, DoctorOperation, LibraryEntriesPage,
+    LibraryEntry, LibraryImportResult, LibraryMutationOperation, LibrarySearchPage, NativePath,
+    PortableLibraryDocument, RefKind, SourceIdentity,
 };
 use std::fmt::Write as _;
 use std::os::unix::ffi::OsStrExt;
@@ -92,6 +93,137 @@ pub fn render_library_mutation(
         let _ = writeln!(output, "  - {}", quote_string(tag));
     }
     output
+}
+
+pub fn render_library_entries(data: &LibraryEntriesPage) -> String {
+    let mut output = format!(
+        "library.list: observed\ntotal: {}\noffset: {}\nlimit: {}\nreturned: {}\n",
+        data.total,
+        data.page.offset(),
+        data.page.limit(),
+        data.entries.len(),
+    );
+    append_library_entries(&mut output, &data.entries);
+    output
+}
+
+pub fn render_library_search(data: &LibrarySearchPage) -> String {
+    let mut output = format!(
+        "library.search: observed\nquery: {}\ntotal: {}\noffset: {}\nlimit: {}\nreturned: {}\n",
+        quote_string(&data.original),
+        data.total,
+        data.page.offset(),
+        data.page.limit(),
+        data.entries.len(),
+    );
+    append_library_entries(&mut output, &data.entries);
+    output
+}
+
+pub fn render_library_get(entry: &LibraryEntry) -> String {
+    let mut output = String::from("library.get: observed\n");
+    append_library_entry(&mut output, entry);
+    output
+}
+
+pub fn render_doctor(operation: &DoctorOperation) -> String {
+    let mut output = format!(
+        "doctor: {}\nfix_requested: {}\ndatabase_writable: {}\n",
+        operation.outcome.as_str(),
+        operation.data.fix_requested,
+        operation.data.database_writable,
+    );
+    let _ = writeln!(output, "findings: {}", operation.data.findings.len());
+    for finding in &operation.data.findings {
+        let target = finding
+            .target
+            .as_ref()
+            .map(quote_path)
+            .unwrap_or_else(|| "null".to_owned());
+        let _ = writeln!(
+            output,
+            "  - severity: {}\n    code: {}\n    message: {}\n    target: {target}\n    fixable_offline: {}\n    fixed: {}",
+            finding.severity.as_str(),
+            quote_string(&finding.code),
+            quote_string(&finding.message),
+            finding.fixable_offline,
+            finding.fixed,
+        );
+    }
+    let _ = writeln!(output, "actions: {}", operation.data.actions.len());
+    for action in &operation.data.actions {
+        let before = action
+            .before
+            .as_deref()
+            .map(quote_string)
+            .unwrap_or_else(|| "null".to_owned());
+        let after = action
+            .after
+            .as_deref()
+            .map(quote_string)
+            .unwrap_or_else(|| "null".to_owned());
+        let _ = writeln!(
+            output,
+            "  - kind: {}\n    target: {}\n    before: {before}\n    after: {after}",
+            action.kind.as_str(),
+            quote_path(&action.target),
+        );
+    }
+    output
+}
+
+fn append_library_entries(output: &mut String, entries: &[LibraryEntry]) {
+    for entry in entries {
+        output.push_str("  - ");
+        append_library_entry(output, entry);
+    }
+}
+
+fn append_library_entry(output: &mut String, entry: &LibraryEntry) {
+    let source = &entry.skill.source;
+    let ref_kind = match source.ref_kind {
+        RefKind::Branch => "branch",
+        RefKind::Tag => "tag",
+        RefKind::Commit => "commit",
+    };
+    let alias = entry
+        .alias
+        .as_deref()
+        .map(quote_string)
+        .unwrap_or_else(|| "null".to_owned());
+    let category = entry
+        .category
+        .as_deref()
+        .map(quote_string)
+        .unwrap_or_else(|| "null".to_owned());
+    let note = entry
+        .note
+        .as_deref()
+        .map(quote_string)
+        .unwrap_or_else(|| "null".to_owned());
+    let _ = writeln!(
+        output,
+        "source: {}\nsource_owner: {}\nsource_repository: {}\nsource_repository_display: {}\nsource_path: {}\nsource_ref_kind: {}\nsource_ref_value: {}\nrepository_id: {}\ncommit: {}\nintegrity: {}\nname: {}\ndescription: {}\nentry_count: {}\nbyte_count: {}\nalias: {alias}\ncategory: {category}\ntags: {}\nnote: {note}\ntrust_state: {}",
+        quote_string(&source.canonical),
+        quote_string(&source.owner),
+        quote_string(&source.repository),
+        quote_string(&source.repository_display),
+        quote_string(&source.path),
+        quote_string(ref_kind),
+        quote_string(&source.ref_value),
+        entry.skill.repository_id,
+        quote_string(&entry.skill.commit),
+        quote_string(&entry.skill.integrity),
+        quote_string(&entry.skill.name),
+        quote_string(&entry.skill.description),
+        entry.skill.entry_count,
+        entry.skill.byte_count,
+        entry.tags.len(),
+        entry.trust_state.as_str(),
+    );
+    for tag in &entry.tags {
+        let _ = writeln!(output, "  tag: {}", quote_string(tag));
+    }
 }
 
 pub fn render_error(error: &AppError) -> String {
@@ -207,11 +339,24 @@ pub fn render_error(error: &AppError) -> String {
             found_version,
             supported_version
         ),
-        AppError::DatabaseCorrupt { database, .. } => format!(
-            "error [{}]: database {} requires database-corruption-v1 recovery\n",
-            error.code(),
-            quote_path(database)
-        ),
+        AppError::DatabaseCorrupt {
+            database,
+            backups,
+            recoverable_exports,
+        } => {
+            let mut output = format!(
+                "error [{}]: database {} requires database-corruption-v1 recovery\n",
+                error.code(),
+                quote_path(database)
+            );
+            for backup in backups {
+                let _ = writeln!(output, "  backup: {}", quote_path(backup));
+            }
+            for export in recoverable_exports {
+                let _ = writeln!(output, "  recoverable_export: {}", quote_string(export));
+            }
+            output
+        }
         AppError::InvalidState {
             domain,
             state,
@@ -341,6 +486,83 @@ mod tests {
     use std::path::PathBuf;
 
     #[test]
+    fn library_read_renderers_project_complete_terminal_safe_entries() {
+        let source = SourceIdentity::new(
+            "github:owner/repository#skills/review@refs/heads/main".to_owned(),
+            "owner".to_owned(),
+            "repository".to_owned(),
+            "Repository".to_owned(),
+            "skills/review".to_owned(),
+            RefKind::Branch,
+            "refs/heads/main".to_owned(),
+        )
+        .unwrap();
+        let entry = LibraryEntry {
+            skill: skilload_core::ResolvedSkill::new(
+                source,
+                42,
+                "0123456789012345678901234567890123456789".to_owned(),
+                "sha256:0123456789012345678901234567890123456789012345678901234567890123"
+                    .to_owned(),
+                "review".to_owned(),
+                "Description\nwith control".to_owned(),
+                3,
+                30,
+            )
+            .unwrap(),
+            alias: Some("alias".to_owned()),
+            category: Some("category".to_owned()),
+            tags: vec!["Review".to_owned()],
+            note: Some("note".to_owned()),
+            trust_state: skilload_core::LibraryTrustState::Missing,
+        };
+        let page = skilload_core::LibraryPage::new(100, 0).unwrap();
+        let list = LibraryEntriesPage {
+            entries: vec![entry.clone()],
+            page,
+            total: 1,
+        };
+        let search = LibrarySearchPage {
+            original: "review".to_owned(),
+            entries: vec![entry.clone()],
+            page,
+            total: 1,
+        };
+        let expected = [
+            "source: \"github:owner/repository#skills/review@refs/heads/main\"",
+            "source_owner: \"owner\"",
+            "source_repository: \"repository\"",
+            "source_repository_display: \"Repository\"",
+            "source_path: \"skills/review\"",
+            "source_ref_kind: \"branch\"",
+            "source_ref_value: \"refs/heads/main\"",
+            "repository_id: 42",
+            "commit: \"0123456789012345678901234567890123456789\"",
+            "integrity: \"sha256:0123456789012345678901234567890123456789012345678901234567890123\"",
+            "name: \"review\"",
+            "description: \"Description\\nwith control\"",
+            "entry_count: 3",
+            "byte_count: 30",
+            "alias: \"alias\"",
+            "category: \"category\"",
+            "tags: 1",
+            "  tag: \"Review\"",
+            "note: \"note\"",
+            "trust_state: missing",
+        ];
+
+        for rendered in [
+            render_library_entries(&list),
+            render_library_search(&search),
+            render_library_get(&entry),
+        ] {
+            for field in expected {
+                assert!(rendered.contains(field), "missing {field} in {rendered}");
+            }
+        }
+    }
+
+    #[test]
     fn terminal_encoder_is_injective_for_controls_and_invalid_bytes() {
         assert_eq!(
             quote_string("\"\\\n\r\t\u{202e}"),
@@ -438,5 +660,20 @@ mod tests {
         assert!(rendered.contains(
             "kind: \"internal_duplicate\"; name: null; source: \"github:owner/repository#skills/review@refs/heads/main\""
         ));
+    }
+    #[test]
+    fn database_corruption_renderer_lists_terminal_safe_recovery_assets() {
+        let database = NativePath::new(PathBuf::from("/tmp/live.db"));
+        let backup = NativePath::new(PathBuf::from(OsString::from_vec(vec![
+            b'/', b't', b'm', b'p', b'/', 0xff,
+        ])));
+        let rendered = render_error(&AppError::DatabaseCorrupt {
+            database,
+            backups: vec![backup],
+            recoverable_exports: vec!["library.export\n".to_owned()],
+        });
+
+        assert!(rendered.contains("backup: \"/tmp/\\xFF\""));
+        assert!(rendered.contains("recoverable_export: \"library.export\\n\""));
     }
 }

@@ -3,6 +3,7 @@ use crate::domain::configuration::{
 };
 use crate::error::AppError;
 use crate::ports::configuration::{ConfigurationStore, StoreOutcome};
+use crate::ports::doctor::DatabaseMaintenance;
 use crate::ports::library::{LibraryRepository, LibraryTransferStore};
 use std::ffi::OsString;
 use std::sync::Arc;
@@ -11,6 +12,7 @@ pub struct Application {
     pub(super) configuration_store: Arc<dyn ConfigurationStore>,
     pub(super) library_repository: Arc<dyn LibraryRepository>,
     pub(super) library_transfer_store: Arc<dyn LibraryTransferStore>,
+    pub(super) database_maintenance: Arc<dyn DatabaseMaintenance>,
 }
 
 impl Application {
@@ -18,11 +20,13 @@ impl Application {
         configuration_store: Arc<dyn ConfigurationStore>,
         library_repository: Arc<dyn LibraryRepository>,
         library_transfer_store: Arc<dyn LibraryTransferStore>,
+        database_maintenance: Arc<dyn DatabaseMaintenance>,
     ) -> Self {
         Self {
             configuration_store,
             library_repository,
             library_transfer_store,
+            database_maintenance,
         }
     }
 

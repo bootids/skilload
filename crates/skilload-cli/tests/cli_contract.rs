@@ -875,7 +875,7 @@ fn library_metadata_commands_are_explicit_atomic_and_portable() {
     let parser_error: Value = serde_json::from_slice(&parser_error.stdout).unwrap();
     assert_eq!(parser_error["operation"], "library.alias.set");
     assert_eq!(parser_error["error"]["code"], "usage_error");
-    let unknown = execute(root.path(), &["library", "list"]);
+    let unknown = execute(root.path(), &["library", "refresh"]);
     assert_eq!(unknown.status.code(), Some(2));
 
     let output = root.path().join("library-export.json");
@@ -926,4 +926,386 @@ fn library_metadata_commands_are_explicit_atomic_and_portable() {
     let reimported_document: Value =
         serde_json::from_slice(&fs::read(reimport_output).unwrap()).unwrap();
     assert_eq!(exported_document, reimported_document);
+}
+
+fn imported_two_entry_root() -> tempfile::TempDir {
+    let root = tempdir().unwrap();
+    fs::create_dir(root.path().join("home")).unwrap();
+    let input = root.path().join("library.json");
+    let mut document =
+        serde_json::from_str::<Value>(&portable_document("skills/review", None)).unwrap();
+    let other_entry = serde_json::from_str::<Value>(&portable_document("skills/other", None))
+        .unwrap()["entries"][0]
+        .clone();
+    document["entries"]
+        .as_array_mut()
+        .unwrap()
+        .push(other_entry);
+    fs::write(&input, document.to_string()).unwrap();
+    let import_output = execute(
+        root.path(),
+        &[
+            "--json",
+            "library",
+            "import",
+            "--input",
+            input.to_str().unwrap(),
+        ],
+    );
+    assert!(
+        import_output.status.success(),
+        "stdout: {} stderr: {}",
+        String::from_utf8_lossy(&import_output.stdout),
+        String::from_utf8_lossy(&import_output.stderr)
+    );
+    let source = "github:owner/repository#skills/review@refs/heads/main";
+    for arguments in [
+        [
+            "--json",
+            "library",
+            "note",
+            "set",
+            source,
+            "use for code quality review",
+        ],
+        ["--json", "library", "category", "set", source, "quality"],
+    ] {
+        assert!(execute(root.path(), &arguments).status.success());
+    }
+    root
+}
+
+#[test]
+fn library_reads_are_offline_indexed_and_paginated() {
+    let root = imported_two_entry_root();
+    let source = "github:owner/repository#skills/review@refs/heads/main";
+
+    let list = json(&execute(
+        root.path(),
+        &["--json", "library", "list", "--limit", "1", "--offset", "1"],
+    ));
+    assert_eq!(list["operation"], "library.list");
+    assert_eq!(list["result"]["outcome"], "observed");
+    assert_eq!(list["result"]["data"]["total"], "2");
+    assert_eq!(list["result"]["data"]["offset"], "1");
+    assert_eq!(list["result"]["data"]["limit"], 1);
+    assert_eq!(list["result"]["data"]["returned"], 1);
+    assert_eq!(
+        list["result"]["data"]["entries"][0]["skill"]["source"]["canonical"],
+        source
+    );
+
+    let defaults = json(&execute(root.path(), &["--json", "library", "list"]));
+    assert_eq!(defaults["result"]["data"]["offset"], "0");
+    assert_eq!(defaults["result"]["data"]["limit"], 100);
+    assert_eq!(defaults["result"]["data"]["returned"], 2);
+    let beyond = json(&execute(
+        root.path(),
+        &[
+            "--json",
+            "library",
+            "list",
+            "--offset",
+            "18446744073709551615",
+        ],
+    ));
+    assert_eq!(beyond["result"]["data"]["entries"], serde_json::json!([]));
+    assert_eq!(beyond["result"]["data"]["total"], "2");
+
+    let search = json(&execute(
+        root.path(),
+        &["--json", "library", "search", "code review"],
+    ));
+    assert_eq!(search["operation"], "library.search");
+    assert_eq!(search["result"]["data"]["query"], "code review");
+    assert_eq!(search["result"]["data"]["total"], "1");
+    assert_eq!(
+        search["result"]["data"]["entries"][0]["skill"]["source"]["canonical"],
+        source
+    );
+
+    let operators = json(&execute(
+        root.path(),
+        &["--json", "library", "search", "OR NOT * name:review"],
+    ));
+    assert_eq!(operators["result"]["data"]["total"], "0");
+    let tag_search = json(&execute(
+        root.path(),
+        &["--json", "library", "search", "review feature"],
+    ));
+    assert_eq!(tag_search["result"]["data"]["total"], "0");
+
+    let get = json(&execute(root.path(), &["--json", "library", "get", source]));
+    assert_eq!(get["operation"], "library.get");
+    assert_eq!(
+        get["result"]["data"]["skill"]["source"]["canonical"],
+        source
+    );
+    assert_eq!(get["result"]["data"]["note"], "use for code quality review");
+    assert_eq!(get["result"]["data"]["trust_state"], "missing");
+
+    let missing = execute(
+        root.path(),
+        &["--json", "library", "get", "github:x/y#z@refs/heads/main"],
+    );
+    assert_eq!(missing.status.code(), Some(4));
+    let missing_json: Value = serde_json::from_slice(&missing.stdout).unwrap();
+    assert_eq!(missing_json["error"]["code"], "not_found");
+    assert_eq!(missing_json["error"]["details"]["domain"], "library");
+
+    let empty_query = execute(root.path(), &["--json", "library", "search", " "]);
+    assert_eq!(empty_query.status.code(), Some(4));
+    let empty_json: Value = serde_json::from_slice(&empty_query.stdout).unwrap();
+    assert_eq!(empty_json["error"]["code"], "validation_failed");
+    assert_eq!(
+        empty_json["error"]["details"]["constraint"],
+        "library_search_query_empty"
+    );
+
+    for invalid in ["0", "1001", "-1", "abc"] {
+        let output = execute(
+            root.path(),
+            &["--json", "library", "list", "--limit", invalid],
+        );
+        assert_eq!(output.status.code(), Some(2), "--limit {invalid}");
+    }
+    let offset_overflow = execute(
+        root.path(),
+        &[
+            "--json",
+            "library",
+            "list",
+            "--offset",
+            "18446744073709551616",
+        ],
+    );
+    assert_eq!(offset_overflow.status.code(), Some(2));
+    let get_with_limit = execute(
+        root.path(),
+        &["--json", "library", "get", "--limit", "5", source],
+    );
+    assert_eq!(get_with_limit.status.code(), Some(2));
+
+    let human_list = execute(root.path(), &["library", "list"]);
+    assert!(human_list.status.success());
+    let human_text = String::from_utf8(human_list.stdout).unwrap();
+    assert!(human_text.contains("library.list: observed"));
+    assert!(human_text.contains(&format!("\"{source}\"")));
+    let human_search = execute(root.path(), &["library", "search", "code review"]);
+    let human_search_text = String::from_utf8(human_search.stdout).unwrap();
+    assert!(human_search_text.contains("library.search: observed"));
+    assert!(human_search_text.contains("\"code review\""));
+
+    assert!(!root.path().join("cache").exists());
+}
+
+#[test]
+fn read_commands_never_mutate_database_bytes_or_timestamps() {
+    let root = imported_two_entry_root();
+    let database = root.path().join("data/skilload/skilload.db");
+    let metadata_before = fs::metadata(&database).unwrap();
+    let bytes_before = fs::read(&database).unwrap();
+    for arguments in [
+        vec!["library", "list"],
+        vec!["library", "search", "code review"],
+        vec![
+            "library",
+            "get",
+            "github:owner/repository#skills/review@refs/heads/main",
+        ],
+        vec!["doctor"],
+    ] {
+        assert!(execute(root.path(), &arguments).status.success());
+    }
+    let metadata_after = fs::metadata(&database).unwrap();
+    assert_eq!(metadata_before.len(), metadata_after.len());
+    assert_eq!(metadata_before.mtime(), metadata_after.mtime());
+    assert_eq!(fs::read(&database).unwrap(), bytes_before);
+    assert!(!root.path().join("data/skilload/skilload.db-shm").exists());
+    assert!(!root.path().join("data/skilload/skilload.db-wal").exists());
+}
+
+fn initialize_v1_root() -> tempfile::TempDir {
+    let root = tempdir().unwrap();
+    let data = root.path().join("data/skilload");
+    fs::create_dir_all(&data).unwrap();
+    let database = data.join("skilload.db");
+    let connection = rusqlite::Connection::open(&database).unwrap();
+    connection
+        .execute_batch(
+            "PRAGMA journal_mode = DELETE;
+             CREATE TABLE schema_info (version INTEGER NOT NULL CHECK (version >= 1));
+             INSERT INTO schema_info (version) VALUES (1);
+             CREATE TABLE state_revision (revision INTEGER NOT NULL CHECK (revision >= 0));
+             INSERT INTO state_revision (revision) VALUES (0);
+             CREATE TABLE library_entries (
+                 canonical_source TEXT PRIMARY KEY NOT NULL,
+                 owner TEXT NOT NULL,
+                 repository TEXT NOT NULL,
+                 repository_display TEXT NOT NULL,
+                 skill_path TEXT NOT NULL,
+                 ref_kind TEXT NOT NULL,
+                 ref_value TEXT NOT NULL,
+                 repository_id TEXT NOT NULL,
+                 commit_sha TEXT NOT NULL,
+                 integrity TEXT NOT NULL,
+                 name TEXT NOT NULL,
+                 description TEXT NOT NULL,
+                 entry_count TEXT NOT NULL,
+                 byte_count TEXT NOT NULL,
+                 alias TEXT UNIQUE,
+                 category TEXT,
+                 note TEXT
+             );
+             CREATE TABLE library_tags (
+                 canonical_source TEXT NOT NULL,
+                 comparison_key TEXT NOT NULL,
+                 display TEXT NOT NULL,
+                 PRIMARY KEY (canonical_source, comparison_key),
+                 FOREIGN KEY (canonical_source) REFERENCES library_entries(canonical_source) ON DELETE CASCADE
+             );
+             INSERT INTO library_entries VALUES (
+                 'github:owner/repository#skills/review@refs/heads/main',
+                 'owner', 'repository', 'Repository', 'skills/review', 'branch', 'refs/heads/main',
+                 '42', '0123456789012345678901234567890123456789',
+                 'sha256:0123456789012345678901234567890123456789012345678901234567890123',
+                 'review', 'Portable Library entry', '1', '10', NULL, NULL, NULL
+             );
+             INSERT INTO library_tags VALUES (
+                 'github:owner/repository#skills/review@refs/heads/main', 'review', 'Review'
+             );",
+        )
+        .unwrap();
+    drop(connection);
+    root
+}
+
+#[test]
+fn doctor_observes_and_fixes_a_v1_database_end_to_end() {
+    let root = initialize_v1_root();
+    let source = "github:owner/repository#skills/review@refs/heads/main";
+    let database = root.path().join("data/skilload/skilload.db");
+
+    let listed = json(&execute(root.path(), &["--json", "library", "list"]));
+    assert_eq!(listed["result"]["data"]["total"], "1");
+    let got = json(&execute(root.path(), &["--json", "library", "get", source]));
+    assert_eq!(got["result"]["data"]["skill"]["name"], "review");
+    let exported = json(&execute(
+        root.path(),
+        &[
+            "--json",
+            "library",
+            "export",
+            "--output",
+            root.path().join("e.json").to_str().unwrap(),
+        ],
+    ));
+    assert_eq!(
+        exported["result"]["data"]["entries"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+
+    let search_before = execute(root.path(), &["--json", "library", "search", "review"]);
+    assert_eq!(search_before.status.code(), Some(6));
+    let search_json: Value = serde_json::from_slice(&search_before.stdout).unwrap();
+    assert_eq!(search_json["error"]["code"], "migration_required");
+    assert_eq!(search_json["error"]["details"]["found_version"], 1);
+    assert_eq!(search_json["error"]["details"]["supported_version"], 2);
+
+    let metadata_before = fs::metadata(&database).unwrap();
+    let bytes_before = fs::read(&database).unwrap();
+    let diagnosis = json(&execute(root.path(), &["--json", "doctor"]));
+    assert_eq!(diagnosis["operation"], "doctor");
+    assert_eq!(diagnosis["result"]["outcome"], "observed");
+    assert_eq!(diagnosis["result"]["data"]["fix_requested"], false);
+    assert_eq!(diagnosis["result"]["data"]["database_writable"], false);
+    let finding = &diagnosis["result"]["data"]["findings"][0];
+    assert_eq!(finding["code"], "library_database_migration_required");
+    assert_eq!(finding["fixable_offline"], true);
+    assert_eq!(finding["fixed"], false);
+    assert_eq!(
+        diagnosis["result"]["data"]["actions"],
+        serde_json::json!([])
+    );
+    assert_eq!(
+        fs::metadata(&database).unwrap().mtime(),
+        metadata_before.mtime()
+    );
+    assert_eq!(fs::read(&database).unwrap(), bytes_before);
+
+    let fix = json(&execute(root.path(), &["--json", "doctor", "--fix"]));
+    assert_eq!(fix["result"]["outcome"], "changed");
+    let action = &fix["result"]["data"]["actions"][0];
+    assert_eq!(action["kind"], "migrate");
+    assert_eq!(action["before"], "schema_1");
+    assert_eq!(action["after"], "schema_2");
+    assert_eq!(action["target"]["scope"], "database");
+    assert!(action["target"]["path"]["bytes_base64"].is_string());
+
+    let backups = root.path().join("data/skilload/backups");
+    let backup_dbs: Vec<_> = fs::read_dir(&backups)
+        .unwrap()
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|extension| extension == "db"))
+        .collect();
+    assert_eq!(backup_dbs.len(), 1);
+    let manifest_path = backup_dbs[0].with_extension("manifest.json");
+    let manifest: Value = serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
+    assert_eq!(manifest["source_schema"], 1);
+    assert_eq!(manifest["target_schema"], 2);
+    assert_eq!(manifest["complete"], true);
+    assert_eq!(
+        manifest["database_bytes"],
+        fs::metadata(&backup_dbs[0]).unwrap().len()
+    );
+
+    let healthy = json(&execute(root.path(), &["--json", "doctor"]));
+    assert_eq!(healthy["result"]["data"]["findings"], serde_json::json!([]));
+    assert_eq!(healthy["result"]["data"]["database_writable"], true);
+    let search_after = json(&execute(
+        root.path(),
+        &["--json", "library", "search", "review"],
+    ));
+    assert_eq!(search_after["result"]["data"]["total"], "1");
+    let repeat = json(&execute(root.path(), &["--json", "doctor", "--fix"]));
+    assert_eq!(repeat["result"]["outcome"], "unchanged");
+    let backup_count = fs::read_dir(&backups)
+        .unwrap()
+        .flatten()
+        .filter(|entry| entry.path().extension().is_some_and(|e| e == "db"))
+        .count();
+    assert_eq!(backup_count, 1);
+}
+
+#[test]
+fn absent_reads_and_doctor_stay_offline_and_filesystem_inert() {
+    let root = tempdir().unwrap();
+    fs::create_dir(root.path().join("home")).unwrap();
+    for arguments in [
+        vec!["--json", "library", "list"],
+        vec!["--json", "library", "search", "anything"],
+        vec!["--json", "doctor"],
+    ] {
+        let output = execute(root.path(), &arguments);
+        assert!(output.status.success(), "{arguments:?}");
+    }
+    let absent_get = execute(
+        root.path(),
+        &["--json", "library", "get", "github:x/y#z@refs/heads/main"],
+    );
+    assert_eq!(absent_get.status.code(), Some(4));
+    let diagnosis = json(&execute(root.path(), &["--json", "doctor"]));
+    assert_eq!(diagnosis["result"]["data"]["database_writable"], true);
+    assert!(!root.path().join("data").exists());
+    assert!(!root.path().join("state").exists());
+    assert!(!root.path().join("config").exists());
+    assert!(!root.path().join("cache").exists());
+
+    let fix = json(&execute(root.path(), &["--json", "doctor", "--fix"]));
+    assert_eq!(fix["result"]["outcome"], "unchanged");
+    assert!(!root.path().join("data").exists());
 }

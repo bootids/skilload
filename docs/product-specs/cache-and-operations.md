@@ -1,6 +1,6 @@
 # Cache and Local Operations
 
-Status: partially implemented. `PLAN-0002` implements Revision 1 of `SKL-OPS-006` in the development `0.0.1` configuration slice. All other behaviors in this document remain planned for the 0.1 CLI MVP.
+Status: partially implemented. `PLAN-0002` implements Revision 1 of `SKL-OPS-006` in the development `0.0.1` configuration slice. `PLAN-0005` implements Revision 1 of `SKL-OPS-003` (the backed-up v1→v2 forward migration), the durable-database portions of `SKL-OPS-004` (typed `database_corrupt` diagnostics with backup inventory and FTS-only rebuild), `SKL-OPS-005` for the new read/doctor leaves, and the offline read coverage of `SKL-OPS-008` for `library list`/`search`/`get` and `doctor`. Doctor's cross-domain inspection (`SKL-CACHE-006`) and its future repair surface (`SKL-CACHE-007` beyond database migration/FTS rebuild) remain planned for the 0.1 CLI MVP because Trust, cache, global, manager, and workspace state do not exist yet.
 
 The **cache** contains removable external Skill bytes. Durable metadata and desired state live elsewhere. Operational state contains journals and ownership records needed to recover managed mutations safely.
 
@@ -82,11 +82,20 @@ After a correct replacement is verified and promoted, skilload MUST delete the f
 
 **Behavior.** Before a database schema upgrade, skilload MUST create a recoverable backup and then apply a transactional forward migration. A database with an unknown newer schema or a requested downgrade MUST refuse writes rather than guessing or rewriting.
 
+在创建 backup、写入 FTS 或更新 schema version 前，migration MUST 验证完整固定 base schema inventory，包括 foreign-key 与 base-table autoindex inventory；每个 base-table autoindex都必须精确对应 fixed primary-key/unique constraint，缺失、重命名或额外 autoindex均作为 `database_corrupt` 拒绝。backup MUST 在完成 baseline validation的同一 SQLite SHARED snapshot内复制，并在最终 schema transaction前重新比较完整 base entries；成功的 `More` backup chunk不得消耗 `Busy`/`Locked` contention retry budget。未违反约束的 extra relation也必须作为 `database_corrupt` 拒绝，不能让 schema-side cascade 改写 Library row。
+
+为满足“recoverable backup”的既有含义，staging standalone database 的 base validation、SHA-256 与 final DB/manifest pair publication MUST 处于同一个 held SQLite SHARED snapshot：snapshot释放前不得让另一个 connection提交会改变已验证 bytes 的写入。final pair 已发布后，仍命名 held staging file 的临时 directory entry MUST 被 identity-bound `unlinkat` 删除；该删除失败 MUST 返回 typed error，migration 不得报告 success。完整 base proof还 MUST 验证每张 fixed base table 的 column name、type、nullability、primary-key position、无 default 和每个 fixed base key 的 BINARY collation；同名 table 或 autoindex不能替代该证明。`Busy`/`Locked` deadline从第一次连续 contention开始，且任一成功 `More` progress MUST 清除先前 deadline。以上是本 Revision 的可恢复 backup、fixed schema 与“More 不消耗 contention budget”要求的实现澄清，不改变其行为 revision。
+
 **Acceptance.** Fault injection leaves either the prior readable database plus backup or the complete new schema. A newer-schema fixture permits safe diagnostics/export where possible but rejects mutation.
 
 ## SKL-OPS-004 - Database corruption handling (Revision 1)
 
 **Behavior.** Suspected database corruption MUST stop writes and MUST NOT silently recreate an empty database. Doctor MAY rebuild derived FTS indexes when base records are provably intact; otherwise `database_corrupt` diagnostics MUST identify the database and known backups as `PathValue`, name every still-readable export, and set `recovery_procedure: "database-corruption-v1"`. The operator MUST follow the normative [database corruption recovery procedure](database-recovery.md), which preserves evidence, validates a standalone migration backup in isolated XDG roots, replaces the database atomically with rollback, or explicitly moves the corrupt database/WAL/SHM set out of the live path before a destructive empty reset. The 0.1 CLI MUST NOT expose an unlisted reset command or adopt surviving links/manifests/cache as ownership after reset.
+
+Recovery export probe 的 content、domain 或 deterministic transfer-size validation failure 可以不列出该 export；descriptor、I/O、lock、memory 或其他 operational failure MUST 保持其 typed error 向上传播，绝不能伪装为成功但 inventory 不完整的 `database_corrupt` diagnostics。
+
+读取 current database header 时，short header、SQLite magic 或 journal-mode bytes 不匹配仍是 `database_corrupt`；任何其他 header read I/O failure MUST 在 generation revalidation后保留 typed `XDG_DATA_HOME` error，不能伪装为 corruption recovery。已验证 backup inventory最多收集 64 个 `*.manifest.json` candidates；遇到第 65 个 MUST 返回 typed `invalid_state`，不得截断为 successful partial inventory或执行无界 scan。该 ceiling与 manifest/database byte limits共同定义 current-database corruption diagnostic 的有限资源边界。
+对当前 `data/skilload.db`，main file 与同名 `-journal`、`-wal`、`-shm` 是一个 observed database generation。任何 read 或 default doctor 必须先在 SQLite open 前通过 held data-directory descriptor 拒绝已观察到的 sibling；随后必须在同一 held descriptor 的 SQLite SHARED read snapshot 建立后、读取任何 Library schema/data 前再次盘点 sibling。后一次盘点观察到 companion 时返回带既有 recovery details 的 `database_corrupt`；snapshot 之后才出现的 companion 不得改变已持有的读取快照。两种路径都不得创建、修改或混读 generation member。这是对本 Revision 既有 corruption/recovery 语义的澄清，不改变 Revision。
 
 **Acceptance.** A corrupt fixture never turns into an empty successful Library. Repair of an FTS-only failure preserves base row identities and metadata. Restore fixtures reject a bad digest, newer schema, stale WAL, foreign-key failure, and live-file drift; a valid standalone backup restores atomically and can roll back as one generation. Reset fixtures require explicit removal of the database/WAL/SHM set, preserve portable workspace files, and leave every old deployment/cache artifact unowned until normal Trust and ownership are re-established.
 

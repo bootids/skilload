@@ -712,10 +712,12 @@ mod tests {
     }
 
     fn application(store: Arc<FileConfigurationStore>) -> Application {
+        let repository = Arc::new(SqliteLibraryRepository::new());
         Application::new(
             store,
-            Arc::new(SqliteLibraryRepository::new()),
+            repository.clone(),
             Arc::new(PortableLibraryTransferStore::new()),
+            repository,
         )
     }
 

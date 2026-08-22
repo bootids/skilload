@@ -1,6 +1,6 @@
 # Library
 
-Status: 部分实现。`PLAN-0003` 实现了 Revision 4 的 `SKL-LIB-009` 与 Revision 5 的 `SKL-LIB-010`；`PLAN-0004` 实现了 Revision 1 的 `SKL-LIB-001` 与 `SKL-LIB-008`。其他 Library 行为仍为 skilload CLI MVP 的 planned 范围。
+Status: 部分实现。`PLAN-0003` 实现了 Revision 4 的 `SKL-LIB-009` 与 Revision 5 的 `SKL-LIB-010`；`PLAN-0005` 将 `SKL-LIB-009` 更新到 Revision 5，以拒绝覆盖已发布的 migration backup pair。`PLAN-0004` 实现了 Revision 1 的 `SKL-LIB-001` 与 `SKL-LIB-008`；`PLAN-0005` 实现了 Revision 2 的 `SKL-LIB-004`、Revision 1 的 `SKL-LIB-005` 与 Revision 1 的 `SKL-LIB-011`（`library list`/`search`/`get` 离线读取、FTS5 索引搜索、确定性分页与 10,000-entry 规模证据）。其余 Library 行为仍为 skilload CLI MVP 的 planned 范围。
 
 The **Library** is the user's durable, searchable collection of source metadata. It is not a content store, Trust store, workspace manifest, or deployment list.
 
@@ -22,11 +22,11 @@ The **Library** is the user's durable, searchable collection of source metadata.
 
 **Acceptance.** Repeating the same add produces no durable diff and returns the idempotent success outcome even when upstream metadata has changed.
 
-## SKL-LIB-004 - Full-text search fields (Revision 1)
+## SKL-LIB-004 - Full-text search fields (Revision 2)
 
-**Behavior.** Library search MUST use embedded SQLite FTS5 and index verified name, description, alias, tags, category, note, and repository. For every tag it MUST index both the stored display spelling and the comparison key from `SKL-LIB-008`, so canonically or case-equivalent tag input searches consistently without changing normalization of unrelated free-text fields.
+**Behavior.** Library search MUST 使用嵌入式 SQLite FTS5，并索引 verified name、description、alias、tags、category、note 与 repository。每个 tag 都 MUST 同时索引 `SKL-LIB-008` 的 stored display spelling 与 comparison key，使规范等价或大小写等价的 tag 输入得到一致结果。name、description、alias、category、note 与 repository 的 base metadata MUST 保留原始 UTF-8；其派生 FTS projection 在值并非 NFC 时 MUST 保留原值并以 ASCII newline 附加 NFC projection，使规范化 query term可匹配规范等价的 free-text。为使 Unicode 15.1.0 完整默认大小写折叠会展开字符的 query alternative也可命中，projection MUST 再以 ASCII newline 附加 distinct 的完整默认大小写折叠后 NFC spelling；这不改变 list/get/export 的原始 metadata。`library search <QUERY>` MUST 把 `<QUERY>` 解释为纯文本，而不是 FTS5 查询语言：按仓库固定的 Unicode 15.1.0 `White_Space` code points 分隔非空词项；每个词项生成 NFC 原文及 Unicode 15.1.0 完整默认大小写折叠后再 NFC 的形式；这两个形式作为同一词项的文字 alternatives，所有不同词项必须同时命中同一 entry，但可以命中不同索引字段。实现 MUST 对所有词项进行 FTS5 string quoting，因此 `AND`、`OR`、`NOT`、`NEAR`、引号、星号、括号、冒号与连字符都不得获得查询运算符含义。没有任何词项的查询 MUST 在执行 SQLite 查询前以 `validation_failed` 和 `library_search_query_empty` 失败。
 
-**Acceptance.** A query can match an entry through each indexed field, including a user note, without reading Skill content or contacting GitHub.
+**Acceptance.** 查询可以分别通过每个索引字段（包括 user note）命中 entry，且不读取 Skill content、不联系 GitHub。`code review` 只返回同时含两个词项的 entry，即使两个词项不相邻或位于不同字段；它不要求完整短语。`OR`、`NOT`、`*`、`name:review` 与包含双引号的输入都作为普通文本处理，不得扩大查询范围或触发 FTS5 grammar error。由 `Review`/`review`、组合/分解形式 `café`/`cafe\u0301` 产生的 tag 查询命中同一 entry；组合/分解形式出现在 description、alias、category 或 note 时也必须命中同一 entry，同时 list/get/export 保留原始 UTF-8 metadata。空字符串或全为 Unicode 15.1.0 `White_Space` 的查询以规定的 validation error 失败且不创建或修改状态。
 
 ## SKL-LIB-005 - Offline reads (Revision 1)
 
@@ -52,9 +52,9 @@ The **Library** is the user's durable, searchable collection of source metadata.
 
 **Acceptance.** Adding ` Review ` and then `review` stores one tag displayed as `Review`; composed `caf\u00e9` and decomposed `cafe\u0301` likewise share one key and retain the first display spelling. Internal whitespace is not collapsed, Turkish case folding is locale-independent, and empty/control/oversized tags, a 65th distinct tag, a 257-scalar or 1,025-byte alias/category, and a 4,097-scalar or 16,385-byte note fail without mutation. Removing through any equivalent spelling removes the one stored value. Clearing an already empty note returns unchanged, and attempting a duplicate alias changes neither entry.
 
-## SKL-LIB-009 - Export boundary (Revision 4)
+## SKL-LIB-009 - Export boundary (Revision 5)
 
-**Behavior.** Library export MUST 生成确定性、版本化的 JSON，其中只含可移植的 Library 来源与元数据；它 MUST 排除 Trust、全局 desired state、manager records、已知 workspace paths、本机 profile IDs、凭据、cache content 和不可移植的操作时间。`library export --output <PATH>` MUST 向请求的原生路径原子写入且仅写入一个可移植的 `LibraryExportData` 文档；正常的人类输出或 `--json` 操作结果 MUST 保持在该文件之外。创建 staging 文件前，export MUST 通过不跟随 symlink 的检查和有效 XDG root identity 比较，拒绝指向活动 `data/skilload.db`、`skilload.db-wal`、`skilload.db-shm` 或 `state/locks/database.lock` 的 target；它不得替换这些 skilload-owned path 或在其处创建临时文件。对其余既有普通文件，export MUST 在其父目录创建临时文件、完整写入并 sync 文件、原子 rename，再 sync 父目录；rename 前的失败 MUST 保留旧 target 或无 target 并清理 staging。若 rename 后的父目录 sync 失败，命令 MUST 返回错误且不得声称旧 target 仍在；新文档 MAY 已可见，但不得报告成功。
+**Behavior.** Library export MUST 生成确定性、版本化的 JSON，其中只含可移植的 Library 来源与元数据；它 MUST 排除 Trust、全局 desired state、manager records、已知 workspace paths、本机 profile IDs、凭据、cache content 和不可移植的操作时间。`library export --output <PATH>` MUST 向请求的原生路径原子写入且仅写入一个可移植的 `LibraryExportData` 文档；正常的人类输出或 `--json` 操作结果 MUST 保持在该文件之外。创建 staging 文件前，export MUST 通过不跟随 symlink 的检查和有效 XDG root identity 比较，拒绝指向活动 `data/skilload.db`、`skilload.db-wal`、`skilload.db-shm`、`state/locks/database.lock`，或任一已发布 `data/backups/skilload-db-v1-to-v2-*.db` / sibling `.manifest.json` recovery-pair entry 的 target；它不得替换这些 skilload-owned path 或在其处创建临时文件。对其余既有普通文件，export MUST 在其父目录创建临时文件、完整写入并 sync 文件、原子 rename，再 sync 父目录；rename 前的失败 MUST 保留旧 target 或无 target 并清理 staging。若 rename 后的父目录 sync 失败，命令 MUST 返回错误且不得声称旧 target 仍在；新文档 MAY 已可见，但不得报告成功。
 
 活跃 SQLite 在 DELETE rollback journal 模式下出现的 `data/skilload.db-journal` 也是同一 database generation 的成员；export MUST 在创建 staging 前以相同 no-follow、root identity 和 file-identity 规则拒绝该 target，绝不得移动、删除或以 JSON 替换该 journal。
 
@@ -62,7 +62,7 @@ The **Library** is the user's durable, searchable collection of source metadata.
 
 在最终 publish 前及 parent-directory sync 后，export MUST 证明 held staging descriptor 仍与已验证 parent descriptor 中的 output entry 相同；若发现 identity drift，MUST 返回错误且不得报告成功，不得删除未知 replacement。rename 前的 drift 保留旧 target 或无 target；rename 后的 drift 允许本调用文档已被外部移动，但请求 output 的未知 replacement 必须保留。
 
-**Acceptance.** 检查 export 找不到本机绝对路径或 authorization/deployment record。未改变 Library 状态的重复 export MUST 产生语义相同、排序稳定的数据，并以原子替换完成请求路径的输出；输出文件本身必须是 `LibraryExportData`，命令的人类或 API-v2 操作结果不得混入其中。针对活动 database、WAL、SHM 和 database lock 的 target fixture 必须在创建 staging 前失败且保持该路径不变。注入 rename 前失败时旧普通 target 或无 target 必须保留；注入 rename 后父目录 sync 失败时命令必须失败，fixture 可以观察到新 target，且不得把该情形断言为旧 target 保留。若 same-account process 在 rename 后、最终 parent sync 前替换 output entry，命令 MUST 以 identity-drift 错误退出、不得报告成功，并保留 replacement。
+**Acceptance.** 检查 export 找不到本机绝对路径或 authorization/deployment record。未改变 Library 状态的重复 export MUST 产生语义相同、排序稳定的数据，并以原子替换完成请求路径的输出；输出文件本身必须是 `LibraryExportData`，命令的人类或 API-v2 操作结果不得混入其中。针对活动 database、WAL、SHM、database lock、已发布 migration backup DB、matching manifest 及其 same-inode alias 的 target fixture 必须在创建 staging 前失败且保持该路径不变。注入 rename 前失败时旧普通 target 或无 target 必须保留；注入 rename 后父目录 sync 失败时命令必须失败，fixture 可以观察到新 target，且不得把该情形断言为旧 target 保留。若 same-account process 在 rename 后、最终 parent sync 前替换 output entry，命令 MUST 以 identity-drift 错误退出、不得报告成功，并保留 replacement。
 
 活动 DELETE-mode rollback journal target fixture 也必须在创建 staging 前失败且 journal 保持不变。
 
