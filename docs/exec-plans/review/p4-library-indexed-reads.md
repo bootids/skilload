@@ -98,6 +98,7 @@ DELETE-mode `-journal` 同样不能与 descriptor-bound open 分离：SQLite 官
 - [x] (2026-08-22) 第十四轮 final-review 的四个 inline defect 已在现有 Product Baseline 内完成：FTS read diagnostic 使用 536,870,912-byte page budget、backup candidate 在 268,435,456 bytes 前拒绝、base schema 拒绝 user trigger、search 在 count/page 前运行 special integrity check。三条 new regression 已 red→green，另有 budget boundary regression；`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets --all-features -- -D warnings`、`cargo test --workspace --all-features --locked`（174 passed）、`cargo build --workspace --all-features --locked` 与 `git diff --check` 已通过。修复与 preliminary log 的 `d9791172fdfcdec82f0adbdb0d96505cffc87e65` 已推送并与 PR head 验证一致；四个 GitHub replies 已写入、对应 inline threads 均 resolved，final reconciliation 已记录在本 Log。
 - [x] (2026-08-22) 第十五轮 final-review 的 review body 加四个 inline defect已由 `3f1e563d74aef7d0a83e1d65a23e8d7dd7a28bf4` 修复并推送：existing-output export现在清理仍匹配 captured identity的 displaced link；doctor区分 snapshot-budget resource finding；migration backup在 copy/hash 前及每个 online-backup chunk受 268,435,456-byte ceiling；base proof要求 exact schema inventory；backup candidate operational failure传播。全 workspace fmt/clippy/test（13+17+179）/all-features locked build通过；review body已获 reply，四个 inline threads均已回复并 resolved。
 - [x] (2026-08-22) finalized Review Conversation Log documentation commit `063ceb6fc3c484af6527a2e44119e888dd756ea1` 已推送；post-push `list --all` 再次确认 17 个 comments、69 个 reviews、54 个 threads，全部 source已记录、无 unresolved/blocked，PR head与本地同为该 commit，Plan保持 `review`、PR保持 ready/Open。
+- [x] (2026-08-22) 第十六轮 final-review 的五个 inline defect 已在当前 Product Baseline 内完成本地 remediation：migration backup child与最终 pair绑定 held generation、online backup retry有界、diagnostic backup匹配 source identity、existing-output export cleanup failure可见。五个 focused regression及 `cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets --all-features -- -D warnings`、`cargo test --workspace --all-features --locked`（13+17+184）和 `cargo build --workspace --all-features --locked` 已通过；preliminary remediation commit、GitHub replies与thread resolution待完成。
 
 ## Surprises & Discoveries
 
@@ -328,6 +329,18 @@ DELETE-mode `-journal` 同样不能与 descriptor-bound open 分离：SQLite 官
   Date/Author: 2026-08-22 / Codex
 - Decision: backup pair validation以 `Result<bool, AppError>` 区分确定无效内容与 operational validation failure；open/stat/read/SQLite/hash/entry-revalidation error向 recovery diagnostic传播。
   Rationale: 缺失/symlink/nonregular/格式不兼容/corrupt/sidecar/超限文件可以安全不广告，但把 descriptor exhaustion、I/O或final identity error折叠为 false会给 operator不完整的 recovery inventory。
+  Date/Author: 2026-08-22 / Codex
+
+- Decision: migration backup directory必须从 held `data/skilload` descriptor relative创建，publication后的 pair在 final sync/hook后重验。
+  Rationale: 临时 pathname ABA 不能改变已打开 SQLite source generation；若 recovery pair按 pathname进入 replacement directory，`SKL-OPS-003` 的“先有可恢复 backup再写 schema”不成立。held child descriptor保证 final `linkat` target属于同一 generation，post-hook revalidation阻止被替换 pair触发 migration。
+  Date/Author: 2026-08-22 / Codex
+
+- Decision: online backup 的每个 incomplete step复用 `LOCK_RETRY`/`LOCK_WAIT` contention policy，manifest source identity必须匹配 diagnosed database。
+  Rationale: `More` 在持续 writer下不保证有限完成，`Busy`/`Locked` 也不能无限占有 database lock；同一 typed `busy` boundary符合 adapter既有语义。format/digest正确但 source device/inode不同的 pair不是当前 generation的 recovery evidence，orphan sidecar则没有可证明 identity，均必须 fail closed。
+  Date/Author: 2026-08-22 / Codex
+
+- Decision: existing-output exchange 的 captured displaced link cleanup failure返回 export error。
+  Rationale: 成功结果不得隐藏遗留的旧 portable document；已在 cleanup 前确认的 foreign replacement继续保留，只有 `unlinkat` 系统调用错误从成功路径升级为可见失败。
   Date/Author: 2026-08-22 / Codex
 
 ## Outcomes & Retrospective
@@ -1288,6 +1301,88 @@ Evidence: 新增 `backup_candidate_io_failure_is_propagated`（unreadable manife
 GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/5#discussion_r3835485498；thread resolved: true。
 
 2026-08-22 第十五轮 final reconciliation（documentation commit前）：完整 `list --all` 读取到 17 个 top-level comments、69 个 submitted reviews 与 54 个 review threads。所有 54 个 thread IDs 都有本 Log source，四个本轮 inline thread的 reply URLs与 `isResolved: true` 一致；`PRR_kwDOT7YN2s8AAAABKfvO-g` review body的 reply为 `IC_kwDOT7YN2s8AAAABQJwmqw`，无可 resolve thread。新出现的 empty review containers `PRR_kwDOT7YN2s8AAAABKf3D1w`、`PRR_kwDOT7YN2s8AAAABKf3E8Q`、`PRR_kwDOT7YN2s8AAAABKf3F4Q` 与 `PRR_kwDOT7YN2s8AAAABKf3G5A` 不含问题；新增 top-level comment是前述 review-body reply，不是新的问题。无 pending、blocked、unlogged 或 unanswered non-blocked actual problem。
+
+2026-08-22 第十六轮 final-review 初始分类：`mise exec -- node .agents/skills/address-pr-threads/scripts/pr_threads.cjs list --all` 读取到 18 个 top-level comments、70 个 submitted reviews 与 59 个 review threads。已有 Log 覆盖此前 54 个 thread；新出现的 `IC_kwDOT7YN2s8AAAABQJRtCA`、`IC_kwDOT7YN2s8AAAABQJ1rQg` 是 `@codex` trigger，`PRR_kwDOT7YN2s8AAAABKf6NcQ` 是自动化 wrapper，其他新 review containers 为空，均不含独立问题。以下五个未 resolved inline thread 都在当前 Product Baseline 的 ordinary final-review remediation 边界内，尚未回复或关闭。
+
+### PRRT_kwDOT7YN2s6bXbBl - 将 migration backup publication 绑定到 held data generation
+
+Source: PRRT_kwDOT7YN2s6bXbBl / PRRC_kwDOT7YN2s7knaX8（https://github.com/bootids/skilload/pull/5#discussion_r3835536892）
+
+Problem: `publish_validated_backup` 从 pathname `roots.data.effective.join("backups")` 创建并打开 backup directory；在 writable SQLite connection 已绑定原 `data/skilload` 后，temporary directory replacement 可使 recovery pair发布到 replacement directory，随后原目录恢复时 migration仍可能写原 database 而没有其 required pair。
+
+Disposition: fixed
+
+Status: open
+
+Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 将 held `data_directory` 传入 backup publication，并通过 `ValidatedDataDirectory::create_restrictive_child` descriptor-relative创建/打开 `backups`；final `linkat` publication仍使用该 child descriptor。新增 `backup_directory_creation_uses_the_held_data_generation`，证明 pathname replacement时 child进入 held generation；本轮 preliminary remediation commit待创建。
+
+Evidence: 五个 focused regression与 `cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets --all-features -- -D warnings`、`cargo test --workspace --all-features --locked`（13+17+184）及 `cargo build --workspace --all-features --locked` 均通过；preliminary remediation commit待创建。
+
+GitHub outcome: 尚未回复；thread resolved: false。
+
+### PRRT_kwDOT7YN2s6bXbBn - migration 前重验已发布 backup pair
+
+Source: PRRT_kwDOT7YN2s6bXbBn / PRRC_kwDOT7YN2s7knaX-（https://github.com/bootids/skilload/pull/5#discussion_r3835536894）
+
+Problem: `verify_published_entry` 在 directory sync 前执行；`after_backup_publish` hook及其后的窗口可替换 final database 或 manifest entry，函数仍返回 success，`migrate_v1_locked` 随即写 live schema。
+
+Disposition: fixed
+
+Status: open
+
+Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 于 final backup-directory sync和 `after_backup_publish` hook后重验 held directory及 database/manifest pair identity，再允许 migration transaction。新增 `migration_revalidates_the_published_backup_before_schema_write`，替换 published DB后断言 schema保持 v1；本轮 preliminary remediation commit待创建。
+
+Evidence: 五个 focused regression与 `cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets --all-features -- -D warnings`、`cargo test --workspace --all-features --locked`（13+17+184）及 `cargo build --workspace --all-features --locked` 均通过；preliminary remediation commit待创建。
+
+GitHub outcome: 尚未回复；thread resolved: false。
+
+### PRRT_kwDOT7YN2s6bXbBp - 限制 online backup 的重试时间
+
+Source: PRRT_kwDOT7YN2s6bXbBp / PRRC_kwDOT7YN2s7knaYC（https://github.com/bootids/skilload/pull/5#discussion_r3835536898）
+
+Problem: `copy_bounded_backup` 对 `StepResult::More`、`Busy` 与 `Locked` 无延迟、无 deadline地无限循环；持续写入或锁 contention 可让 `doctor --fix` 无限持有 `database.lock`。
+
+Disposition: fixed
+
+Status: open
+
+Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 以 `wait_for_backup_retry` 为每个 `More`/`Busy`/`Locked` step应用 `LOCK_RETRY` 与 `LOCK_WAIT` deadline，超时返回既有 typed database `busy`。新增 `online_backup_retry_window_returns_the_bounded_database_busy_error`；本轮 preliminary remediation commit待创建。
+
+Evidence: 五个 focused regression与 `cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets --all-features -- -D warnings`、`cargo test --workspace --all-features --locked`（13+17+184）及 `cargo build --workspace --all-features --locked` 均通过；preliminary remediation commit待创建。
+
+GitHub outcome: 尚未回复；thread resolved: false。
+
+### PRRT_kwDOT7YN2s6bXbBu - 传播 displaced export 的 unlink failure
+
+Source: PRRT_kwDOT7YN2s6bXbBu / PRRC_kwDOT7YN2s7knaYI（https://github.com/bootids/skilload/pull/5#discussion_r3835536904）
+
+Problem: existing-output `RENAME_EXCHANGE` success path确认 displaced entry仍为 captured identity后，以 `let _ = unlinkat(...)` 丢弃 cleanup error；command因此可能在 output directory 保留旧 `.skilload-publish-*` document却报告 success。
+
+Disposition: fixed
+
+Status: open
+
+Resolution: 已在 `crates/skilload-core/src/adapters/portable_library.rs` 将 captured displaced entry的 `unlinkat` failure映射为 typed `library_export_io` validation error，同时保持 identity-mismatch的 foreign replacement保护。新增 `export_reports_a_displaced_output_cleanup_failure`，以 parent permission failure断言 command不报告 success；本轮 preliminary remediation commit待创建。
+
+Evidence: 五个 focused regression与 `cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets --all-features -- -D warnings`、`cargo test --workspace --all-features --locked`（13+17+184）及 `cargo build --workspace --all-features --locked` 均通过；preliminary remediation commit待创建。
+
+GitHub outcome: 尚未回复；thread resolved: false。
+
+### PRRT_kwDOT7YN2s6bXbBx - 只广告匹配诊断 generation 的 backup
+
+Source: PRRT_kwDOT7YN2s6bXbBx / PRRC_kwDOT7YN2s7knaYM（https://github.com/bootids/skilload/pull/5#discussion_r3835536908）
+
+Problem: `backup_pair_is_valid` 验证 manifest format/schema/digest/standalone database，却不将 `source_device`/`source_inode` 与当前 diagnosed database identity比较；其他 database 的 structurally valid pair可被错误广告为当前 recovery asset。
+
+Disposition: fixed
+
+Status: open
+
+Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 将 diagnosed identity传给 `known_validated_backups`/`backup_pair_is_valid`，只接受 manifest source device/inode相同的 pair；orphan-sidecar path无 identity时返回 empty inventory。新增 `backup_manifest_must_match_the_diagnosed_database_generation`，篡改 manifest source inode后断言 `database_corrupt` 不广告 backup；本轮 preliminary remediation commit待创建。
+
+Evidence: 五个 focused regression与 `cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets --all-features -- -D warnings`、`cargo test --workspace --all-features --locked`（13+17+184）及 `cargo build --workspace --all-features --locked` 均通过；preliminary remediation commit待创建。
+
+GitHub outcome: 尚未回复；thread resolved: false。
 
 ## Context and Orientation
 

@@ -1,6 +1,6 @@
 use crate::adapters::configuration::{
-    CreatedDirectory, LOCK_WAIT, acquire_restrictive_lock, ensure_restrictive_directory,
-    environment_io, sync_created_directory_entries,
+    CreatedDirectory, LOCK_RETRY, LOCK_WAIT, acquire_restrictive_lock,
+    ensure_restrictive_directory, environment_io, sync_created_directory_entries,
 };
 use crate::adapters::xdg::{SystemEnvironment, XdgRootResolver};
 use crate::domain::configuration::NativePath;
@@ -26,7 +26,9 @@ use rusqlite::{
     backup::{Backup, StepResult},
     ffi, params,
 };
-use rustix::fs::{AtFlags, Dir, FileType, Mode, OFlags, fstat, linkat, openat, statat, unlinkat};
+use rustix::fs::{
+    AtFlags, Dir, FileType, Mode, OFlags, fstat, linkat, mkdirat, openat, statat, unlinkat,
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -37,7 +39,7 @@ use std::os::fd::AsRawFd;
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tempfile::{Builder, NamedTempFile};
 use unicode_normalization::{UnicodeNormalization, is_nfc};
 
@@ -216,7 +218,7 @@ impl SqliteLibraryRepository {
             if !has_database_sidecar(directory, database_name) {
                 return Err(Self::database_identity_drift());
             }
-            let backups = Self::known_validated_backups(directory)?;
+            let backups = Self::known_validated_backups(directory, None)?;
             directory.revalidate()?;
             self.root_resolver.revalidate(roots)?;
             directory.revalidate()?;
@@ -982,7 +984,7 @@ impl SqliteLibraryRepository {
     ) -> Result<AppError, AppError> {
         self.hooks.before_database_corruption_details(path)?;
         Self::revalidate_database_generation(directory, path, identity)?;
-        let backups = Self::known_validated_backups(directory)?;
+        let backups = Self::known_validated_backups(directory, Some(identity))?;
         Self::revalidate_database_generation(directory, path, identity)?;
         Ok(AppError::DatabaseCorrupt {
             database: NativePath::new(path.to_path_buf()),
@@ -1020,7 +1022,7 @@ impl SqliteLibraryRepository {
         };
         (|| {
             Self::revalidate_database_generation(directory, path, identity)?;
-            let backups = Self::known_validated_backups(directory)?;
+            let backups = Self::known_validated_backups(directory, Some(identity))?;
             let recoverable_exports =
                 self.recoverable_library_exports(directory, path, identity)?;
             Self::revalidate_database_generation(directory, path, identity)?;
@@ -1035,7 +1037,14 @@ impl SqliteLibraryRepository {
 
     fn known_validated_backups(
         data_directory: &ValidatedDataDirectory,
+        expected_source_identity: Option<(u64, u64)>,
     ) -> Result<Vec<NativePath>, AppError> {
+        // Orphaned sidecars have no current main-file generation to prove
+        // against. Advertising any pair would be less safe than an empty
+        // inventory because the manifest source identity cannot be matched.
+        let Some(expected_source_identity) = expected_source_identity else {
+            return Ok(Vec::new());
+        };
         let Some(directory) =
             ValidatedDataDirectory::open_optional_child(data_directory, OsStr::new("backups"))?
         else {
@@ -1045,7 +1054,7 @@ impl SqliteLibraryRepository {
         stems.sort();
         let mut validated = Vec::new();
         for stem in stems {
-            if backup_pair_is_valid(&directory, &stem)? {
+            if backup_pair_is_valid(&directory, &stem, expected_source_identity)? {
                 validated.push(NativePath::new(directory.path.join(format!("{stem}.db"))));
             }
         }
@@ -1295,6 +1304,7 @@ impl SqliteLibraryRepository {
                     .map_err(|error| database_error(&database, error))?;
                 revision
             };
+            data_directory.revalidate()?;
             Self::revalidate_database_identity(&database, identity)?;
 
             let entries = {
@@ -1305,7 +1315,7 @@ impl SqliteLibraryRepository {
             };
 
             self.publish_validated_backup(
-                &roots,
+                &data_directory,
                 &connection,
                 &database,
                 identity,
@@ -1514,7 +1524,7 @@ impl SqliteLibraryRepository {
     /// complete pair is durable in `data/backups/`.
     fn publish_validated_backup(
         &self,
-        roots: &ResolvedRoots,
+        data_directory: &ValidatedDataDirectory,
         source: &Connection,
         database: &Path,
         source_identity: (u64, u64),
@@ -1525,15 +1535,13 @@ impl SqliteLibraryRepository {
         if !migration_backup_is_bounded(page_count, page_size) {
             return Err(migration_backup_too_large());
         }
-        let backups_root = roots.data.effective.join("backups");
-        let created_directories = ensure_restrictive_directory(&backups_root, "XDG_DATA_HOME")?;
-        let backups_directory = ValidatedDataDirectory::open(&backups_root)?;
-        backups_directory.revalidate()?;
-        // On the first migration `data/backups` does not exist yet: syncing
-        // the backups directory only persists its contents, so the new entry
-        // in its parent data directory must be made crash-durable before any
-        // live schema write can depend on the pair published here.
-        sync_created_directory_entries(&created_directories, "XDG_DATA_HOME")?;
+        data_directory.revalidate()?;
+        // Create and sync the child relative to the held data-directory
+        // descriptor. Publication below is likewise descriptor-relative, so
+        // a pathname ABA cannot place a recovery pair in another generation.
+        let backups_directory =
+            data_directory.create_restrictive_child(OsStr::new("backups"), database)?;
+        let backups_root = backups_directory.path.clone();
 
         let mut staging_db = Builder::new()
             .prefix(".skilload-backup-db-")
@@ -1717,7 +1725,17 @@ impl SqliteLibraryRepository {
             database_sync_error(database, "sync published backup directory", error)
         })?;
         self.hooks
-            .after_backup_publish(&backups_root.join(final_db_name))?;
+            .after_backup_publish(&backups_root.join(&final_db_name))?;
+        // The post-sync hook is intentionally inside the backup-before-write
+        // boundary: the live schema transaction may start only while both
+        // published entries still name the held, verified files.
+        backups_directory.revalidate()?;
+        verify_published_entry(&backups_directory, &final_db_name, staging_db.as_file())?;
+        verify_published_entry(
+            &backups_directory,
+            &final_manifest_name,
+            staging_manifest.as_file(),
+        )?;
         Ok(())
     }
 
@@ -1995,7 +2013,11 @@ fn standalone_backup_is_valid(
 /// the held directory with no-follow descriptors, remain linked under their
 /// advertised names, have no SQLite sidecars, have a compatible manifest,
 /// and contain the verified standalone v1 database it describes.
-fn backup_pair_is_valid(directory: &ValidatedDataDirectory, stem: &str) -> Result<bool, AppError> {
+fn backup_pair_is_valid(
+    directory: &ValidatedDataDirectory,
+    stem: &str,
+    expected_source_identity: (u64, u64),
+) -> Result<bool, AppError> {
     let database_name = OsString::from(format!("{stem}.db"));
     let manifest_name = OsString::from(format!("{stem}.manifest.json"));
     if backup_has_database_sidecar(directory, &database_name)? {
@@ -2041,6 +2063,7 @@ fn backup_pair_is_valid(directory: &ValidatedDataDirectory, stem: &str) -> Resul
         || record.format_version != BACKUP_MANIFEST_FORMAT_VERSION
         || record.source_schema != 1
         || record.target_schema != SCHEMA_VERSION
+        || (record.source_device, record.source_inode) != expected_source_identity
     {
         return Ok(false);
     }
@@ -2643,8 +2666,7 @@ impl ValidatedDataDirectory {
             handle,
         })
     }
-    fn open_optional_child(&self, name: &OsStr) -> Result<Option<Self>, AppError> {
-        self.revalidate()?;
+    fn open_child_from_held(&self, name: &OsStr) -> Result<Option<Self>, AppError> {
         let handle = match openat(
             &self.handle,
             name,
@@ -2652,10 +2674,7 @@ impl ValidatedDataDirectory {
             Mode::empty(),
         ) {
             Ok(handle) => File::from(handle),
-            Err(error) if error == rustix::io::Errno::NOENT => {
-                self.revalidate()?;
-                return Ok(None);
-            }
+            Err(error) if error == rustix::io::Errno::NOENT => return Ok(None),
             Err(_) => return Err(SqliteLibraryRepository::database_identity_drift()),
         };
         let metadata = handle
@@ -2669,12 +2688,48 @@ impl ValidatedDataDirectory {
         {
             return Err(SqliteLibraryRepository::database_identity_drift());
         }
-        self.revalidate()?;
         Ok(Some(Self {
             path: self.path.join(Path::new(name)),
             identity,
             handle,
         }))
+    }
+
+    fn open_optional_child(&self, name: &OsStr) -> Result<Option<Self>, AppError> {
+        self.revalidate()?;
+        let child = self.open_child_from_held(name)?;
+        self.revalidate()?;
+        Ok(child)
+    }
+
+    /// Create the backup directory under the already-held data generation.
+    /// Final publication uses the returned child descriptor, never this
+    /// pathname, so a temporary replacement cannot redirect the pair.
+    fn create_restrictive_child(&self, name: &OsStr, database: &Path) -> Result<Self, AppError> {
+        let created = match mkdirat(&self.handle, name, Mode::RWXU) {
+            Ok(()) => true,
+            Err(error) if error == rustix::io::Errno::EXIST => false,
+            Err(error) => {
+                return Err(database_sync_error(
+                    database,
+                    "create backup directory",
+                    error.into(),
+                ));
+            }
+        };
+        let Some(child) = self.open_child_from_held(name)? else {
+            return Err(SqliteLibraryRepository::database_identity_drift());
+        };
+        child
+            .handle
+            .set_permissions(fs::Permissions::from_mode(0o700))
+            .map_err(|error| database_sync_error(database, "restrict backup directory", error))?;
+        if created {
+            self.handle.sync_all().map_err(|error| {
+                database_sync_error(database, "sync new backup directory entry", error)
+            })?;
+        }
+        Ok(child)
     }
 
     fn revalidate(&self) -> Result<(), AppError> {
@@ -3202,6 +3257,22 @@ fn migration_backup_too_large() -> AppError {
     )
 }
 
+/// Apply the database contention budget to every incomplete online-backup
+/// step. `More` can repeat forever when a writer keeps invalidating the
+/// snapshot, so it must not be treated as unbounded forward progress.
+fn wait_for_backup_retry(started: Instant) -> Result<(), AppError> {
+    let elapsed = started.elapsed();
+    if elapsed >= LOCK_WAIT {
+        return Err(database_busy());
+    }
+    std::thread::sleep(LOCK_RETRY.min(LOCK_WAIT.saturating_sub(elapsed)));
+    if started.elapsed() >= LOCK_WAIT {
+        Err(database_busy())
+    } else {
+        Ok(())
+    }
+}
+
 fn copy_bounded_backup(
     source: &Connection,
     destination: &mut Connection,
@@ -3214,6 +3285,7 @@ fn copy_bounded_backup(
     }
     let backup =
         Backup::new(source, destination).map_err(|error| database_error(database, error))?;
+    let retry_started = Instant::now();
     loop {
         let result = backup
             .step(512)
@@ -3223,8 +3295,10 @@ fn copy_bounded_backup(
         }
         match result {
             StepResult::Done => return Ok(()),
-            StepResult::More | StepResult::Busy | StepResult::Locked => {}
-            _ => continue,
+            StepResult::More | StepResult::Busy | StepResult::Locked => {
+                wait_for_backup_retry(retry_started)?;
+            }
+            _ => wait_for_backup_retry(retry_started)?,
         }
     }
 }
@@ -4113,6 +4187,13 @@ fn verify_sqlite_connection_identity(connection: &Connection) -> Result<(), AppE
     }
 }
 
+fn database_busy() -> AppError {
+    AppError::Busy {
+        lock_domain: "database".to_owned(),
+        waited_ms: LOCK_WAIT.as_millis() as u64,
+    }
+}
+
 fn database_error(path: &Path, error: SqlError) -> AppError {
     match &error {
         SqlError::SqliteFailure(code, _)
@@ -4121,10 +4202,7 @@ fn database_error(path: &Path, error: SqlError) -> AppError {
                 ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked
             ) =>
         {
-            AppError::Busy {
-                lock_domain: "database".to_owned(),
-                waited_ms: LOCK_WAIT.as_millis() as u64,
-            }
+            database_busy()
         }
         SqlError::SqliteFailure(code, _)
             if matches!(
@@ -5898,6 +5976,19 @@ mod tests {
     }
 
     #[test]
+    fn online_backup_retry_window_returns_the_bounded_database_busy_error() {
+        let started = Instant::now().checked_sub(LOCK_WAIT).unwrap();
+
+        assert!(matches!(
+            wait_for_backup_retry(started),
+            Err(AppError::Busy {
+                lock_domain,
+                waited_ms,
+            }) if lock_domain == "database" && waited_ms == LOCK_WAIT.as_millis() as u64
+        ));
+    }
+
+    #[test]
     fn database_sync_error_preserves_native_path_bytes() {
         let raw = b"/tmp/library-database-\xff.db";
         let path = PathBuf::from(OsString::from_vec(raw.to_vec()));
@@ -7389,6 +7480,34 @@ mod tests {
         assert!(healthy.findings.is_empty());
     }
 
+    struct ReplacePublishedBackupBeforeMigration;
+
+    impl PersistenceHooks for ReplacePublishedBackupBeforeMigration {
+        fn after_backup_publish(&self, backup: &Path) -> Result<(), AppError> {
+            let displaced = backup.with_extension("displaced");
+            fs::rename(backup, &displaced).unwrap();
+            fs::write(backup, b"replacement backup").unwrap();
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn migration_revalidates_the_published_backup_before_schema_write() {
+        let temporary = tempdir().unwrap();
+        let database = initialize_v1_database(&temporary);
+        let repository = SqliteLibraryRepository::with_hooks(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(XdgRootResolver),
+            Arc::new(ReplacePublishedBackupBeforeMigration),
+        );
+
+        assert!(matches!(
+            repository.fix(),
+            Err(AppError::InvalidState { state, .. }) if state == "database_identity_drift"
+        ));
+        assert_eq!(read_schema_version(&database), 1);
+    }
+
     fn read_schema_version(database: &Path) -> i64 {
         Connection::open(database)
             .unwrap()
@@ -7754,6 +7873,41 @@ mod tests {
         let mut bytes = fs::read(&database).unwrap();
         bytes[100..132].fill(0xa5);
         fs::write(&database, &bytes).unwrap();
+        assert!(matches!(
+            repository.inspect().unwrap_err(),
+            AppError::DatabaseCorrupt { backups, .. } if backups.is_empty()
+        ));
+    }
+
+    #[test]
+    fn backup_manifest_must_match_the_diagnosed_database_generation() {
+        let temporary = tempdir().unwrap();
+        let database = initialize_v1_database(&temporary);
+        let repository = SqliteLibraryRepository::with_environment(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(XdgRootResolver),
+        );
+        repository.fix().unwrap();
+        let backups_root = temporary.path().join("data/skilload/backups");
+        let manifest = fs::read_dir(&backups_root)
+            .unwrap()
+            .flatten()
+            .find(|entry| {
+                entry
+                    .path()
+                    .extension()
+                    .is_some_and(|extension| extension == "json")
+            })
+            .unwrap()
+            .path();
+        let mut record: BackupManifestRecord =
+            serde_json::from_slice(&fs::read(&manifest).unwrap()).unwrap();
+        record.source_inode ^= 1;
+        fs::write(&manifest, serde_json::to_vec(&record).unwrap()).unwrap();
+        let mut bytes = fs::read(&database).unwrap();
+        bytes[100..132].fill(0xa5);
+        fs::write(&database, &bytes).unwrap();
+
         assert!(matches!(
             repository.inspect().unwrap_err(),
             AppError::DatabaseCorrupt { backups, .. } if backups.is_empty()
@@ -8324,6 +8478,29 @@ mod tests {
 
         assert_eq!(result.entries.len(), 1);
         assert!(data_directory.join("skilload.db").is_file());
+    }
+
+    #[test]
+    fn backup_directory_creation_uses_the_held_data_generation() {
+        let temporary = tempdir().unwrap();
+        let data_directory = temporary.path().join("data/skilload");
+        let displaced_directory = temporary.path().join("displaced-data-directory");
+        fs::create_dir_all(&data_directory).unwrap();
+        let held = ValidatedDataDirectory::open(&data_directory).unwrap();
+
+        fs::rename(&data_directory, &displaced_directory).unwrap();
+        fs::create_dir(&data_directory).unwrap();
+        let backups = held
+            .create_restrictive_child(OsStr::new("backups"), &data_directory.join("skilload.db"))
+            .unwrap();
+
+        assert!(displaced_directory.join("backups").is_dir());
+        assert!(!data_directory.join("backups").exists());
+
+        fs::remove_dir(&data_directory).unwrap();
+        fs::rename(&displaced_directory, &data_directory).unwrap();
+        held.revalidate().unwrap();
+        backups.revalidate().unwrap();
     }
 
     #[test]

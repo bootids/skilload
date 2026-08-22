@@ -737,8 +737,15 @@ where
             cleanup_staging_if_owned(staging, parent, &staging_name);
             return Err(error);
         }
-        if output_guard.matches(&publication_name) {
-            let _ = unlinkat(&parent.directory, &publication_name, AtFlags::empty());
+        if output_guard.matches(&publication_name)
+            && let Err(error) = unlinkat(&parent.directory, &publication_name, AtFlags::empty())
+        {
+            cleanup_staging_if_owned(staging, parent, &staging_name);
+            return Err(export_io(
+                output,
+                "remove displaced export after successful replacement",
+                error.into(),
+            ));
         }
     } else {
         if let Err(error) = after_publication_identity_check_before_exchange() {
@@ -2263,6 +2270,52 @@ mod tests {
                 .unwrap()
                 .flatten()
                 .all(|entry| !entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".skilload-publish-"))
+        );
+    }
+
+    struct DisplacedOutputCleanupPermissionFailure;
+
+    impl TransferWriteHooks for DisplacedOutputCleanupPermissionFailure {
+        fn after_existing_output_exchange_before_cleanup(
+            &self,
+            output_parent: &Path,
+        ) -> Result<(), AppError> {
+            fs::set_permissions(output_parent, fs::Permissions::from_mode(0o500)).unwrap();
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn export_reports_a_displaced_output_cleanup_failure() {
+        let temporary = tempdir().unwrap();
+        let output_parent = temporary.path().join("output");
+        let output = NativePath::new(output_parent.join("library.json"));
+        fs::create_dir(&output_parent).unwrap();
+        fs::write(output.as_path(), b"old output").unwrap();
+        let expected = document().serialize_for_transfer().unwrap();
+        let store = PortableLibraryTransferStore::with_write_hooks(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(XdgRootResolver),
+            Arc::new(DisplacedOutputCleanupPermissionFailure),
+        );
+
+        let result = store.write_export(&output, &document());
+        fs::set_permissions(&output_parent, fs::Permissions::from_mode(0o700)).unwrap();
+        let error = result.unwrap_err();
+
+        assert_eq!(error.code(), "validation_failed");
+        assert!(
+            format!("{error:?}").contains("remove displaced export after successful replacement")
+        );
+        assert_eq!(fs::read(output.as_path()).unwrap(), expected);
+        assert!(
+            fs::read_dir(&output_parent)
+                .unwrap()
+                .flatten()
+                .any(|entry| entry
                     .file_name()
                     .to_string_lossy()
                     .starts_with(".skilload-publish-"))
