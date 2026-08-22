@@ -1000,7 +1000,8 @@ impl SqliteLibraryRepository {
         path: &Path,
         identity: (u64, u64),
     ) -> Result<Vec<String>, AppError> {
-        let readable = self
+        self.hooks.before_recovery_export_probe(path)?;
+        let probe = self
             .read_exportable_entries_for_recovery(directory, path)
             .and_then(|entries| {
                 PortableLibraryDocument {
@@ -1008,13 +1009,17 @@ impl SqliteLibraryRepository {
                     entries,
                 }
                 .into_transfer_size()
-            })
-            .is_ok();
+            });
         Self::revalidate_database_generation(directory, path, identity)?;
-        Ok(readable
-            .then(|| "library.export".to_owned())
-            .into_iter()
-            .collect())
+        match probe {
+            Ok(_) => Ok(vec!["library.export".to_owned()]),
+            Err(
+                AppError::DatabaseCorrupt { .. }
+                | AppError::Validation { .. }
+                | AppError::LibraryInputLimit { .. },
+            ) => Ok(Vec::new()),
+            Err(error) => Err(error),
+        }
     }
 
     fn enrich_database_corruption_for_generation(
@@ -2267,11 +2272,18 @@ fn diagnosis_for_derived_index(
     }
 }
 
+fn diagnosis_allows_durable_mutations(classification: Diagnosis) -> bool {
+    matches!(
+        classification,
+        Diagnosis::Absent | Diagnosis::Healthy | Diagnosis::FtsDiagnosticSnapshotTooLarge
+    )
+}
+
 impl DatabaseMaintenance for SqliteLibraryRepository {
     fn inspect(&self) -> Result<DoctorData, AppError> {
         let roots = self.resolve_roots()?;
         let (classification, findings) = self.diagnosis_classification(&roots)?;
-        let database_writable = matches!(classification, Diagnosis::Absent | Diagnosis::Healthy);
+        let database_writable = diagnosis_allows_durable_mutations(classification);
         Ok(DoctorData {
             fix_requested: false,
             findings,
@@ -2317,8 +2329,7 @@ impl DatabaseMaintenance for SqliteLibraryRepository {
                 } else {
                     (classification, findings)
                 };
-                let database_writable =
-                    matches!(classification, Diagnosis::Absent | Diagnosis::Healthy);
+                let database_writable = diagnosis_allows_durable_mutations(classification);
                 Ok(DoctorOperation {
                     outcome: DoctorOutcome::Unchanged,
                     data: DoctorData {
@@ -2491,6 +2502,10 @@ trait PersistenceHooks: Send + Sync {
         Ok(())
     }
     fn before_database_corruption_details(&self, _database: &Path) -> Result<(), AppError> {
+        Ok(())
+    }
+
+    fn before_recovery_export_probe(&self, _database: &Path) -> Result<(), AppError> {
         Ok(())
     }
 
@@ -3024,6 +3039,23 @@ fn validate_foreign_keys(connection: &Connection, path: &Path) -> Result<(), App
     Ok(())
 }
 
+fn validate_foreign_key_inventory(connection: &Connection, path: &Path) -> Result<(), AppError> {
+    for table in ["schema_info", "state_revision", "library_entries"] {
+        let relation: Option<i64> = connection
+            .query_row(&format!("PRAGMA foreign_key_list({table})"), [], |row| {
+                row.get(0)
+            })
+            .optional()
+            .map_err(|error| database_error(path, error))?;
+        if relation.is_some() {
+            return Err(AppError::database_corrupt(NativePath::new(
+                path.to_path_buf(),
+            )));
+        }
+    }
+    Ok(())
+}
+
 fn validate_base_database(
     connection: &Connection,
     path: &Path,
@@ -3037,6 +3069,7 @@ fn validate_base_database(
     }
     let sqlite_internal_tables = validate_library_schema_inventory(connection, path, generation)?;
     validate_library_tags_schema(connection, path)?;
+    validate_foreign_key_inventory(connection, path)?;
     let mut integrity_tables = BASE_INTEGRITY_TABLES.to_vec();
     integrity_tables.extend(sqlite_internal_tables);
     validate_table_integrity(connection, path, &integrity_tables)?;
@@ -3465,17 +3498,22 @@ fn validate_library_tags_schema(connection: &Connection, path: &Path) -> Result<
                 row.get::<_, String>(2)?,
                 row.get::<_, String>(3)?,
                 row.get::<_, String>(4)?,
+                row.get::<_, String>(5)?,
                 row.get::<_, String>(6)?,
+                row.get::<_, String>(7)?,
             ))
         })
         .map_err(|error| database_error(path, error))?;
     let mut relation_count = 0;
     for relation in relations {
-        let (table, from, to, on_delete) = relation.map_err(|error| database_error(path, error))?;
+        let (table, from, to, on_update, on_delete, match_name) =
+            relation.map_err(|error| database_error(path, error))?;
         if table != "library_entries"
             || from != "canonical_source"
             || to != "canonical_source"
+            || on_update != "NO ACTION"
             || on_delete != "CASCADE"
+            || match_name != "NONE"
         {
             return Err(AppError::database_corrupt(NativePath::new(
                 path.to_path_buf(),
@@ -6027,6 +6065,48 @@ mod tests {
     }
 
     #[test]
+    fn diagnostic_snapshot_budget_keeps_a_healthy_database_writable() {
+        let temporary = tempdir().unwrap();
+        let entry = entry("skills/review", None);
+        let source = entry.skill.source.canonical.clone();
+        let repository = imported_repository(&temporary, vec![entry]);
+        let database = temporary.path().join("data/skilload/skilload.db");
+        let page_size: i64 = Connection::open(&database)
+            .unwrap()
+            .query_row("PRAGMA page_size", [], |row| row.get(0))
+            .unwrap();
+        let page_size_bytes = u64::try_from(page_size).unwrap();
+        let oversized_pages = MAX_FTS_DIAGNOSTIC_SNAPSHOT_BYTES / page_size_bytes + 1;
+        let mut database_file = OpenOptions::new().write(true).open(&database).unwrap();
+        database_file
+            .set_len(oversized_pages.checked_mul(page_size_bytes).unwrap())
+            .unwrap();
+        database_file.seek(SeekFrom::Start(28)).unwrap();
+        database_file
+            .write_all(&u32::try_from(oversized_pages).unwrap().to_be_bytes())
+            .unwrap();
+        database_file.sync_all().unwrap();
+        drop(database_file);
+
+        let diagnosis = repository.inspect().unwrap();
+        assert_eq!(
+            diagnosis.findings[0].code,
+            "library_fts_diagnostic_snapshot_too_large"
+        );
+        assert!(diagnosis.database_writable);
+        let unchanged = repository.fix().unwrap();
+        assert_eq!(unchanged.outcome, DoctorOutcome::Unchanged);
+        assert!(unchanged.data.database_writable);
+        let mutation = repository
+            .mutate_metadata(&metadata_mutation(
+                &source,
+                LibraryMetadataChange::note_set("still writable".to_owned()).unwrap(),
+            ))
+            .unwrap();
+        assert_eq!(mutation.outcome, LibraryMutationOutcome::Changed);
+    }
+
+    #[test]
     fn snapshot_budget_diagnosis_is_nonfixable() {
         let (classification, finding) = diagnosis_for_derived_index(
             DerivedIndexConsistency::SnapshotBudgetExceeded,
@@ -6223,6 +6303,46 @@ mod tests {
                 recoverable_exports,
                 ..
             } if recoverable_exports == ["library.export"]
+        ));
+    }
+
+    struct RecoveryExportProbeBusy;
+
+    impl PersistenceHooks for RecoveryExportProbeBusy {
+        fn before_recovery_export_probe(&self, _database: &Path) -> Result<(), AppError> {
+            Err(AppError::Busy {
+                lock_domain: "recovery_export_probe".to_owned(),
+                waited_ms: 0,
+            })
+        }
+    }
+
+    #[test]
+    fn corruption_details_propagate_recovery_export_probe_operational_failures() {
+        let temporary = tempdir().unwrap();
+        let initial = imported_repository(&temporary, vec![entry("skills/review", None)]);
+        let database = temporary.path().join("data/skilload/skilload.db");
+        Connection::open(&database)
+            .unwrap()
+            .execute_batch(
+                "PRAGMA ignore_check_constraints = ON;
+                 UPDATE state_revision SET revision = -1;
+                 PRAGMA ignore_check_constraints = OFF;",
+            )
+            .unwrap();
+        drop(initial);
+        let repository = SqliteLibraryRepository::with_hooks(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(XdgRootResolver),
+            Arc::new(RecoveryExportProbeBusy),
+        );
+
+        assert!(matches!(
+            repository.inspect(),
+            Err(AppError::Busy {
+                lock_domain,
+                waited_ms: 0,
+            }) if lock_domain == "recovery_export_probe"
         ));
     }
 
@@ -7165,6 +7285,74 @@ mod tests {
             .query_row("SELECT count(*) FROM library_entries", [], |row| row.get(0))
             .unwrap();
         assert_eq!(entries, 1);
+        assert!(!temporary.path().join("data/skilload/backups").exists());
+    }
+
+    #[test]
+    fn migration_rejects_unexpected_entry_foreign_key_before_backup() {
+        let temporary = tempdir().unwrap();
+        let database = initialize_v1_database(&temporary);
+        Connection::open(&database)
+            .unwrap()
+            .execute_batch(
+                "PRAGMA foreign_keys = OFF;
+                 CREATE TABLE schema_info_replacement (
+                    version INTEGER PRIMARY KEY NOT NULL CHECK (version >= 1)
+                 );
+                 INSERT INTO schema_info_replacement SELECT version FROM schema_info;
+                 DROP TABLE schema_info;
+                 ALTER TABLE schema_info_replacement RENAME TO schema_info;
+                 CREATE TABLE library_entries_replacement (
+                    canonical_source TEXT PRIMARY KEY NOT NULL,
+                    owner TEXT NOT NULL,
+                    repository TEXT NOT NULL,
+                    repository_display TEXT NOT NULL,
+                    skill_path TEXT NOT NULL,
+                    ref_kind TEXT NOT NULL,
+                    ref_value TEXT NOT NULL,
+                    repository_id TEXT NOT NULL,
+                    commit_sha TEXT NOT NULL,
+                    integrity TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    description TEXT NOT NULL,
+                    entry_count TEXT NOT NULL,
+                    byte_count TEXT NOT NULL,
+                    alias TEXT UNIQUE,
+                    category TEXT,
+                    note TEXT,
+                    FOREIGN KEY (repository_id) REFERENCES schema_info(version) ON UPDATE CASCADE
+                 );
+                 INSERT INTO library_entries_replacement (
+                    canonical_source, owner, repository, repository_display, skill_path, ref_kind,
+                    ref_value, repository_id, commit_sha, integrity, name, description, entry_count,
+                    byte_count, alias, category, note
+                 )
+                 SELECT
+                    canonical_source, owner, repository, repository_display, skill_path, ref_kind,
+                    ref_value, '1', commit_sha, integrity, name, description, entry_count,
+                    byte_count, alias, category, note
+                 FROM library_entries;
+                 DROP TABLE library_entries;
+                 ALTER TABLE library_entries_replacement RENAME TO library_entries;
+                 PRAGMA foreign_keys = ON;",
+            )
+            .unwrap();
+        let repository = SqliteLibraryRepository::with_environment(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(XdgRootResolver),
+        );
+
+        let error = repository.fix().unwrap_err();
+
+        assert!(matches!(error, AppError::DatabaseCorrupt { .. }));
+        assert_eq!(read_schema_version(&database), 1);
+        let repository_id: String = Connection::open(&database)
+            .unwrap()
+            .query_row("SELECT repository_id FROM library_entries", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(repository_id, "1");
         assert!(!temporary.path().join("data/skilload/backups").exists());
     }
 

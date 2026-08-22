@@ -82,11 +82,15 @@ After a correct replacement is verified and promoted, skilload MUST delete the f
 
 **Behavior.** Before a database schema upgrade, skilload MUST create a recoverable backup and then apply a transactional forward migration. A database with an unknown newer schema or a requested downgrade MUST refuse writes rather than guessing or rewriting.
 
+在创建 backup、写入 FTS 或更新 schema version 前，migration MUST 验证完整固定 base schema inventory，包括 foreign-key inventory；未违反约束的 extra relation 也必须作为 `database_corrupt` 拒绝，不能让 schema-side cascade 改写 Library row。
+
 **Acceptance.** Fault injection leaves either the prior readable database plus backup or the complete new schema. A newer-schema fixture permits safe diagnostics/export where possible but rejects mutation.
 
 ## SKL-OPS-004 - Database corruption handling (Revision 1)
 
 **Behavior.** Suspected database corruption MUST stop writes and MUST NOT silently recreate an empty database. Doctor MAY rebuild derived FTS indexes when base records are provably intact; otherwise `database_corrupt` diagnostics MUST identify the database and known backups as `PathValue`, name every still-readable export, and set `recovery_procedure: "database-corruption-v1"`. The operator MUST follow the normative [database corruption recovery procedure](database-recovery.md), which preserves evidence, validates a standalone migration backup in isolated XDG roots, replaces the database atomically with rollback, or explicitly moves the corrupt database/WAL/SHM set out of the live path before a destructive empty reset. The 0.1 CLI MUST NOT expose an unlisted reset command or adopt surviving links/manifests/cache as ownership after reset.
+
+Recovery export probe 的 content、domain 或 deterministic transfer-size validation failure 可以不列出该 export；descriptor、I/O、lock、memory 或其他 operational failure MUST 保持其 typed error 向上传播，绝不能伪装为成功但 inventory 不完整的 `database_corrupt` diagnostics。
 对当前 `data/skilload.db`，main file 与同名 `-journal`、`-wal`、`-shm` 是一个 observed database generation。任何 read 或 default doctor 必须先在 SQLite open 前通过 held data-directory descriptor 拒绝已观察到的 sibling；随后必须在同一 held descriptor 的 SQLite SHARED read snapshot 建立后、读取任何 Library schema/data 前再次盘点 sibling。后一次盘点观察到 companion 时返回带既有 recovery details 的 `database_corrupt`；snapshot 之后才出现的 companion 不得改变已持有的读取快照。两种路径都不得创建、修改或混读 generation member。这是对本 Revision 既有 corruption/recovery 语义的澄清，不改变 Revision。
 
 **Acceptance.** A corrupt fixture never turns into an empty successful Library. Repair of an FTS-only failure preserves base row identities and metadata. Restore fixtures reject a bad digest, newer schema, stale WAL, foreign-key failure, and live-file drift; a valid standalone backup restores atomically and can roll back as one generation. Reset fixtures require explicit removal of the database/WAL/SHM set, preserve portable workspace files, and leave every old deployment/cache artifact unowned until normal Trust and ownership are re-established.

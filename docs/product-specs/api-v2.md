@@ -447,6 +447,8 @@ Configuration entries sort in the exact order `cache_limit_bytes`, `agents.claud
 
 Default doctor requires `fix_requested: false`, every `fixed: false`, and `actions: []`. `doctor --fix` may use `changed` only when at least one listed action committed; otherwise it uses `unchanged`.
 
+`database_writable` 表示当前二进制是否会因 observed database generation 的分类而拒绝 durable Library mutation；它不是操作系统权限探针，也不是每个 doctor finding 的反值。仅 default-doctor FTS diagnostic snapshot budget 超限时，字段仍为 true：该资源边界使 doctor 无法完成 offline FTS diagnostic，但不单独阻止 mutation 在其实际 write transaction 中完成完整 integrity gate。
+
 ## Operation Schema Map
 
 Every non-meta command leaf appears exactly once below. `Confirm` means the operation may return `confirmation_required` with `ConfirmationRequiredDetails`; it does not mean every invocation requires approval.
