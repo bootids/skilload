@@ -99,7 +99,7 @@ DELETE-mode `-journal` 同样不能与 descriptor-bound open 分离：SQLite 官
 - [x] (2026-08-22) 第十五轮 final-review 的 review body 加四个 inline defect已由 `3f1e563d74aef7d0a83e1d65a23e8d7dd7a28bf4` 修复并推送：existing-output export现在清理仍匹配 captured identity的 displaced link；doctor区分 snapshot-budget resource finding；migration backup在 copy/hash 前及每个 online-backup chunk受 268,435,456-byte ceiling；base proof要求 exact schema inventory；backup candidate operational failure传播。全 workspace fmt/clippy/test（13+17+179）/all-features locked build通过；review body已获 reply，四个 inline threads均已回复并 resolved。
 - [x] (2026-08-22) finalized Review Conversation Log documentation commit `063ceb6fc3c484af6527a2e44119e888dd756ea1` 已推送；post-push `list --all` 再次确认 17 个 comments、69 个 reviews、54 个 threads，全部 source已记录、无 unresolved/blocked，PR head与本地同为该 commit，Plan保持 `review`、PR保持 ready/Open。
 - [x] (2026-08-22) 第十六轮 final-review 的五个 inline defect 已由 `eb7bf5dd140a6caf9df8af1d74e18b06193c2f58` 修复并推送：migration backup child与最终 pair绑定 held generation、online backup retry有界、diagnostic backup匹配 source identity、existing-output export cleanup failure可见。五个 focused regression及 `cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets --all-features -- -D warnings`、`cargo test --workspace --all-features --locked`（13+17+184）和 `cargo build --workspace --all-features --locked` 已通过；五个 GitHub replies均已写入、对应 threads均 resolved，final reconciliation 已记录，Plan保持 `review`、PR保持 ready/Open。
-- [ ] (2026-08-22) 第十七轮 final-review 已完成 source-complete 初始分类：三个未解决 inline defect 均在当前 Product Baseline 的 ordinary remediation 边界内；待实现 scoped SQLite internal-table integrity、FTS diagnostic budget 前置与 recoverable export 的完整 transfer-limit proof，随后运行验证、回复并关闭线程、完成最终 reconciliation。
+- [x] (2026-08-22) 第十七轮 final-review 已完成：remediation commit `5a01cc6664fb2a3aa1b12bf7d6234b686b97bddc` 修复 scoped `sqlite_sequence` integrity、FTS content materialization 前的 diagnostic budget，以及完整 transfer-size proof 后才广告 recoverable export；focused `sqlite_library`（106）与 workspace fmt/clippy/test（core 187、CLI 13+17）/locked build通过。三个 GitHub reply 均已写入、对应 threads均 resolved；本 review documentation commit 的最终 reconciliation确认 19 comments、79 reviews、62 threads全部 source-complete，Plan保持 `review`、PR保持 ready/Open。
 
 ## Surprises & Discoveries
 
@@ -385,6 +385,9 @@ DELETE-mode `-journal` 同样不能与 descriptor-bound open 分离：SQLite 官
 2026-08-22 第十五轮 final-review remediation 已完成。`3f1e563d74aef7d0a83e1d65a23e8d7dd7a28bf4` 修复 five actual problems：existing-output export cleanup、FTS snapshot-budget resource classification、migration backup ceiling、exact schema inventory与backup candidate operational-error propagation；新增五项 regression，workspace fmt/clippy/test（13+17+179）/all-features locked build均通过。review body已获 top-level reply，四个 inline sources均已回复并 resolved；finalized Review Conversation Log documentation commit待推送，Plan继续保持 `review`、PR保持 ready/Open。
 
 2026-08-22 第十六轮 final-review remediation 已完成。`eb7bf5dd140a6caf9df8af1d74e18b06193c2f58` 将 migration recovery pair绑定到 held data generation、在 schema write前重验 published pair、限制 online backup retry、拒绝 source identity不匹配的 diagnostic backup，并将 export cleanup I/O failure转为 visible error；五项新增 regression与 workspace fmt/clippy/test（13+17+184）/all-features locked build均通过。五个 inline replies已写入且 resolved；最终完整会话读取为 18 个 top-level comments、75 个 submitted reviews 与 59 个 review threads，全部 actual thread source有本 Log entry，无 pending、blocked 或 unanswered problem。Plan保持 `review`、PR保持 ready/Open。
+
+
+2026-08-22 第十七轮 final-review remediation 已完成。`5a01cc6664fb2a3aa1b12bf7d6234b686b97bddc` 使 base schema proof验证 retained `sqlite_sequence`、FTS diagnostic先于 content materialization施加 budget，并要求 recovery export先通过完整 deterministic transfer-size proof；新增三项 adapter regression。focused `sqlite_library` 106 tests与 workspace fmt/clippy/test（core 187、CLI 13+17）/locked build全部通过。PRRT_kwDOT7YN2s6bX34u、PRRT_kwDOT7YN2s6bX34w 与 PRRT_kwDOT7YN2s6bX34z 的 replies已写入且各自 `thread resolved: true`；完整会话读取无 unlogged、unanswered 或 blocked actual problem，Plan保持 `review`、PR保持 ready/Open。
 
 ## Review Conversation Log
 
@@ -1410,13 +1413,13 @@ Problem: `validate_library_schema_inventory` 以 `name NOT GLOB 'sqlite_*'` 跳�
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 以 exact SQLite-owned object recognition替代宽泛 namespace 排除：允许 retained `sqlite_sequence` 并将实际存在的 table加入 scoped integrity；只保留无 SQL definition且 owner 已允许的 SQLite autoindex，其他 object仍返回 `database_corrupt`。新增 `migration_checks_retained_sqlite_sequence_integrity_before_backup`：损坏 retained `sqlite_sequence` 后 `doctor --fix` 在发布 backup/升级前拒绝。
 
-Evidence: 2026-08-22 本地 SQLite probe观察 `CREATE TABLE sqlite_sequence(name,seq)` 留存且 `PRAGMA integrity_check('sqlite_sequence')` 返回 `ok`；focused `sqlite_library` suite 106 passed，新增 regression通过；workspace fmt check、clippy -D warnings、all-features locked test（core 187、CLI 13+17）与 locked build已通过。实现/文档/本 preliminary log 将由待生成 remediation commit 推送。
+Evidence: 2026-08-22 本地 SQLite probe观察 `CREATE TABLE sqlite_sequence(name,seq)` 留存且 `PRAGMA integrity_check('sqlite_sequence')` 返回 `ok`；focused `sqlite_library` suite 106 passed，新增 regression通过；workspace fmt check、clippy -D warnings、all-features locked test（core 187、CLI 13+17）与 locked build已通过。remediation commit `5a01cc6664fb2a3aa1b12bf7d6234b686b97bddc` 已推送。
 
-GitHub outcome: pending；inline thread 维持 open，待推送实现证据后回复并 resolve。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/5#discussion_r3835792454；thread resolved: true。
 
 ### PRRT_kwDOT7YN2s6bX34w - 在读取 FTS content 前施加 diagnostic budget
 
@@ -1426,13 +1429,13 @@ Problem: `derived_index_consistency` 先调用 `validate_derived_database`，后
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 的 `derived_index_consistency` 将 `page_count × page_size` preflight移至任何 derived FTS row validation/materialization前；超限直接返回既有 non-fixable `SnapshotBudgetExceeded`，预算内才做 content comparison和 in-memory special integrity check。新增 `fts_diagnostic_budget_precedes_derived_content_validation`，以 sparse oversized image和已删除 FTS content证明顺序。
 
-Evidence: `SKL-OPS-004` Revision 1、Product Baseline 与 `docs/design-docs/application-and-persistence.md` 均固定 536,870,912-byte diagnostic boundary；focused `sqlite_library` suite 106 passed，新增 regression通过；workspace fmt check、clippy -D warnings、all-features locked test（core 187、CLI 13+17）与 locked build已通过。实现/文档/本 preliminary log 将由待生成 remediation commit 推送。
+Evidence: `SKL-OPS-004` Revision 1、Product Baseline 与 `docs/design-docs/application-and-persistence.md` 均固定 536,870,912-byte diagnostic boundary；focused `sqlite_library` suite 106 passed，新增 regression通过；workspace fmt check、clippy -D warnings、all-features locked test（core 187、CLI 13+17）与 locked build已通过。remediation commit `5a01cc6664fb2a3aa1b12bf7d6234b686b97bddc` 已推送。
 
-GitHub outcome: pending；inline thread 维持 open，待推送实现证据后回复并 resolve。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/5#discussion_r3835792746；thread resolved: true。
 
 ### PRRT_kwDOT7YN2s6bX34z - 广告 recoverable export 前验证完整传输文档
 
@@ -1442,13 +1445,15 @@ Problem: operational metadata 损坏且 entries/tags projection 完整时，`rec
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 的 recovery probe 将 loaded entries组装为 `PortableLibraryDocument`，并调用不捕获 bytes 的 deterministic `into_transfer_size`；只有 entries/tags proof和完整 transfer document都通过才广告 `library.export`。新增 `corruption_details_omit_transfer_oversized_library_export`，构造 4,097 个有效 entries但超过 67,108,864 bytes，断言实际 transfer encoder失败且 corruption details不列 identifier。
 
-Evidence: `SKL-OPS-004` Revision 1 要求只列出仍可读 export，`SKL-LIB-009` Revision 5 固定同一 portable document的 10,000-entry/67,108,864-byte limits；focused `sqlite_library` suite 106 passed，新增 regression通过；workspace fmt check、clippy -D warnings、all-features locked test（core 187、CLI 13+17）与 locked build已通过。实现/文档/本 preliminary log 将由待生成 remediation commit 推送。
+Evidence: `SKL-OPS-004` Revision 1 要求只列出仍可读 export，`SKL-LIB-009` Revision 5 固定同一 portable document的 10,000-entry/67,108,864-byte limits；focused `sqlite_library` suite 106 passed，新增 regression通过；workspace fmt check、clippy -D warnings、all-features locked test（core 187、CLI 13+17）与 locked build已通过。remediation commit `5a01cc6664fb2a3aa1b12bf7d6234b686b97bddc` 已推送。
 
-GitHub outcome: pending；inline thread 维持 open，待推送实现证据后回复并 resolve。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/5#discussion_r3835792987；thread resolved: true。
+
+2026-08-22 第十七轮 final reconciliation：三个 reply/closure后的完整 `list --all` 读取到 19 个 top-level comments、79 个 submitted reviews 与 62 个 review threads。62 个 root thread IDs均有本 Log heading，全部 `isResolved: true`；PRRT_kwDOT7YN2s6bX34u、PRRT_kwDOT7YN2s6bX34w 与 PRRT_kwDOT7YN2s6bX34z 的 reply URLs分别为 `#discussion_r3835792454`、`#discussion_r3835792746` 与 `#discussion_r3835792987`，均与上方 entries一致。17 个 top-level `@codex` trigger、一个既有 notification、一个既有 review-body reply、16 个 automated wrapper和62个 empty review containers不含独立问题；唯一 non-wrapper review body `PRR_kwDOT7YN2s8AAAABKfvO-g` 已在第十五轮记录。无 pending、blocked、unlogged 或 unanswered non-blocked actual problem，Plan继续保持 `review`、PR保持 ready/Open。
 
 ## Context and Orientation
 
@@ -1822,3 +1827,5 @@ Backup manifest是private versioned serde record，不进入API-v2或portable ex
 2026-08-22：第十三轮 final-review remediation 与 reconciliation。`513799b4adc5a57cde34a1d1d977636293c93600` 将 `library_tags` composite-key proof、snapshot-bound backup digest 与 bounded base-row guard纳入 shared SQLite validation；新增三项 deterministic adapter regression，focused 与全 workspace fmt/clippy/test（13+17+170）/all-features locked build通过。PRRT_kwDOT7YN2s6bWRkD、PRRT_kwDOT7YN2s6bWRkG 与 PRRT_kwDOT7YN2s6bWRkJ 的 GitHub replies、commit evidence 和 `thread resolved: true` 已逐项写入 Review Conversation Log；最终会话读取未发现 unlogged、unanswered 或 blocked actual problem，Plan 继续保持 `review`、PR 保持 ready。
 
 2026-08-22：第十五轮 final-review reconciliation。完整会话读取发现 `PRR_kwDOT7YN2s8AAAABKfvO-g` 的 export cleanup defect与 PRRT_kwDOT7YN2s6bXEBD、PRRT_kwDOT7YN2s6bXEBE、PRRT_kwDOT7YN2s6bXEBF、PRRT_kwDOT7YN2s6bXEBG 四个 inline defects，均在当前 Product Baseline ordinary review remediation边界内。`3f1e563d74aef7d0a83e1d65a23e8d7dd7a28bf4` 已推送实现、regression、design/reference与preliminary log；workspace fmt/clippy/test（13+17+179）/all-features locked build通过。五个 GitHub responses、四个 inline resolution与第十五轮 source-complete reconciliation已由 `063ceb6fc3c484af6527a2e44119e888dd756ea1` documentation commit记录并推送；post-push complete read确认 17 个 comments、69 个 reviews、54 个 threads，全部 source已记录、无 unresolved/blocked、PR head与本地一致。Plan保持 `review`、PR保持 ready/Open。
+
+2026-08-22：第十七轮 final-review remediation 与 reconciliation。`5a01cc6664fb2a3aa1b12bf7d6234b686b97bddc` 修复 retained `sqlite_sequence` scoped integrity、FTS content materialization前的 536,870,912-byte diagnostic preflight，以及 recovery export的 deterministic 10,000-entry/67,108,864-byte transfer proof；`crates/skilload-core/src/adapters/sqlite_library.rs` 新增三项 regression，`docs/design-docs/application-and-persistence.md` 和两个 SQLite references同步实现约束。本轮三个 GitHub reply URLs、resolved states与 source-complete final conversation evidence均写入 Review Conversation Log；focused suite 106、workspace fmt/clippy/test（core 187、CLI 13+17）/locked build与`git diff --check`通过。该 revision保持 Plan `review`与 PR ready/Open，不改变 Product Baseline revision。
