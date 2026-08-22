@@ -12,8 +12,8 @@ use crate::domain::library::{
     LIBRARY_FORMAT_VERSION, LibraryEntriesPage, LibraryEntry, LibraryImportOperation,
     LibraryImportOutcome, LibraryImportResult, LibraryMetadataChange, LibraryMetadataMutation,
     LibraryMetadataStoreResult, LibraryMutationOutcome, LibraryPage, LibrarySearchPage,
-    LibrarySearchQuery, LibraryTrustState, MAX_PORTABLE_LIBRARY_ENTRIES, PortableLibraryDocument,
-    PortableLibraryEntry,
+    LibrarySearchQuery, LibraryTrustState, MAX_PORTABLE_LIBRARY_DOCUMENT_BYTES,
+    MAX_PORTABLE_LIBRARY_ENTRIES, PortableLibraryDocument, PortableLibraryEntry,
 };
 use crate::domain::source::{RefKind, ResolvedSkill, SourceIdentity, parse_decimal_u64};
 use crate::domain::unicode_15_1::normalize_tag;
@@ -58,6 +58,8 @@ tokenize = 'unicode61 remove_diacritics 0')";
 const FTS_ROW_COLUMNS: usize = 9;
 const BACKUP_MANIFEST_FORMAT_VERSION: u64 = 1;
 const MAX_BACKUP_MANIFEST_BYTES: usize = 4 * 1024;
+const MAX_VALIDATED_BACKUP_DATABASE_BYTES: u64 = MAX_PORTABLE_LIBRARY_DOCUMENT_BYTES * 4;
+const MAX_FTS_DIAGNOSTIC_SNAPSHOT_BYTES: u64 = MAX_PORTABLE_LIBRARY_DOCUMENT_BYTES * 8;
 const BASE_INTEGRITY_TABLES: [&str; 5] = [
     "sqlite_master",
     "schema_info",
@@ -1099,8 +1101,9 @@ impl SqliteLibraryRepository {
                     });
                 }
                 (ReadFilter::FtsMatch(expression), SchemaGeneration::V2) => {
-                    validate_derived_database(transaction, database)
-                        .map_err(map_derived_validation_error)?;
+                    if !self.derived_index_is_consistent(transaction, database)? {
+                        return Err(fts_index_invalid());
+                    }
                     count_fts_matches(transaction, database, expression)?
                 }
             };
@@ -1193,9 +1196,9 @@ impl SqliteLibraryRepository {
         })
     }
 
-    /// Compare derived index content against base rows on the live
-    /// connection, then online-backup into memory and run the FTS5 special
-    /// `integrity-check` there so the live filesystem stays untouched.
+    /// Compare derived index content against base rows and, within the
+    /// bounded diagnostic budget, run the FTS5 special `integrity-check` on
+    /// an in-memory backup so the live filesystem stays untouched.
     fn derived_index_is_consistent(
         &self,
         connection: &Connection,
@@ -1205,6 +1208,15 @@ impl SqliteLibraryRepository {
             Ok(()) => {}
             Err(AppError::DatabaseCorrupt { .. }) => return Ok(false),
             Err(error) => return Err(error),
+        }
+        let page_count: i64 = connection
+            .query_row("PRAGMA page_count", [], |row| row.get(0))
+            .map_err(|error| database_error(database, error))?;
+        let page_size: i64 = connection
+            .query_row("PRAGMA page_size", [], |row| row.get(0))
+            .map_err(|error| database_error(database, error))?;
+        if !fts_diagnostic_snapshot_is_bounded(page_count, page_size) {
+            return Ok(false);
         }
         let mut copy =
             Connection::open_in_memory().map_err(|error| database_error(database, error))?;
@@ -1443,7 +1455,7 @@ impl SqliteLibraryRepository {
             // Re-diagnose under the durable lock: a concurrent `doctor --fix`
             // may have rebuilt the index after this process observed drift.
             // Rebuilding a healthy index would report a false `changed` result.
-            if self.derived_index_is_consistent(&connection, &database)? {
+            if derived_index_is_consistent_while_writable(&connection, &database)? {
                 disable_writable_schema(&connection, &database)?;
                 Self::revalidate_database_identity(&database, identity)?;
                 return Ok(None);
@@ -1924,7 +1936,8 @@ fn backup_pair_is_valid(directory: &ValidatedDataDirectory, stem: &str) -> bool 
     let Ok(metadata) = database.metadata() else {
         return false;
     };
-    if record.database_bytes != metadata.len()
+    if metadata.len() > MAX_VALIDATED_BACKUP_DATABASE_BYTES
+        || record.database_bytes != metadata.len()
         || !standalone_backup_is_valid(
             directory,
             &database_name,
@@ -2792,8 +2805,26 @@ fn validate_base_database(connection: &Connection, path: &Path) -> Result<(), Ap
     }
     validate_library_tags_schema(connection, path)?;
     validate_table_integrity(connection, path, &BASE_INTEGRITY_TABLES)?;
+    validate_trigger_free_schema(connection, path)?;
     validate_foreign_keys(connection, path)?;
     load_validated_entries(connection, path)?;
+    Ok(())
+}
+
+fn validate_trigger_free_schema(connection: &Connection, path: &Path) -> Result<(), AppError> {
+    let trigger: Option<String> = connection
+        .query_row(
+            "SELECT name FROM sqlite_master WHERE type = 'trigger' LIMIT 1",
+            [],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|error| database_error(path, error))?;
+    if trigger.is_some() {
+        return Err(AppError::database_corrupt(NativePath::new(
+            path.to_path_buf(),
+        )));
+    }
     Ok(())
 }
 
@@ -2939,6 +2970,32 @@ fn validate_fts_integrity(connection: &Connection, path: &Path) -> Result<(), Ap
         )
         .map(|_| ())
         .map_err(|error| map_derived_validation_error(database_error(path, error)))
+}
+
+fn fts_diagnostic_snapshot_is_bounded(page_count: i64, page_size: i64) -> bool {
+    let (Ok(page_count), Ok(page_size)) = (u64::try_from(page_count), u64::try_from(page_size))
+    else {
+        return false;
+    };
+    page_count
+        .checked_mul(page_size)
+        .is_some_and(|bytes| bytes <= MAX_FTS_DIAGNOSTIC_SNAPSHOT_BYTES)
+}
+
+fn derived_index_is_consistent_while_writable(
+    connection: &Connection,
+    path: &Path,
+) -> Result<bool, AppError> {
+    match validate_derived_database(connection, path) {
+        Ok(()) => {}
+        Err(AppError::DatabaseCorrupt { .. }) => return Ok(false),
+        Err(error) => return Err(error),
+    }
+    match validate_fts_integrity(connection, path) {
+        Ok(()) => Ok(true),
+        Err(AppError::InvalidState { state, .. }) if state == "library_fts_invalid" => Ok(false),
+        Err(error) => Err(error),
+    }
 }
 
 fn fts_match_error(path: &Path, error: SqlError) -> AppError {
@@ -5557,6 +5614,18 @@ mod tests {
     }
 
     #[test]
+    fn fts_diagnostic_snapshot_budget_rejects_oversized_or_overflowing_generations() {
+        let permitted_pages = (MAX_FTS_DIAGNOSTIC_SNAPSHOT_BYTES / 4_096) as i64;
+        assert!(fts_diagnostic_snapshot_is_bounded(permitted_pages, 4_096));
+        assert!(!fts_diagnostic_snapshot_is_bounded(
+            permitted_pages + 1,
+            4_096
+        ));
+        assert!(!fts_diagnostic_snapshot_is_bounded(i64::MAX, 65_536));
+        assert!(!fts_diagnostic_snapshot_is_bounded(-1, 4_096));
+    }
+
+    #[test]
     fn database_sync_error_preserves_native_path_bytes() {
         let raw = b"/tmp/library-database-\xff.db";
         let path = PathBuf::from(OsString::from_vec(raw.to_vec()));
@@ -6549,6 +6618,38 @@ mod tests {
     }
 
     #[test]
+    fn migration_rejects_schema_info_update_trigger_before_backup() {
+        let temporary = tempdir().unwrap();
+        let database = initialize_v1_database(&temporary);
+        Connection::open(&database)
+            .unwrap()
+            .execute_batch(
+                "CREATE TRIGGER erase_entries_after_schema_upgrade
+                 AFTER UPDATE OF version ON schema_info
+                 WHEN NEW.version = 2
+                 BEGIN
+                     DELETE FROM library_entries;
+                 END;",
+            )
+            .unwrap();
+        let repository = SqliteLibraryRepository::with_environment(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(XdgRootResolver),
+        );
+
+        let error = repository.fix().unwrap_err();
+
+        assert!(matches!(error, AppError::DatabaseCorrupt { .. }));
+        assert_eq!(read_schema_version(&database), 1);
+        let entries: i64 = Connection::open(&database)
+            .unwrap()
+            .query_row("SELECT count(*) FROM library_entries", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(entries, 1);
+        assert!(!temporary.path().join("data/skilload/backups").exists());
+    }
+
+    #[test]
     fn fts_drift_is_doctor_fixable_without_touching_base_rows() {
         let temporary = tempdir().unwrap();
         let database = temporary.path().join("data/skilload/skilload.db");
@@ -7163,6 +7264,53 @@ mod tests {
     }
 
     #[test]
+    fn search_rejects_a_zeroed_fts_block_before_returning_an_empty_page() {
+        let temporary = tempdir().unwrap();
+        let database = temporary.path().join("data/skilload/skilload.db");
+        let repository = imported_repository(&temporary, vec![searchable_entry("skills/review")]);
+        let connection = Connection::open(&database).unwrap();
+        assert_eq!(
+            connection
+                .execute(
+                    "UPDATE library_fts_data
+                     SET block = zeroblob(length(block))
+                     WHERE id = 10",
+                    [],
+                )
+                .unwrap(),
+            1,
+            "bundled FTS5 creates the first segment block at id 10"
+        );
+        let unchecked_total: i64 = connection
+            .query_row(
+                "SELECT count(*) FROM library_fts WHERE library_fts MATCH '\"review\"'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(unchecked_total, 0);
+        assert!(
+            connection
+                .execute(
+                    "INSERT INTO library_fts(library_fts) VALUES('integrity-check')",
+                    [],
+                )
+                .is_err(),
+            "fixture must need the FTS5 special integrity check"
+        );
+        drop(connection);
+
+        let error = repository
+            .search(&Query::new("review".to_owned()).unwrap(), &page(100, 0))
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            AppError::InvalidState { state, .. } if state == "library_fts_invalid"
+        ));
+    }
+
+    #[test]
     fn malformed_fts_schema_stays_derived_and_doctor_fixable() {
         let temporary = tempdir().unwrap();
         let database = temporary.path().join("data/skilload/skilload.db");
@@ -7476,6 +7624,48 @@ mod tests {
         let mut bytes = fs::read(&database).unwrap();
         bytes[100..132].fill(0xa5);
         fs::write(&database, &bytes).unwrap();
+        assert!(matches!(
+            repository.inspect().unwrap_err(),
+            AppError::DatabaseCorrupt { backups, .. } if backups.is_empty()
+        ));
+    }
+
+    #[test]
+    fn oversized_backup_database_is_never_advertised() {
+        let temporary = tempdir().unwrap();
+        let database = initialize_v1_database(&temporary);
+        let repository = SqliteLibraryRepository::with_environment(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(XdgRootResolver),
+        );
+        repository.fix().unwrap();
+        let backups_root = temporary.path().join("data/skilload/backups");
+        let backup = fs::read_dir(&backups_root)
+            .unwrap()
+            .flatten()
+            .map(|entry| entry.path())
+            .find(|path| path.extension().is_some_and(|extension| extension == "db"))
+            .unwrap();
+        let manifest = backup.with_extension("manifest.json");
+        File::options()
+            .write(true)
+            .open(&backup)
+            .unwrap()
+            .set_len(MAX_VALIDATED_BACKUP_DATABASE_BYTES + 1)
+            .unwrap();
+        let mut record: BackupManifestRecord =
+            serde_json::from_slice(&fs::read(&manifest).unwrap()).unwrap();
+        record.database_bytes = MAX_VALIDATED_BACKUP_DATABASE_BYTES + 1;
+        record.sha256 = format!(
+            "sha256:{}",
+            sha256_of_file(&File::open(&backup).unwrap()).unwrap()
+        );
+        fs::write(&manifest, serde_json::to_vec(&record).unwrap()).unwrap();
+
+        let mut bytes = fs::read(&database).unwrap();
+        bytes[100..132].fill(0xa5);
+        fs::write(&database, &bytes).unwrap();
+
         assert!(matches!(
             repository.inspect().unwrap_err(),
             AppError::DatabaseCorrupt { backups, .. } if backups.is_empty()
