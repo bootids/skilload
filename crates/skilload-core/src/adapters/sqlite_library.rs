@@ -61,6 +61,7 @@ tokenize = 'unicode61 remove_diacritics 0')";
 const FTS_ROW_COLUMNS: usize = 9;
 const BACKUP_MANIFEST_FORMAT_VERSION: u64 = 1;
 const MAX_BACKUP_MANIFEST_BYTES: usize = 4 * 1024;
+const MAX_BACKUP_MANIFEST_CANDIDATES: usize = 64;
 const MAX_VALIDATED_BACKUP_DATABASE_BYTES: u64 = MAX_PORTABLE_LIBRARY_DOCUMENT_BYTES * 4;
 const MAX_FTS_DIAGNOSTIC_SNAPSHOT_BYTES: u64 = MAX_PORTABLE_LIBRARY_DOCUMENT_BYTES * 8;
 const BASE_SCHEMA_TABLES: [&str; 4] = [
@@ -73,6 +74,49 @@ const BASE_AUTOINDICES: [(&str, &str); 3] = [
     ("sqlite_autoindex_library_entries_1", "library_entries"),
     ("sqlite_autoindex_library_entries_2", "library_entries"),
     ("sqlite_autoindex_library_tags_1", "library_tags"),
+];
+type BaseColumnDefinition = (&'static str, &'static str, bool, i64);
+const BASE_TABLE_COLUMNS: [(&str, &[BaseColumnDefinition]); 4] = [
+    ("schema_info", &[("version", "INTEGER", true, 0)]),
+    ("state_revision", &[("revision", "INTEGER", true, 0)]),
+    (
+        "library_entries",
+        &[
+            ("canonical_source", "TEXT", true, 1),
+            ("owner", "TEXT", true, 0),
+            ("repository", "TEXT", true, 0),
+            ("repository_display", "TEXT", true, 0),
+            ("skill_path", "TEXT", true, 0),
+            ("ref_kind", "TEXT", true, 0),
+            ("ref_value", "TEXT", true, 0),
+            ("repository_id", "TEXT", true, 0),
+            ("commit_sha", "TEXT", true, 0),
+            ("integrity", "TEXT", true, 0),
+            ("name", "TEXT", true, 0),
+            ("description", "TEXT", true, 0),
+            ("entry_count", "TEXT", true, 0),
+            ("byte_count", "TEXT", true, 0),
+            ("alias", "TEXT", false, 0),
+            ("category", "TEXT", false, 0),
+            ("note", "TEXT", false, 0),
+        ],
+    ),
+    (
+        "library_tags",
+        &[
+            ("canonical_source", "TEXT", true, 1),
+            ("comparison_key", "TEXT", true, 2),
+            ("display", "TEXT", true, 0),
+        ],
+    ),
+];
+const BASE_AUTOINDEX_COLUMNS: [(&str, &[&str]); 3] = [
+    ("sqlite_autoindex_library_entries_1", &["canonical_source"]),
+    ("sqlite_autoindex_library_entries_2", &["alias"]),
+    (
+        "sqlite_autoindex_library_tags_1",
+        &["canonical_source", "comparison_key"],
+    ),
 ];
 const SQLITE_INTERNAL_TABLES: [&str; 1] = ["sqlite_sequence"];
 const BASE_INTEGRITY_TABLES: [&str; 5] = [
@@ -969,12 +1013,18 @@ impl SqliteLibraryRepository {
         }
         let identity = metadata_identity(&metadata);
         revalidate_database_entry(directory, database_name, identity)?;
-        let mut header = [0u8; 100];
-        if file.read_exact(&mut header).is_err()
-            || !header.starts_with(SQLITE_HEADER_MAGIC)
-            || header[18] != 1
-            || header[19] != 1
-        {
+        let header_is_valid = match sqlite_header_is_valid(
+            &mut file,
+            path,
+            "read database header for generation check",
+        ) {
+            Ok(header_is_valid) => header_is_valid,
+            Err(error) => {
+                Self::revalidate_database_generation(directory, path, identity)?;
+                return Err(error);
+            }
+        };
+        if !header_is_valid {
             return Err(self.database_corrupt_for_generation(directory, path, identity)?);
         }
         self.ensure_no_existing_database_sidecars(directory, database_name, path, identity)?;
@@ -1608,6 +1658,35 @@ impl SqliteLibraryRepository {
         if database_bytes > MAX_VALIDATED_BACKUP_DATABASE_BYTES {
             return Err(migration_backup_too_large());
         }
+        // Hold this SQLite SHARED snapshot from validation through durable
+        // publication. It prevents a separately opened staging connection
+        // from committing bytes between the digest and the published pair.
+        let mut verify_connection = Self::open_staging_backup(&staging_db_path)?;
+        let validation_snapshot = verify_connection
+            .transaction()
+            .map_err(|error| database_error(&staging_db_path, error))?;
+        let generation = read_schema_generation(&validation_snapshot, &staging_db_path)?;
+        validate_base_database(&validation_snapshot, &staging_db_path, generation)?;
+        if generation != SchemaGeneration::V1 {
+            return Err(AppError::invalid_state(
+                "library_database",
+                "backup_schema_unexpected",
+                ["a schema 1 standalone backup"],
+            ));
+        }
+        let revision = singleton_i64(
+            &validation_snapshot,
+            "SELECT revision FROM state_revision",
+            &staging_db_path,
+        )?;
+        if revision != state_revision_baseline {
+            return Err(AppError::invalid_state(
+                "library_database",
+                "backup_state_revision_mismatch",
+                ["the live state revision at backup time"],
+            ));
+        }
+        self.hooks.after_backup_verify(&staging_db_path)?;
         let digest = sha256_of_file(staging_db.as_file())
             .map_err(|error| database_sync_error(database, "hash staging backup", error))?;
         self.hooks.after_backup_hash(&staging_db_path)?;
@@ -1625,35 +1704,6 @@ impl SqliteLibraryRepository {
         let stem = format!("skilload-db-v1-to-v2-{created_at_epoch_ns}");
         let final_db_name = OsString::from(format!("{stem}.db"));
         let final_manifest_name = OsString::from(format!("{stem}.manifest.json"));
-
-        {
-            let mut verify_connection = Self::open_staging_backup(&staging_db_path)?;
-            let transaction = verify_connection
-                .transaction()
-                .map_err(|error| database_error(&staging_db_path, error))?;
-            let generation = read_schema_generation(&transaction, &staging_db_path)?;
-            validate_base_database(&transaction, &staging_db_path, generation)?;
-            if generation != SchemaGeneration::V1 {
-                return Err(AppError::invalid_state(
-                    "library_database",
-                    "backup_schema_unexpected",
-                    ["a schema 1 standalone backup"],
-                ));
-            }
-            let revision = singleton_i64(
-                &transaction,
-                "SELECT revision FROM state_revision",
-                &staging_db_path,
-            )?;
-            if revision != state_revision_baseline {
-                return Err(AppError::invalid_state(
-                    "library_database",
-                    "backup_state_revision_mismatch",
-                    ["the live state revision at backup time"],
-                ));
-            }
-        }
-        self.hooks.after_backup_verify(&staging_db_path)?;
 
         let manifest = BackupManifestRecord {
             format_version: BACKUP_MANIFEST_FORMAT_VERSION,
@@ -1716,25 +1766,26 @@ impl SqliteLibraryRepository {
             .sync_all()
             .map_err(|error| database_sync_error(database, "sync backups directory", error))?;
         backups_directory.revalidate()?;
-        let held_db_identity = fstat(staging_db.as_file())
-            .ok()
-            .and_then(|stat| stat_identity(stat.st_dev, stat.st_ino));
-        let held_manifest_identity = fstat(staging_manifest.as_file())
-            .ok()
-            .and_then(|stat| stat_identity(stat.st_dev, stat.st_ino));
-        for (name, held) in [
-            (&staging_db_name, held_db_identity),
-            (&staging_manifest_name, held_manifest_identity),
-        ] {
-            let entry_identity = statat(&backups_directory.handle, name, AtFlags::SYMLINK_NOFOLLOW)
-                .ok()
-                .and_then(|entry| stat_identity(entry.st_dev, entry.st_ino));
-            if entry_identity.is_some() && entry_identity == held {
-                let _ = unlinkat(&backups_directory.handle, name, AtFlags::empty());
-            }
-        }
+        self.hooks.before_backup_staging_cleanup(&backups_root)?;
+        let cleanup = (|| {
+            remove_held_backup_staging_entry(
+                &backups_directory,
+                &staging_db_name,
+                staging_db.as_file(),
+                database,
+            )?;
+            remove_held_backup_staging_entry(
+                &backups_directory,
+                &staging_manifest_name,
+                staging_manifest.as_file(),
+                database,
+            )
+        })();
+        // After publication, never let NamedTempFile unlink a pathname that
+        // may have been replaced. A cleanup error remains visible above.
         staging_db.disable_cleanup(true);
         staging_manifest.disable_cleanup(true);
+        cleanup?;
         verify_published_entry(&backups_directory, &final_db_name, staging_db.as_file())?;
         verify_published_entry(
             &backups_directory,
@@ -1756,6 +1807,7 @@ impl SqliteLibraryRepository {
             &final_manifest_name,
             staging_manifest.as_file(),
         )?;
+        drop(validation_snapshot);
         Ok(())
     }
 
@@ -1775,6 +1827,23 @@ fn database_sidecar_name(database_name: &OsStr, suffix: &str) -> OsString {
     let mut sidecar_name = database_name.to_os_string();
     sidecar_name.push(suffix);
     sidecar_name
+}
+
+/// Read a complete SQLite header while preserving operational I/O errors.
+/// A short header and invalid SQLite/journal-mode bytes are content failures;
+/// callers choose whether those failures are corruption or an unavailable
+/// standalone candidate.
+fn sqlite_header_is_valid(
+    reader: &mut impl Read,
+    path: &Path,
+    action: &str,
+) -> Result<bool, AppError> {
+    let mut header = [0u8; 100];
+    match reader.read_exact(&mut header) {
+        Ok(()) => Ok(header.starts_with(SQLITE_HEADER_MAGIC) && header[18] == 1 && header[19] == 1),
+        Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => Ok(false),
+        Err(error) => Err(environment_io("XDG_DATA_HOME", path, action, error)),
+    }
 }
 
 fn has_database_sidecar(directory: &ValidatedDataDirectory, database_name: &OsStr) -> bool {
@@ -1815,6 +1884,16 @@ fn backup_manifest_stems(directory: &ValidatedDataDirectory) -> Result<Vec<Strin
             continue;
         };
         if let Some(stem) = name.strip_suffix(".manifest.json") {
+            if stems.len() == MAX_BACKUP_MANIFEST_CANDIDATES {
+                return Err(AppError::invalid_state_at_path(
+                    "library_database",
+                    "backup_manifest_candidate_limit_exceeded",
+                    NativePath::new(directory.path.clone()),
+                    [format!(
+                        "no more than {MAX_BACKUP_MANIFEST_CANDIDATES} backup manifest candidates"
+                    )],
+                ));
+            }
             stems.push(stem.to_owned());
         }
     }
@@ -1919,23 +1998,10 @@ fn with_validated_standalone_backup_snapshot<T>(
     path: &Path,
     operation: impl FnOnce(&mut File) -> io::Result<T>,
 ) -> Result<Option<T>, AppError> {
-    let mut header = [0u8; 100];
     database.seek(SeekFrom::Start(0)).map_err(|error| {
         environment_io("XDG_DATA_HOME", path, "seek database backup header", error)
     })?;
-    match database.read_exact(&mut header) {
-        Ok(()) => {}
-        Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => return Ok(None),
-        Err(error) => {
-            return Err(environment_io(
-                "XDG_DATA_HOME",
-                path,
-                "read database backup header",
-                error,
-            ));
-        }
-    }
-    if !header.starts_with(SQLITE_HEADER_MAGIC) || header[18] != 1 || header[19] != 1 {
+    if !sqlite_header_is_valid(database, path, "read database backup header")? {
         return Ok(None);
     }
     database
@@ -2431,6 +2497,47 @@ fn verify_published_entry(
     Ok(())
 }
 
+/// Remove a temporary publication name only while it still names the held
+/// staging file. A cleanup failure is observable: migration must not claim
+/// success while a large temporary backup remains in the durable directory.
+fn remove_held_backup_staging_entry(
+    directory: &ValidatedDataDirectory,
+    staging_name: &std::ffi::OsStr,
+    held: &File,
+    database: &Path,
+) -> Result<(), AppError> {
+    let held = fstat(held).map_err(|error| {
+        database_sync_error(
+            database,
+            "inspect published backup staging entry",
+            io::Error::from(error),
+        )
+    })?;
+    let held_identity = stat_identity(held.st_dev, held.st_ino)
+        .ok_or_else(SqliteLibraryRepository::database_identity_drift)?;
+    let entry = match statat(&directory.handle, staging_name, AtFlags::SYMLINK_NOFOLLOW) {
+        Ok(entry) => entry,
+        Err(rustix::io::Errno::NOENT) => return Ok(()),
+        Err(error) => {
+            return Err(database_sync_error(
+                database,
+                "inspect published backup staging entry",
+                io::Error::from(error),
+            ));
+        }
+    };
+    if stat_identity(entry.st_dev, entry.st_ino) != Some(held_identity) {
+        return Ok(());
+    }
+    unlinkat(&directory.handle, staging_name, AtFlags::empty()).map_err(|error| {
+        database_sync_error(
+            database,
+            "remove published backup staging entry",
+            io::Error::from(error),
+        )
+    })
+}
+
 trait PersistenceHooks: Send + Sync {
     fn before_first_lock(&self) -> Result<(), AppError> {
         Ok(())
@@ -2560,6 +2667,10 @@ trait PersistenceHooks: Send + Sync {
     }
 
     fn after_backup_manifest_sync(&self, _staging: &Path) -> Result<(), AppError> {
+        Ok(())
+    }
+
+    fn before_backup_staging_cleanup(&self, _backups: &Path) -> Result<(), AppError> {
         Ok(())
     }
 
@@ -3076,6 +3187,8 @@ fn validate_base_database(
         )));
     }
     let sqlite_internal_tables = validate_library_schema_inventory(connection, path, generation)?;
+    validate_base_table_definitions(connection, path)?;
+    validate_base_autoindex_collations(connection, path)?;
     validate_library_tags_schema(connection, path)?;
     validate_foreign_key_inventory(connection, path)?;
     let mut integrity_tables = BASE_INTEGRITY_TABLES.to_vec();
@@ -3181,6 +3294,100 @@ fn validate_library_schema_inventory(
         )));
     }
     Ok(sqlite_internal_tables)
+}
+
+/// The base schema is a fixed durable format. Table names and autoindex names
+/// alone are insufficient: a reconstructed table can preserve those names
+/// while changing column shape or primary-key semantics.
+fn validate_base_table_definitions(connection: &Connection, path: &Path) -> Result<(), AppError> {
+    let corrupt = || AppError::database_corrupt(NativePath::new(path.to_path_buf()));
+    for &(table, expected_columns) in &BASE_TABLE_COLUMNS {
+        let mut statement = connection
+            .prepare(&format!("PRAGMA table_info('{table}')"))
+            .map_err(|error| database_error(path, error))?;
+        let mut columns = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                    row.get::<_, i64>(5)?,
+                ))
+            })
+            .map_err(|error| database_error(path, error))?;
+        for &(expected_name, expected_type, expected_not_null, expected_primary_key_position) in
+            expected_columns
+        {
+            let Some(column) = columns.next() else {
+                return Err(corrupt());
+            };
+            let (name, column_type, not_null, default_value, primary_key_position) =
+                column.map_err(|error| database_error(path, error))?;
+            if name != expected_name
+                || column_type != expected_type
+                || (not_null != 0) != expected_not_null
+                || default_value.is_some()
+                || primary_key_position != expected_primary_key_position
+            {
+                return Err(corrupt());
+            }
+        }
+        if let Some(column) = columns.next() {
+            column.map_err(|error| database_error(path, error))?;
+            return Err(corrupt());
+        }
+    }
+    Ok(())
+}
+
+/// Every user-visible base key is bytewise ordered. In particular,
+/// `canonical_source COLLATE NOCASE` would retain the expected autoindex name
+/// yet violate the list/search pagination order.
+fn validate_base_autoindex_collations(
+    connection: &Connection,
+    path: &Path,
+) -> Result<(), AppError> {
+    let corrupt = || AppError::database_corrupt(NativePath::new(path.to_path_buf()));
+    for &(index_name, expected_columns) in &BASE_AUTOINDEX_COLUMNS {
+        let mut statement = connection
+            .prepare(&format!("PRAGMA index_xinfo('{index_name}')"))
+            .map_err(|error| database_error(path, error))?;
+        let key_columns = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                    row.get::<_, i64>(5)?,
+                ))
+            })
+            .map_err(|error| database_error(path, error))?;
+        let mut seen_key_columns = 0;
+        for key_column in key_columns {
+            let (sequence, name, descending, collation, is_key) =
+                key_column.map_err(|error| database_error(path, error))?;
+            if is_key == 0 {
+                continue;
+            }
+            let Some(expected_name) = expected_columns.get(seen_key_columns) else {
+                return Err(corrupt());
+            };
+            if sequence != seen_key_columns as i64
+                || name.as_deref() != Some(*expected_name)
+                || descending != 0
+                || collation.as_deref() != Some("BINARY")
+            {
+                return Err(corrupt());
+            }
+            seen_key_columns += 1;
+        }
+        if seen_key_columns != expected_columns.len() {
+            return Err(corrupt());
+        }
+    }
+    Ok(())
 }
 
 /// Unknown newer generations must be classified before this binary assumes
@@ -3375,6 +3582,18 @@ fn wait_for_backup_retry(started: Instant) -> Result<(), AppError> {
     }
 }
 
+fn backup_retry_started_after_step(
+    result: &StepResult,
+    retry_started: Option<Instant>,
+    now: Instant,
+) -> Option<Instant> {
+    match result {
+        StepResult::More => None,
+        result if backup_step_is_contention(result) => Some(retry_started.unwrap_or(now)),
+        _ => Some(retry_started.unwrap_or(now)),
+    }
+}
+
 fn copy_bounded_backup(
     source: &Connection,
     destination: &mut Connection,
@@ -3387,7 +3606,7 @@ fn copy_bounded_backup(
     }
     let backup =
         Backup::new(source, destination).map_err(|error| database_error(database, error))?;
-    let retry_started = Instant::now();
+    let mut retry_started = None;
     loop {
         let result = backup
             .step(512)
@@ -3397,11 +3616,14 @@ fn copy_bounded_backup(
         }
         match result {
             StepResult::Done => return Ok(()),
-            StepResult::More => {}
-            result if backup_step_is_contention(&result) => {
-                wait_for_backup_retry(retry_started)?;
+            StepResult::More => retry_started = None,
+            result => {
+                retry_started =
+                    backup_retry_started_after_step(&result, retry_started, Instant::now());
+                wait_for_backup_retry(
+                    retry_started.expect("non-progress backup result starts a retry deadline"),
+                )?;
             }
-            _ => wait_for_backup_retry(retry_started)?,
         }
     }
 }
@@ -4453,7 +4675,7 @@ mod tests {
     use std::ffi::OsString;
     use std::os::unix::{
         ffi::{OsStrExt, OsStringExt},
-        fs::{FileTypeExt, symlink},
+        fs::{FileTypeExt, PermissionsExt, symlink},
     };
     use std::sync::atomic::{AtomicBool, Ordering};
     use tempfile::tempdir;
@@ -6193,6 +6415,30 @@ mod tests {
     }
 
     #[test]
+    fn online_backup_retry_deadline_starts_at_contention_and_resets_after_progress() {
+        let now = Instant::now();
+        let expired = now.checked_sub(LOCK_WAIT).unwrap();
+
+        let after_progress = backup_retry_started_after_step(&StepResult::More, Some(expired), now);
+        assert_eq!(after_progress, None);
+        let first_contention =
+            backup_retry_started_after_step(&StepResult::Busy, after_progress, now);
+        assert_eq!(first_contention, Some(now));
+
+        let later = now.checked_add(Duration::from_millis(1)).unwrap();
+        let continuous_contention =
+            backup_retry_started_after_step(&StepResult::Locked, first_contention, later);
+        assert_eq!(continuous_contention, Some(now));
+        let renewed_after_progress =
+            backup_retry_started_after_step(&StepResult::More, continuous_contention, later);
+        assert_eq!(renewed_after_progress, None);
+        assert_eq!(
+            backup_retry_started_after_step(&StepResult::Locked, renewed_after_progress, later),
+            Some(later)
+        );
+    }
+
+    #[test]
     fn database_sync_error_preserves_native_path_bytes() {
         let raw = b"/tmp/library-database-\xff.db";
         let path = PathBuf::from(OsString::from_vec(raw.to_vec()));
@@ -7513,6 +7759,68 @@ mod tests {
     }
 
     #[test]
+    fn migration_rejects_nocase_canonical_source_before_backup_or_write() {
+        let temporary = tempdir().unwrap();
+        let database = initialize_v1_database(&temporary);
+        Connection::open(&database)
+            .unwrap()
+            .execute_batch(
+                "PRAGMA foreign_keys = OFF;
+                 CREATE TABLE library_entries_replacement (
+                    canonical_source TEXT PRIMARY KEY COLLATE NOCASE NOT NULL,
+                    owner TEXT NOT NULL,
+                    repository TEXT NOT NULL,
+                    repository_display TEXT NOT NULL,
+                    skill_path TEXT NOT NULL,
+                    ref_kind TEXT NOT NULL,
+                    ref_value TEXT NOT NULL,
+                    repository_id TEXT NOT NULL,
+                    commit_sha TEXT NOT NULL,
+                    integrity TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    description TEXT NOT NULL,
+                    entry_count TEXT NOT NULL,
+                    byte_count TEXT NOT NULL,
+                    alias TEXT UNIQUE,
+                    category TEXT,
+                    note TEXT
+                 );
+                 INSERT INTO library_entries_replacement (
+                    canonical_source, owner, repository, repository_display, skill_path, ref_kind,
+                    ref_value, repository_id, commit_sha, integrity, name, description, entry_count,
+                    byte_count, alias, category, note
+                 )
+                 SELECT
+                    canonical_source, owner, repository, repository_display, skill_path, ref_kind,
+                    ref_value, repository_id, commit_sha, integrity, name, description, entry_count,
+                    byte_count, alias, category, note
+                 FROM library_entries;
+                 DROP TABLE library_entries;
+                 ALTER TABLE library_entries_replacement RENAME TO library_entries;
+                 PRAGMA foreign_keys = ON;",
+            )
+            .unwrap();
+        let repository = SqliteLibraryRepository::with_environment(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(XdgRootResolver),
+        );
+
+        assert!(matches!(
+            repository.mutate_metadata(&metadata_mutation(
+                "github:owner/repository#skills/review@refs/heads/main",
+                LibraryMetadataChange::NoteSet("blocked".to_owned()),
+            )),
+            Err(AppError::DatabaseCorrupt { .. })
+        ));
+        assert!(matches!(
+            repository.fix(),
+            Err(AppError::DatabaseCorrupt { .. })
+        ));
+        assert_eq!(read_schema_version(&database), 1);
+        assert!(!temporary.path().join("data/skilload/backups").exists());
+    }
+
+    #[test]
     fn migration_checks_retained_sqlite_sequence_integrity_before_backup() {
         let temporary = tempdir().unwrap();
         let database = initialize_v1_database(&temporary);
@@ -7948,6 +8256,118 @@ mod tests {
         assert!(hook.observed.load(Ordering::Relaxed));
         assert!(hook.commit_was_blocked.load(Ordering::Relaxed));
         assert_eq!(read_schema_version(&database), 2);
+    }
+
+    struct MigrationBackupDigestSnapshotWriter {
+        commit_was_blocked: AtomicBool,
+        observed: AtomicBool,
+    }
+
+    impl PersistenceHooks for MigrationBackupDigestSnapshotWriter {
+        fn after_backup_hash(&self, staging: &Path) -> Result<(), AppError> {
+            let connection = Connection::open(staging).unwrap();
+            connection.busy_timeout(Duration::ZERO).unwrap();
+            let commit_was_blocked = match connection.execute_batch(
+                "BEGIN IMMEDIATE;
+                 UPDATE library_entries SET note = 'concurrent staging write';",
+            ) {
+                Ok(()) => {
+                    let blocked = connection.execute_batch("COMMIT").is_err();
+                    if blocked {
+                        connection.execute_batch("ROLLBACK").unwrap();
+                    }
+                    blocked
+                }
+                Err(_) => true,
+            };
+            self.commit_was_blocked
+                .store(commit_was_blocked, Ordering::Relaxed);
+            self.observed.store(true, Ordering::Relaxed);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn migration_backup_digest_stays_with_the_validated_staging_snapshot() {
+        let temporary = tempdir().unwrap();
+        let database = initialize_v1_database(&temporary);
+        let hook = Arc::new(MigrationBackupDigestSnapshotWriter {
+            commit_was_blocked: AtomicBool::new(false),
+            observed: AtomicBool::new(false),
+        });
+        let repository = SqliteLibraryRepository::with_hooks(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(XdgRootResolver),
+            hook.clone(),
+        );
+
+        repository.fix().unwrap();
+
+        assert!(hook.observed.load(Ordering::Relaxed));
+        assert!(hook.commit_was_blocked.load(Ordering::Relaxed));
+        let backups = temporary.path().join("data/skilload/backups");
+        let backup = fs::read_dir(&backups)
+            .unwrap()
+            .flatten()
+            .map(|entry| entry.path())
+            .find(|path| path.extension().is_some_and(|extension| extension == "db"))
+            .unwrap();
+        let manifest: serde_json::Value =
+            serde_json::from_slice(&fs::read(backup.with_extension("manifest.json")).unwrap())
+                .unwrap();
+        assert_eq!(
+            manifest["sha256"],
+            format!(
+                "sha256:{}",
+                sha256_of_file(&File::open(&backup).unwrap()).unwrap()
+            )
+        );
+        assert_eq!(read_schema_version(&database), 2);
+    }
+
+    struct BackupStagingCleanupPermissionFailure;
+
+    impl PersistenceHooks for BackupStagingCleanupPermissionFailure {
+        fn before_backup_staging_cleanup(&self, backups: &Path) -> Result<(), AppError> {
+            fs::set_permissions(backups, fs::Permissions::from_mode(0o500)).unwrap();
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn migration_propagates_backup_staging_cleanup_failure() {
+        let temporary = tempdir().unwrap();
+        let database = initialize_v1_database(&temporary);
+        let repository = SqliteLibraryRepository::with_hooks(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(XdgRootResolver),
+            Arc::new(BackupStagingCleanupPermissionFailure),
+        );
+
+        let result = repository.fix();
+        let backups = temporary.path().join("data/skilload/backups");
+        fs::set_permissions(&backups, fs::Permissions::from_mode(0o700)).unwrap();
+        let error = result.unwrap_err();
+
+        assert!(matches!(
+            error,
+            AppError::InvalidState { state, .. }
+                if state.starts_with("remove published backup staging entry:")
+        ));
+        assert_eq!(read_schema_version(&database), 1);
+        assert_eq!(
+            fs::read_dir(&backups)
+                .unwrap()
+                .flatten()
+                .filter(|entry| {
+                    entry
+                        .file_name()
+                        .to_string_lossy()
+                        .starts_with(".skilload-backup-")
+                })
+                .count(),
+            2
+        );
     }
 
     #[test]
@@ -9100,6 +9520,66 @@ mod tests {
         assert!(matches!(
             error,
             AppError::InvalidEnvironment { variable, .. } if variable == "XDG_DATA_HOME"
+        ));
+    }
+
+    struct FailingHeaderReader;
+
+    impl Read for FailingHeaderReader {
+        fn read(&mut self, _buffer: &mut [u8]) -> io::Result<usize> {
+            Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "injected header read failure",
+            ))
+        }
+    }
+
+    #[test]
+    fn sqlite_header_reader_preserves_operational_errors() {
+        let path = Path::new("/tmp/skilload-header.db");
+        let error = sqlite_header_is_valid(
+            &mut FailingHeaderReader,
+            path,
+            "read database header for generation check",
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            AppError::InvalidEnvironment { variable, reason, .. }
+                if variable == "XDG_DATA_HOME"
+                    && reason.contains("read database header for generation check")
+        ));
+
+        let mut short_header = io::Cursor::new(vec![0u8; 99]);
+        assert!(
+            !sqlite_header_is_valid(
+                &mut short_header,
+                path,
+                "read database header for generation check",
+            )
+            .unwrap()
+        );
+    }
+
+    #[test]
+    fn backup_manifest_candidate_enumeration_is_bounded() {
+        let temporary = tempdir().unwrap();
+        let backup_directory = temporary.path().join("backups");
+        fs::create_dir(&backup_directory).unwrap();
+        for index in 0..=MAX_BACKUP_MANIFEST_CANDIDATES {
+            File::create(backup_directory.join(format!("candidate-{index}.manifest.json")))
+                .unwrap();
+        }
+        let directory = ValidatedDataDirectory::open(&backup_directory).unwrap();
+
+        let error = backup_manifest_stems(&directory).unwrap_err();
+
+        assert!(matches!(
+            error,
+            AppError::InvalidState { domain, state, path: Some(path), .. }
+                if domain == "library_database"
+                    && state == "backup_manifest_candidate_limit_exceeded"
+                    && path.as_path() == backup_directory
         ));
     }
 }
