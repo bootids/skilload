@@ -102,7 +102,7 @@ DELETE-mode `-journal` 同样不能与 descriptor-bound open 分离：SQLite 官
 - [x] (2026-08-22) 第十七轮 final-review 已完成：remediation commit `5a01cc6664fb2a3aa1b12bf7d6234b686b97bddc` 修复 scoped `sqlite_sequence` integrity、FTS content materialization 前的 diagnostic budget，以及完整 transfer-size proof 后才广告 recoverable export；focused `sqlite_library`（106）与 workspace fmt/clippy/test（core 187、CLI 13+17）/locked build通过。三个 GitHub reply 均已写入、对应 threads均 resolved；本 review documentation commit 的最终 reconciliation确认 19 comments、79 reviews、62 threads全部 source-complete，Plan保持 `review`、PR保持 ready/Open。
 
 - [x] (2026-08-22) 第十八轮 final-review remediation 已由 `f7a9b476e151c1d071573a2655d9ccd33efd3b91` 推送、preliminary evidence 已由 `87801e5` 推送：base validation现在验证完整 fixed foreign-key inventory；recovery export probe区分 content failure与 operational error；snapshot-budget doctor finding不再伪报 database 不可写。新增三个 deterministic adapter regression；focused `sqlite_library` 109 tests与 workspace fmt/clippy/test（13+17+190）/locked build均通过。三个 GitHub replies 已写入且 threads均 resolved；完整 reconciliation确认 20 个 comments、83 个 reviews、65 个 actual threads均 source-complete，Plan保持 `review`、PR保持 ready/Open。
-- [x] (2026-08-22) 第十九轮 final-review 的四个 inline defect 已在当前 Product Baseline 内完成代码与文档 remediation：base autoindex inventory改为 exact、migration backup保持 validated SHARED snapshot并在最终 transaction比较完整 entries、online backup的 `More` 立即前进、free-text FTS projection追加 full-folded NFC spelling。新增四项 deterministic adapter regression；focused `sqlite_library` 113 tests、fmt、all-features clippy、workspace locked tests（core 194、CLI 13+17）和 locked build均通过。预备 remediation commit、push、GitHub replies/closures 与最终 log reconciliation仍待执行，Plan保持 `review`、PR保持 ready/Open。
+- [x] (2026-08-22) 第十九轮 final-review 的四个 inline defect 已在当前 Product Baseline 内完成代码与文档 remediation：base autoindex inventory改为 exact、migration backup保持 validated SHARED snapshot并在最终 transaction比较完整 entries、online backup的 `More` 立即前进、free-text FTS projection追加 full-folded NFC spelling。新增四项 deterministic adapter regression；focused `sqlite_library` 113 tests、fmt、all-features clippy、workspace locked tests（core 194、CLI 13+17）和 locked build均通过。preliminary remediation commit `f84bfdc2b8d88c5511ce71bcb04e8439707d7557` 已推送并与 PR head一致；GitHub replies/closures 与最终 log reconciliation仍待执行，Plan保持 `review`、PR保持 ready/Open。
 
 ## Surprises & Discoveries
 
@@ -427,7 +427,7 @@ DELETE-mode `-journal` 同样不能与 descriptor-bound open 分离：SQLite 官
 2026-08-22 第十七轮 final-review remediation 已完成。`5a01cc6664fb2a3aa1b12bf7d6234b686b97bddc` 使 base schema proof验证 retained `sqlite_sequence`、FTS diagnostic先于 content materialization施加 budget，并要求 recovery export先通过完整 deterministic transfer-size proof；新增三项 adapter regression。focused `sqlite_library` 106 tests与 workspace fmt/clippy/test（core 187、CLI 13+17）/locked build全部通过。PRRT_kwDOT7YN2s6bX34u、PRRT_kwDOT7YN2s6bX34w 与 PRRT_kwDOT7YN2s6bX34z 的 replies已写入且各自 `thread resolved: true`；完整会话读取无 unlogged、unanswered 或 blocked actual problem，Plan保持 `review`、PR保持 ready/Open。
 
 2026-08-22 第十八轮 final-review remediation 与 GitHub reconciliation 已完成：`f7a9b476e151c1d071573a2655d9ccd33efd3b91` 在任何 migration write前拒绝 extra foreign key、传播 recovery export operational probe failure，并使 snapshot-budget finding保持 `doctor --fix` unchanged但不再使 `database_writable` 为 false；`87801e5` 记录 preliminary evidence。新增 `migration_rejects_unexpected_entry_foreign_key_before_backup`、`corruption_details_propagate_recovery_export_probe_operational_failures` 和 `diagnostic_snapshot_budget_keeps_a_healthy_database_writable`。focused `sqlite_library` 109 tests、`cargo fmt --all -- --check`、all-features clippy、workspace locked tests（core 190、CLI 13+17）和 locked build均通过；三个 inline replies均已成功写入并 resolved，完整读取确认 20 个 comments、83 个 reviews、65 个 actual threads无 unlogged、unanswered 或 blocked source，Plan保持 `review`、PR保持 ready/Open。
-2026-08-22 第十九轮 final-review remediation 已完成代码、产品规格、design 与 preliminary Plan evidence：base autoindex proof、snapshot-bound backup/final base equality、non-contention `More` 与 full-fold FTS projection都在 `crates/skilload-core/src/adapters/sqlite_library.rs` 实现，并由四项新增 adapter regression覆盖。focused `sqlite_library` 113 tests、fmt、all-features clippy、workspace locked tests（core 194、CLI 13+17）和 locked build均通过。preliminary remediation commit尚待创建；四个 inline thread在该 commit 推送后才回复并 resolve，Plan保持 `review`、PR保持 ready/Open。
+2026-08-22 第十九轮 final-review remediation 已完成代码、产品规格、design 与 preliminary Plan evidence：base autoindex proof、snapshot-bound backup/final base equality、non-contention `More` 与 full-fold FTS projection都在 `crates/skilload-core/src/adapters/sqlite_library.rs` 实现，并由四项新增 adapter regression覆盖。focused `sqlite_library` 113 tests、fmt、all-features clippy、workspace locked tests（core 194、CLI 13+17）和 locked build均通过。preliminary remediation commit `f84bfdc2b8d88c5511ce71bcb04e8439707d7557` 已推送且 PR head匹配；四个 inline thread在该 commit 推送后才回复并 resolve，Plan保持 `review`、PR保持 ready/Open。
 
 
 ## Review Conversation Log
@@ -1560,9 +1560,9 @@ Disposition: fixed
 
 Status: open
 
-Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 增加 `BASE_AUTOINDICES` exact name/owner inventory、seen-set completion proof与 base/derived/internal autoindex分流；外部 `UNIQUE(category) ON CONFLICT REPLACE` 现在在 migration backup或 write前返回 `database_corrupt`。`docs/product-specs/cache-and-operations.md`、`docs/design-docs/application-and-persistence.md` 与本 Plan已同步；preliminary remediation commit待创建。
+Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 增加 `BASE_AUTOINDICES` exact name/owner inventory、seen-set completion proof与 base/derived/internal autoindex分流；外部 `UNIQUE(category) ON CONFLICT REPLACE` 现在在 migration backup或 write前返回 `database_corrupt`。`docs/product-specs/cache-and-operations.md`、`docs/design-docs/application-and-persistence.md` 与本 Plan已同步；preliminary remediation commit `f84bfdc2b8d88c5511ce71bcb04e8439707d7557` 已推送。
 
-Evidence: `migration_rejects_unrecognized_base_autoindex_before_backup_or_write` 同时断言 metadata mutation和 `doctor --fix` 拒绝、schema保持 v1且没有 backup。focused `sqlite_library` 113 passed；`cargo fmt --all -- --check`、all-features clippy、workspace locked tests（core 194、CLI 13+17）和 locked build均通过。
+Evidence: `migration_rejects_unrecognized_base_autoindex_before_backup_or_write` 同时断言 metadata mutation和 `doctor --fix` 拒绝、schema保持 v1且没有 backup。focused `sqlite_library` 113 passed；`cargo fmt --all -- --check`、all-features clippy、workspace locked tests（core 194、CLI 13+17）和 locked build均通过；PR head已验证为 `f84bfdc2b8d88c5511ce71bcb04e8439707d7557`。
 
 GitHub outcome: 未回复；thread unresolved。
 
@@ -1576,9 +1576,9 @@ Disposition: fixed
 
 Status: open
 
-Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 将初始 v1 validation/load transaction保持到 `publish_validated_backup` 完成；final migration transaction重新加载并比较完整 entries后才创建 FTS/update version。`MigrationBackupSnapshotWriter` regression在 backup copy时让 external writer尝试 commit，确认 commit被 SHARED snapshot阻塞；`docs/design-docs/application-and-persistence.md` 与本 Plan已同步；preliminary remediation commit待创建。
+Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 将初始 v1 validation/load transaction保持到 `publish_validated_backup` 完成；final migration transaction重新加载并比较完整 entries后才创建 FTS/update version。`MigrationBackupSnapshotWriter` regression在 backup copy时让 external writer尝试 commit，确认 commit被 SHARED snapshot阻塞；`docs/design-docs/application-and-persistence.md` 与本 Plan已同步；preliminary remediation commit `f84bfdc2b8d88c5511ce71bcb04e8439707d7557` 已推送。
 
-Evidence: `migration_backup_stays_with_the_validated_live_snapshot` 断言 writer commit被阻塞且 migration成为 v2；focused `sqlite_library` 113 passed；`cargo fmt --all -- --check`、all-features clippy、workspace locked tests（core 194、CLI 13+17）和 locked build均通过。
+Evidence: `migration_backup_stays_with_the_validated_live_snapshot` 断言 writer commit被阻塞且 migration成为 v2；focused `sqlite_library` 113 passed；`cargo fmt --all -- --check`、all-features clippy、workspace locked tests（core 194、CLI 13+17）和 locked build均通过；PR head已验证为 `f84bfdc2b8d88c5511ce71bcb04e8439707d7557`。
 
 GitHub outcome: 未回复；thread unresolved。
 
@@ -1592,9 +1592,9 @@ Disposition: fixed
 
 Status: open
 
-Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 的 `copy_bounded_backup` 让 `StepResult::More` 直接继续，而仅以 `backup_step_is_contention` 对 `Busy`/`Locked` wait；每个 chunk的 page-count ceiling保持不变。`docs/product-specs/cache-and-operations.md`、`docs/design-docs/application-and-persistence.md` 与本 Plan已同步；preliminary remediation commit待创建。
+Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 的 `copy_bounded_backup` 让 `StepResult::More` 直接继续，而仅以 `backup_step_is_contention` 对 `Busy`/`Locked` wait；每个 chunk的 page-count ceiling保持不变。`docs/product-specs/cache-and-operations.md`、`docs/design-docs/application-and-persistence.md` 与本 Plan已同步；preliminary remediation commit `f84bfdc2b8d88c5511ce71bcb04e8439707d7557` 已推送。
 
-Evidence: `online_backup_waits_only_for_contention` 断言 `More` 不属于 contention而 `Busy`/`Locked` 属于；focused `sqlite_library` 113 passed；`cargo fmt --all -- --check`、all-features clippy、workspace locked tests（core 194、CLI 13+17）和 locked build均通过。
+Evidence: `online_backup_waits_only_for_contention` 断言 `More` 不属于 contention而 `Busy`/`Locked` 属于；focused `sqlite_library` 113 passed；`cargo fmt --all -- --check`、all-features clippy、workspace locked tests（core 194、CLI 13+17）和 locked build均通过；PR head已验证为 `f84bfdc2b8d88c5511ce71bcb04e8439707d7557`。
 
 GitHub outcome: 未回复；thread unresolved。
 
@@ -1608,9 +1608,9 @@ Disposition: fixed
 
 Status: open
 
-Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 的共享 `fts_free_text_projection` 保留 raw/NFC后追加 distinct full-case-folded NFC spelling；所有 import、metadata mutation、migration 与 FTS rebuild继续走同一 helper。`docs/product-specs/library.md` 与 `docs/design-docs/application-and-persistence.md` 已澄清既有 Revision 2实现要求，不改变 behavior revision；preliminary remediation commit待创建。
+Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 的共享 `fts_free_text_projection` 保留 raw/NFC后追加 distinct full-case-folded NFC spelling；所有 import、metadata mutation、migration 与 FTS rebuild继续走同一 helper。`docs/product-specs/library.md` 与 `docs/design-docs/application-and-persistence.md` 已澄清既有 Revision 2实现要求，不改变 behavior revision；preliminary remediation commit `f84bfdc2b8d88c5511ce71bcb04e8439707d7557` 已推送。
 
-Evidence: `search_matches_expanding_full_case_fold_in_free_text_fields` 断言 `STRASSE` 命中 description、alias、category与 note中的 `Straße`，并直接验证 projection为 `Straße\nstrasse`；focused `sqlite_library` 113 passed；`cargo fmt --all -- --check`、all-features clippy、workspace locked tests（core 194、CLI 13+17）和 locked build均通过。
+Evidence: `search_matches_expanding_full_case_fold_in_free_text_fields` 断言 `STRASSE` 命中 description、alias、category与 note中的 `Straße`，并直接验证 projection为 `Straße\nstrasse`；focused `sqlite_library` 113 passed；`cargo fmt --all -- --check`、all-features clippy、workspace locked tests（core 194、CLI 13+17）和 locked build均通过；PR head已验证为 `f84bfdc2b8d88c5511ce71bcb04e8439707d7557`。
 
 GitHub outcome: 未回复；thread unresolved。
 
