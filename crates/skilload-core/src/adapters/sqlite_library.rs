@@ -367,6 +367,9 @@ impl SqliteLibraryRepository {
         let (held_generation, identity) =
             self.pre_open_generation_gate(directory, database_name, path)?;
         self.hooks.before_existing_database_open(path)?;
+        // A rollback journal can appear after the generation gate's first scan.
+        // Reject it before SQLite attempts a read-only rollback.
+        self.ensure_no_existing_database_sidecars(directory, database_name, path, identity)?;
         let connection = if flags.contains(OpenFlags::SQLITE_OPEN_READ_ONLY) {
             let held_path = PathBuf::from(format!("/dev/fd/{}", held_generation.as_raw_fd()));
             Connection::open_with_flags(&held_path, flags)
