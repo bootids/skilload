@@ -96,7 +96,8 @@ DELETE-mode `-journal` 同样不能与 descriptor-bound open 分离：SQLite 官
 - [x] (2026-08-22) 第十二轮 final-review 的三个 inline defect 已由 `e496ead4e6021bfa20b11a36809ecf95b707b33c` 修复并推送：existing `data/skilload` 的 absence/sidecar probe 现在使用 held descriptor，portable published-backup protection 使用 root-bound held `backups` descriptor 与 entry identity，corruption backup manifest enumeration 错误不再伪装为空 inventory。三项新 deterministic regression 通过；`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace`（13+17+167）、`cargo build --workspace --locked` 与 `git diff --check` 均通过；preliminary evidence `bcb1294`、final log `099a328323761504db4ad05dc51b4c01f6285e35` 已推送，三个 GitHub replies 已写入且 inline threads 均 resolved。post-push complete reconciliation 确认 13 个 comments、55 个 reviews、43 个 threads，全部 source 已记录或无独立问题，Plan 保持 `review`、PR 保持 ready。
 - [x] (2026-08-22) 第十三轮 final-review 的三个 inline defect 已由 `513799b4adc5a57cde34a1d1d977636293c93600` 修复并推送：`library_tags` schema 现在证明 composite primary key、backup SHA-256 在验证 SHARED snapshot 内计算、超过 10,000 条 base entries 在 materialize 前拒绝。三项新增 SQLite adapter regression 和既有 backup validation regression 通过；`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets --all-features -- -D warnings`、`cargo test --workspace --all-features --locked`（13+17+170）与 `cargo build --workspace --all-features --locked` 已通过。三个 GitHub replies 已写入且 inline threads 均 resolved；最终 Review Conversation Log reconciliation 见本轮条目，Plan 保持 `review`、PR 保持 ready。
 - [x] (2026-08-22) 第十四轮 final-review 的四个 inline defect 已在现有 Product Baseline 内完成：FTS read diagnostic 使用 536,870,912-byte page budget、backup candidate 在 268,435,456 bytes 前拒绝、base schema 拒绝 user trigger、search 在 count/page 前运行 special integrity check。三条 new regression 已 red→green，另有 budget boundary regression；`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets --all-features -- -D warnings`、`cargo test --workspace --all-features --locked`（174 passed）、`cargo build --workspace --all-features --locked` 与 `git diff --check` 已通过。修复与 preliminary log 的 `d9791172fdfcdec82f0adbdb0d96505cffc87e65` 已推送并与 PR head 验证一致；四个 GitHub replies 已写入、对应 inline threads 均 resolved，final reconciliation 已记录在本 Log。
-- [ ] (2026-08-22) 第十五轮 final-review 的 review body 加四个 inline defect已完成 ordinary remediation：existing-output export现在清理仍匹配 captured identity的 displaced link；doctor区分 snapshot-budget resource finding；migration backup在 copy/hash 前及每个 online-backup chunk受 268,435,456-byte ceiling；base proof要求 exact schema inventory；backup candidate operational failure传播。核心 adapter suite 179 tests通过；remaining：全 workspace gates、diff review、commit/push、GitHub replies/closures与最终 reconciliation。
+- [x] (2026-08-22) 第十五轮 final-review 的 review body 加四个 inline defect已由 `3f1e563d74aef7d0a83e1d65a23e8d7dd7a28bf4` 修复并推送：existing-output export现在清理仍匹配 captured identity的 displaced link；doctor区分 snapshot-budget resource finding；migration backup在 copy/hash 前及每个 online-backup chunk受 268,435,456-byte ceiling；base proof要求 exact schema inventory；backup candidate operational failure传播。全 workspace fmt/clippy/test（13+17+179）/all-features locked build通过；review body已获 reply，四个 inline threads均已回复并 resolved。
+- [ ] (2026-08-22) 推送本次 finalized Review Conversation Log documentation commit，并重新读取完整 PR conversation、PR head与生命周期状态。
 
 ## Surprises & Discoveries
 
@@ -355,6 +356,8 @@ DELETE-mode `-journal` 同样不能与 descriptor-bound open 分离：SQLite 官
 2026-08-22 第十一轮 final-review remediation 已完成：`f032f9c1f087fa72b7ca55666e8b5d92e3149f27` 将 export recovery inventory 改为 fail closed、在 writable connection 最终 generation revalidation 后重新验证 SQLite handle，并将 physical FTS detach 的 commit → `VACUUM` → rebuild sequence 写回 reusable reference；`b6c0410` 已记录 preliminary evidence。两项新增 focused regressions及 workspace fmt/clippy/test（13+17+164）/locked build 全部通过。三个 GitHub reply URL 与 resolved state 已逐项记录；最终完整会话读取为 12 个 top-level comments、51 个 reviews 与 40 个 threads，全部 threads resolved、无 pending、blocked 或未记录 actual problem。Plan 保持 `review`、PR 保持 ready。
 
 2026-08-22 第十三轮 final-review remediation 已由 `513799b4adc5a57cde34a1d1d977636293c93600` 修复并推送：`validate_library_tags_schema` 新增 composite-key proof，`with_validated_standalone_backup_snapshot` 使 backup digest保持在已验证 SHARED snapshot 内，`validate_library_entry_count` 在 load 前最多检查第 10,001 个 row。新增 tests 覆盖 duplicated tags、snapshot-held writer 与 oversized base rows；focused tests及全 workspace fmt/clippy/test（13+17+170）/all-features locked build均通过。三个 GitHub replies 已写入、对应 thread均 resolved，Plan 保持 `review`、PR 保持 ready。
+
+2026-08-22 第十五轮 final-review remediation 已完成。`3f1e563d74aef7d0a83e1d65a23e8d7dd7a28bf4` 修复 five actual problems：existing-output export cleanup、FTS snapshot-budget resource classification、migration backup ceiling、exact schema inventory与backup candidate operational-error propagation；新增五项 regression，workspace fmt/clippy/test（13+17+179）/all-features locked build均通过。review body已获 top-level reply，四个 inline sources均已回复并 resolved；finalized Review Conversation Log documentation commit待推送，Plan继续保持 `review`、PR保持 ready/Open。
 
 ## Review Conversation Log
 
@@ -1212,13 +1215,13 @@ Problem: 当目标 regular output 已存在时，`RENAME_EXCHANGE` 将旧 output
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: 已在 `crates/skilload-core/src/adapters/portable_library.rs` 的 existing-output exchange success path于 replacement hook后检查 `OutputPublicationGuard`；仅 captured displaced identity仍在 `publication_name` 时 unlink，foreign replacement仍由既有 `export_preserves_a_replaced_publication_entry_after_exchange` 保留。新增 `export_removes_displaced_output_after_successful_replacement`，断言正常 success不遗留 `.skilload-publish-*`。
 
-Evidence: remediation commit待创建；focused core suite（179 passed）与workspace `cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets --all-features -- -D warnings`、`cargo test --workspace --all-features --locked`（13+17+179）和 `cargo build --workspace --all-features --locked` 已通过。
+Evidence: remediation commit `3f1e563d74aef7d0a83e1d65a23e8d7dd7a28bf4` 已推送；focused core suite（179 passed）与workspace `cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets --all-features -- -D warnings`、`cargo test --workspace --all-features --locked`（13+17+179）和 `cargo build --workspace --all-features --locked` 已通过。
 
-GitHub outcome: open；review body无 resolvable thread，完成后须以 PR conversation reply URL 记录。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/5#issuecomment-5378942635；top-level review body；no resolvable thread。
 
 ### PRRT_kwDOT7YN2s6bXEBD - FTS snapshot budget 不得假报可修复
 
@@ -1228,13 +1231,13 @@ Problem: schema v2 generation超过 512 MiB default-doctor snapshot budget时，
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 引入 `DerivedIndexConsistency` 与 `Diagnosis::FtsDiagnosticSnapshotTooLarge`；仅实际 derived mismatch进入 repair，512 MiB snapshot budget exhaustion返回非 fix 的 `library_fts_diagnostic_snapshot_too_large`，`doctor --fix` unchanged，search仍拒绝未验证 index为 `library_fts_invalid`。同步 persistence design。
 
-Evidence: 新增 `snapshot_budget_diagnosis_is_nonfixable`，保留 `fts_diagnostic_snapshot_budget_rejects_oversized_or_overflowing_generations`；remediation commit待创建，core 179 tests与全 workspace fmt/clippy/test/build gates通过。
+Evidence: 新增 `snapshot_budget_diagnosis_is_nonfixable`，保留 `fts_diagnostic_snapshot_budget_rejects_oversized_or_overflowing_generations`；remediation commit `3f1e563d74aef7d0a83e1d65a23e8d7dd7a28bf4` 已推送，core 179 tests与全 workspace fmt/clippy/test/build gates通过。
 
-GitHub outcome: open；inline thread尚未回复或 resolve。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/5#discussion_r3835484658；thread resolved: true。
 
 ### PRRT_kwDOT7YN2s6bXEBE - migration backup 复制前执行大小上限
 
@@ -1244,13 +1247,13 @@ Problem: migration可能复制并 hash超过 268,435,456-byte validated-backup c
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 的 `publish_validated_backup` 与 `copy_bounded_backup` 在 staging前检查 source logical image、每个 512-page `Backup::step` 后检查 progress，并在 SHA-256 前检查 staging descriptor length；超过 268,435,456 bytes返回 `migration_backup_too_large`，不发布 pair或升级 schema。
 
-Evidence: 新增 `migration_backup_budget_matches_validated_backup_ceiling` 覆盖 exact boundary、overflow与负值；remediation commit待创建，core 179 tests与全 workspace fmt/clippy/test/build gates通过。
+Evidence: 新增 `migration_backup_budget_matches_validated_backup_ceiling` 覆盖 exact boundary、overflow与负值；remediation commit `3f1e563d74aef7d0a83e1d65a23e8d7dd7a28bf4` 已推送，core 179 tests与全 workspace fmt/clippy/test/build gates通过。
 
-GitHub outcome: open；inline thread尚未回复或 resolve。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/5#discussion_r3835484954；thread resolved: true。
 
 ### PRRT_kwDOT7YN2s6bXEBF - migration 前拒绝非 Library schema objects
 
@@ -1260,13 +1263,13 @@ Problem: v1 base validation只检查四个 expected tables、foreign keys与 tri
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 的 `validate_base_database` 接入 `validate_library_schema_inventory`：fixed base tables、schema v2 owned FTS names与 SQLite internal objects是唯一允许对象；extra table/index/view/trigger在 live baseline与 standalone backup validation中均返回 `database_corrupt`。
 
-Evidence: 新增 `migration_rejects_unexpected_schema_objects_before_backup`，用 `sqliteforeign` table/index证明不会发布 backup或写 version；remediation commit待创建，core 179 tests与全 workspace fmt/clippy/test/build gates通过。
+Evidence: 新增 `migration_rejects_unexpected_schema_objects_before_backup`，用 `sqliteforeign` table/index证明不会发布 backup或写 version；remediation commit `3f1e563d74aef7d0a83e1d65a23e8d7dd7a28bf4` 已推送，core 179 tests与全 workspace fmt/clippy/test/build gates通过。
 
-GitHub outcome: open；inline thread尚未回复或 resolve。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/5#discussion_r3835485208；thread resolved: true。
 
 ### PRRT_kwDOT7YN2s6bXEBG - backup candidate I/O failure 必须传播
 
@@ -1276,13 +1279,15 @@ Problem: manifest candidate被枚举后，`backup_pair_is_valid` 将 no-follow o
 
 Disposition: fixed
 
-Status: open
+Status: resolved
 
 Resolution: 已将 `crates/skilload-core/src/adapters/sqlite_library.rs` 的 candidate validation改为 `Result<bool, AppError>`；确定无效/缺失内容仍为 false，held descriptor open/metadata/read、SQLite snapshot、hash、sidecar与final identity operational failure向 `known_validated_backups` 和 corruption diagnostic传播。
 
-Evidence: 新增 `backup_candidate_io_failure_is_propagated`（unreadable manifest返回 typed `XDG_DATA_HOME` error）；remediation commit待创建，core 179 tests与全 workspace fmt/clippy/test/build gates通过。
+Evidence: 新增 `backup_candidate_io_failure_is_propagated`（unreadable manifest返回 typed `XDG_DATA_HOME` error）；remediation commit `3f1e563d74aef7d0a83e1d65a23e8d7dd7a28bf4` 已推送，core 179 tests与全 workspace fmt/clippy/test/build gates通过。
 
-GitHub outcome: open；inline thread尚未回复或 resolve。
+GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/5#discussion_r3835485498；thread resolved: true。
+
+2026-08-22 第十五轮 final reconciliation（documentation commit前）：完整 `list --all` 读取到 17 个 top-level comments、69 个 submitted reviews 与 54 个 review threads。所有 54 个 thread IDs 都有本 Log source，四个本轮 inline thread的 reply URLs与 `isResolved: true` 一致；`PRR_kwDOT7YN2s8AAAABKfvO-g` review body的 reply为 `IC_kwDOT7YN2s8AAAABQJwmqw`，无可 resolve thread。新出现的 empty review containers `PRR_kwDOT7YN2s8AAAABKf3D1w`、`PRR_kwDOT7YN2s8AAAABKf3E8Q`、`PRR_kwDOT7YN2s8AAAABKf3F4Q` 与 `PRR_kwDOT7YN2s8AAAABKf3G5A` 不含问题；新增 top-level comment是前述 review-body reply，不是新的问题。无 pending、blocked、unlogged 或 unanswered non-blocked actual problem。
 
 ## Context and Orientation
 
@@ -1654,3 +1659,5 @@ Backup manifest是private versioned serde record，不进入API-v2或portable ex
 2026-08-22：第十二轮 final-review reconciliation。`099a328323761504db4ad05dc51b4c01f6285e35` 推送后的完整会话读取确认 13 个 top-level comments、55 个 reviews、43 个 threads；所有 live thread 均有 Plan source，全部 resolved，三个新 remediation 的 GitHub reply URL 与本 Log 一致，未发现 unlogged/未答复/blocked actual problem 或 lifecycle drift。Plan 继续保持 `review`，PR 保持 ready。
 
 2026-08-22：第十三轮 final-review remediation 与 reconciliation。`513799b4adc5a57cde34a1d1d977636293c93600` 将 `library_tags` composite-key proof、snapshot-bound backup digest 与 bounded base-row guard纳入 shared SQLite validation；新增三项 deterministic adapter regression，focused 与全 workspace fmt/clippy/test（13+17+170）/all-features locked build通过。PRRT_kwDOT7YN2s6bWRkD、PRRT_kwDOT7YN2s6bWRkG 与 PRRT_kwDOT7YN2s6bWRkJ 的 GitHub replies、commit evidence 和 `thread resolved: true` 已逐项写入 Review Conversation Log；最终会话读取未发现 unlogged、unanswered 或 blocked actual problem，Plan 继续保持 `review`、PR 保持 ready。
+
+2026-08-22：第十五轮 final-review remediation。完整会话读取发现 `PRR_kwDOT7YN2s8AAAABKfvO-g` 的 export cleanup defect与 PRRT_kwDOT7YN2s6bXEBD、PRRT_kwDOT7YN2s6bXEBE、PRRT_kwDOT7YN2s6bXEBF、PRRT_kwDOT7YN2s6bXEBG 四个 inline defects，均在当前 Product Baseline ordinary review remediation边界内。`3f1e563d74aef7d0a83e1d65a23e8d7dd7a28bf4` 已推送实现、regression、design/reference与preliminary log；workspace fmt/clippy/test（13+17+179）/all-features locked build通过。五个 GitHub responses、四个 inline resolution与第十五轮 source-complete reconciliation均已写入 Review Conversation Log；Plan保持 `review`、PR保持 ready，下一步仅推送本 final log documentation commit并重复 mutable gate。
