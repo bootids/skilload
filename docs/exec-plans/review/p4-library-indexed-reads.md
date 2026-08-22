@@ -42,7 +42,7 @@ depends_on: [PLAN-0004]
 * `SKL-OPS-004`、`SKL-CACHE-006` 与 `SKL-CACHE-007` 仍未完成，因为完整 corruption restore、cache/deployment/workspace/manager inspection和所有 future repair 尚不可达。本切片只实现 real current-database doctor：只读 schema/base/FTS diagnosis、v1 migration和 FTS-only rebuild。Base corruption继续返回 `database_corrupt`并指向既有 `database-corruption-v1` operator procedure；不得增加隐藏 reset/restore 命令。
 
 完成时的可观察路径是：在 isolated XDG roots 中导入两个条目；list 按 source 排序并分页；search 通过每个索引字段命中且把 `OR`、`NOT`、`*`、引号和 `name:...` 当普通文本；get 对 canonical source返回 entry、对 missing source返回 `not_found`。默认 doctor在 absent/healthy/v1/FTS-drift/corrupt/WAL-sidecar fixtures 上不改变 filesystem bytes或 timestamps；corrupt与 WAL-sidecar generation返回 typed `database_corrupt` error而不是成功 DoctorData。对 v1 fixture运行 `doctor --fix` 后，可看到一对验证通过的 backup/manifest和 `migrate` action，schema成为 v2、base rows与 `state_revision` 不变、search开始工作；对 FTS-only drift运行 fix只产生 `repair` action且不改 base metadata。
-当前 review remediation 还必须证明：仅 `library_fts` schema SQL malformed 时，base-only list/get/export 保持可读、search/write 以 `library_fts_invalid` 拒绝且 `doctor --fix` 可重建；仅 operational metadata 损坏而 portable entries/tags 完整时，`database_corrupt` details 列出 `library.export`，该 export 成功返回 deterministic document；所有 import/metadata mutation 在 product write 前运行 FTS5 special integrity check；human corruption error 显示 validated backups 与 recovery export。
+当前 review remediation 还必须证明：仅 `library_fts` schema SQL malformed 时，base-only list/get/export 保持可读、search/write 以 `library_fts_invalid` 拒绝且 `doctor --fix` 可重建；仅 operational metadata 损坏而 portable entries/tags 完整时，`database_corrupt` details 列出 `library.export`，该 export 成功返回 deterministic document；所有 import/metadata mutation 在 product write 前运行 FTS5 special integrity check；human corruption error 显示 validated backups 与 recovery export。512 MiB FTS diagnostic snapshot超限是不可离线验证的 `library_fts_diagnostic_snapshot_too_large` finding，`doctor --fix` 必须 unchanged 而不是宣称 repair；migration必须在 staging copy/hash 前拒绝不能成为 validated recovery pair的 oversized source；v1 baseline必须拒绝任何 extra schema object；backup candidate operational I/O必须传播；existing-output export success不得留下 displaced `.skilload-publish-*` hard link。
 `SKL-OPS-004` Revision 1 的本轮澄清：已存在 current database 的 `-journal`、`-wal`、`-shm` sibling 都是 observed generation 的成员；read/default doctor 先在 pre-open gate 盘点，再在 held descriptor 的 SHARED read snapshot 建立后、读任何 Library schema/data 前复核。任一盘点发现 companion 都返回含 recovery details 的 `database_corrupt`；snapshot 后的 writer 不能混入已持有 generation。此处只明确既有 corruption/recovery 边界，不改变 behavior revision。
 
 规划基线已经把 Revision 2 query semantics同步到 `docs/product-specs/README.md`、`docs/product-specs/library.md`，把技术选择同步到 `docs/design-docs/application-and-persistence.md`、`docs/design-docs/cli-json-and-release.md`，并新增 `docs/references/sqlite-fts5-library-search.md`。本轮 final-review 将 `SKL-LIB-009` 从 Revision 4 提升至 Revision 5，且将 SQLite malformed-derived-schema research 同步到 `docs/references/sqlite-backup-and-corruption-recovery.md`；执行状态与实际证据必须持续写回这些文件、`ARCHITECTURE.md`（若边界变化）和本 Plan。
@@ -96,6 +96,7 @@ DELETE-mode `-journal` 同样不能与 descriptor-bound open 分离：SQLite 官
 - [x] (2026-08-22) 第十二轮 final-review 的三个 inline defect 已由 `e496ead4e6021bfa20b11a36809ecf95b707b33c` 修复并推送：existing `data/skilload` 的 absence/sidecar probe 现在使用 held descriptor，portable published-backup protection 使用 root-bound held `backups` descriptor 与 entry identity，corruption backup manifest enumeration 错误不再伪装为空 inventory。三项新 deterministic regression 通过；`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace`（13+17+167）、`cargo build --workspace --locked` 与 `git diff --check` 均通过；preliminary evidence `bcb1294`、final log `099a328323761504db4ad05dc51b4c01f6285e35` 已推送，三个 GitHub replies 已写入且 inline threads 均 resolved。post-push complete reconciliation 确认 13 个 comments、55 个 reviews、43 个 threads，全部 source 已记录或无独立问题，Plan 保持 `review`、PR 保持 ready。
 - [x] (2026-08-22) 第十三轮 final-review 的三个 inline defect 已由 `513799b4adc5a57cde34a1d1d977636293c93600` 修复并推送：`library_tags` schema 现在证明 composite primary key、backup SHA-256 在验证 SHARED snapshot 内计算、超过 10,000 条 base entries 在 materialize 前拒绝。三项新增 SQLite adapter regression 和既有 backup validation regression 通过；`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets --all-features -- -D warnings`、`cargo test --workspace --all-features --locked`（13+17+170）与 `cargo build --workspace --all-features --locked` 已通过。三个 GitHub replies 已写入且 inline threads 均 resolved；最终 Review Conversation Log reconciliation 见本轮条目，Plan 保持 `review`、PR 保持 ready。
 - [x] (2026-08-22) 第十四轮 final-review 的四个 inline defect 已在现有 Product Baseline 内完成：FTS read diagnostic 使用 536,870,912-byte page budget、backup candidate 在 268,435,456 bytes 前拒绝、base schema 拒绝 user trigger、search 在 count/page 前运行 special integrity check。三条 new regression 已 red→green，另有 budget boundary regression；`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets --all-features -- -D warnings`、`cargo test --workspace --all-features --locked`（174 passed）、`cargo build --workspace --all-features --locked` 与 `git diff --check` 已通过。修复与 preliminary log 的 `d9791172fdfcdec82f0adbdb0d96505cffc87e65` 已推送并与 PR head 验证一致；四个 GitHub replies 已写入、对应 inline threads 均 resolved，final reconciliation 已记录在本 Log。
+- [ ] (2026-08-22) 第十五轮 final-review 的 review body 加四个 inline defect已完成 ordinary remediation：existing-output export现在清理仍匹配 captured identity的 displaced link；doctor区分 snapshot-budget resource finding；migration backup在 copy/hash 前及每个 online-backup chunk受 268,435,456-byte ceiling；base proof要求 exact schema inventory；backup candidate operational failure传播。核心 adapter suite 179 tests通过；remaining：全 workspace gates、diff review、commit/push、GitHub replies/closures与最终 reconciliation。
 
 ## Surprises & Discoveries
 
@@ -161,6 +162,11 @@ DELETE-mode `-journal` 同样不能与 descriptor-bound open 分离：SQLite 官
 
 - Observation: FTS content projection 完整时，zeroed `library_fts_data` segment block 仍可使普通 `MATCH` 静默返回 zero；FTS5 special `integrity-check` 才报告 checksum mismatch。无界 doctor copy 与无界 candidate-backup hash 同样可把 hostile SQLite bytes 变成诊断资源耗尽。
   Evidence: `search_rejects_a_zeroed_fts_block_before_returning_an_empty_page` red run 返回 `LibrarySearchPage { total: 0 }`，green run 返回 `library_fts_invalid`；`oversized_backup_database_is_never_advertised` red run 将 268,435,457-byte sparse pair 列入 corruption details，green run拒绝。`fts_diagnostic_snapshot_budget_rejects_oversized_or_overflowing_generations` 覆盖 checked bound。
+
+- Observation: rusqlite 0.40.2 的 `Backup::progress().pagecount` 只在至少一次 `step` 后反映当前 backup snapshot；只做 copy 前 source `PRAGMA` check不能覆盖外部 writer在 snapshot启动后增加 page count的情况。
+  Evidence: `rusqlite-0.40.2/src/backup.rs` 将 progress定义为“last call to `step`”后的状态；adapter以 preflight、每个 512-page `step`后的 checked product与 hash 前 staging metadata三层限制 migration backup。
+- Observation: FTS scratch-copy预算耗尽不证明 derived index不一致；将它与实际 special-check/content failure共用 fixable `library_fts_invalid` 会让 locked writable health check返回 no action，再次诊断后永久重复 unchanged。
+  Evidence: `snapshot_budget_diagnosis_is_nonfixable` 直接证明 new classification的 stable code、error severity与 `fixable_offline: false`；`fts_diagnostic_snapshot_budget_rejects_oversized_or_overflowing_generations` 保留 checked arithmetic boundary。
 
 ## Decision Log
 
@@ -310,12 +316,17 @@ DELETE-mode `-journal` 同样不能与 descriptor-bound open 分离：SQLite 官
   Rationale: schema/base validation只证明 snapshot内的 bytes。将 digest comparison置于 `with_validated_standalone_backup_snapshot` 的 callback 内，把 hash、sidecar census与 validated generation绑定；writer journal会令 pair fail closed。
   Date/Author: 2026-08-22 / Codex
 
-- Decision: 保持 default doctor/search 的 live filesystem-inert read model，同时把 FTS5 scratch backup 限为 `MAX_PORTABLE_LIBRARY_DOCUMENT_BYTES × 8`（536,870,912 bytes），把 untrusted standalone migration backup validation 限为该 portable document 上限的四倍（268,435,456 bytes）；超限 FTS 归为 `library_fts_invalid`，超限 backup 不广告。
-  Rationale: 现有 10,000-entry/67,108,864-byte portable Library预算为由产品约束推出的资源上界；前者保留 base rows与 explicit repair path，后者在 SQLite open或hash前阻断 sparse multi-gigabyte candidate，均不引入第二套持久化或隐藏写入。
+- Decision: 保持 default doctor/search 的 live filesystem-inert read model，并将 FTS scratch backup限制为 `MAX_PORTABLE_LIBRARY_DOCUMENT_BYTES × 8`（536,870,912 bytes）；只有已证明 derived content/special-check不一致的 generation进入 FTS rebuild。超限不是 corruption proof，而是不可 fix 的 `library_fts_diagnostic_snapshot_too_large` doctor error；search继续拒绝未验证 index为 `library_fts_invalid`。
+  Rationale: 10,000-entry/67,108,864-byte portable Library预算是资源上界；无界 scratch copy会耗尽进程内存，而 locked writable special check健康不能使下一次 read-only diagnostic绕过同一预算。显式资源 finding比重复 no-op repair诚实，且不添加隐藏写入。
   Date/Author: 2026-08-22 / Codex
-
-- Decision: current base schema 必须 trigger-free，且每个 schema-v2 search 在任何 MATCH count/page 前运行 bounded FTS5 special check；locked repair health re-diagnosis 直接在 writable connection 执行 special check。
-  Rationale: `schema_info` trigger 会在最后的 version update 后改写已验证 rows；content-row equality也不能证明 inverted index能正确回答 MATCH。shared base validation、shared read diagnostic和 locked writable check分别消除 migration false success、silent search zero与重复内存 snapshot。
+- Decision: migration将要发布的 backup与 recovery candidate共用 268,435,456-byte ceiling：copy 前检查 source logical image，online backup每个 512-page step后检查 progress，staging descriptor在 SHA-256 前再检查。
+  Rationale: 仅限制后来枚举的 candidate会让 migration先无界 copy/hash，再发布本 binary不会广告的 recovery asset。三层检查限制 normal与 snapshot-race路径，不改变 `SKL-OPS-003` 的“先有可验证 backup再写 schema”行为。
+  Date/Author: 2026-08-22 / Codex
+- Decision: current v1/v2 base validation使用 exact non-FTS `sqlite_master` inventory；extra table、index、view或 trigger一律是 base corruption，已知 v2 FTS virtual/shadow names仍保留 malformed-derived repair tolerance。
+  Rationale: restricted table integrity不能证明外来 schema object的 b-tree；先拒绝全部 unowned object使 migration backup与最终 version update只作用于本 binary拥有的 durable model。
+  Date/Author: 2026-08-22 / Codex
+- Decision: backup pair validation以 `Result<bool, AppError>` 区分确定无效内容与 operational validation failure；open/stat/read/SQLite/hash/entry-revalidation error向 recovery diagnostic传播。
+  Rationale: 缺失/symlink/nonregular/格式不兼容/corrupt/sidecar/超限文件可以安全不广告，但把 descriptor exhaustion、I/O或final identity error折叠为 false会给 operator不完整的 recovery inventory。
   Date/Author: 2026-08-22 / Codex
 
 ## Outcomes & Retrospective
@@ -1191,6 +1202,88 @@ GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/5#discussion_
 
 2026-08-22 第十四轮 final reconciliation：`list --all` 读取到 15 个 top-level comments、64 个 submitted reviews 与 50 个 review threads。所有 50 个 live thread ID 均有本 Log source，current `isResolved` 全部为 true；PRRT_kwDOT7YN2s6bW2RD、PRRT_kwDOT7YN2s6bW2RE、PRRT_kwDOT7YN2s6bW2RG 与 PRRT_kwDOT7YN2s6bW2RH 的四个 reply URL 都存在且与各条目一致。新增加的四个 `@bootids` empty review container 不含独立问题，top-level/review body没有未记录的非空 problem source；无 pending、blocked、unlogged 或 unanswered non-blocked actual problem。Plan 保持 `review`，PR 保持 ready/Open。
 
+2026-08-22 第十五轮 final-review 初始分类：`mise exec -- node .agents/skills/address-pr-threads/scripts/pr_threads.cjs list --all` 读取到 16 个 top-level comments、65 个 submitted reviews 与 54 个 review threads。16 个 top-level comments 都是 `@codex` trigger 或“未发现 major issue”通知；此前 50 个 inline source均已在本 Log 记录且仍为 resolved。14 个非空 review body 是自动化 wrapper；`PRR_kwDOT7YN2s8AAAABKfvO-g` 另含一个独立 export defect。以下四个未 resolved inline thread和该 review body是本轮五个实际问题，均在 Product Baseline 的 ordinary final-review remediation 边界内；尚未回复或关闭。
+
+### PRR_kwDOT7YN2s8AAAABKfvO-g - 成功替换 export 后清理旧 output link
+
+Source: PRR_kwDOT7YN2s8AAAABKfvO-g（https://github.com/bootids/skilload/pull/5#pullrequestreview-4999335674）
+
+Problem: 当目标 regular output 已存在时，`RENAME_EXCHANGE` 将旧 output 留在 `publication_name`；当前 success path只清理原 staging name，因而每次成功替换都会遗留 `.skilload-publish-*.tmp` hard link，持续保留旧内容与磁盘分配。
+
+Disposition: fixed
+
+Status: open
+
+Resolution: 已在 `crates/skilload-core/src/adapters/portable_library.rs` 的 existing-output exchange success path于 replacement hook后检查 `OutputPublicationGuard`；仅 captured displaced identity仍在 `publication_name` 时 unlink，foreign replacement仍由既有 `export_preserves_a_replaced_publication_entry_after_exchange` 保留。新增 `export_removes_displaced_output_after_successful_replacement`，断言正常 success不遗留 `.skilload-publish-*`。
+
+Evidence: remediation commit待创建；focused core suite（179 passed）与workspace `cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets --all-features -- -D warnings`、`cargo test --workspace --all-features --locked`（13+17+179）和 `cargo build --workspace --all-features --locked` 已通过。
+
+GitHub outcome: open；review body无 resolvable thread，完成后须以 PR conversation reply URL 记录。
+
+### PRRT_kwDOT7YN2s6bXEBD - FTS snapshot budget 不得假报可修复
+
+Source: PRRT_kwDOT7YN2s6bXEBD / PRRC_kwDOT7YN2s7km4Fh（https://github.com/bootids/skilload/pull/5#discussion_r3835396449）
+
+Problem: schema v2 generation超过 512 MiB default-doctor snapshot budget时，初始诊断返回 fixable `library_fts_invalid`；locked writable special check却发现 index健康并返回 no action，随后重新诊断仍超预算，导致每次 `doctor --fix` unchanged而永久保留“可修复”finding。
+
+Disposition: fixed
+
+Status: open
+
+Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 引入 `DerivedIndexConsistency` 与 `Diagnosis::FtsDiagnosticSnapshotTooLarge`；仅实际 derived mismatch进入 repair，512 MiB snapshot budget exhaustion返回非 fix 的 `library_fts_diagnostic_snapshot_too_large`，`doctor --fix` unchanged，search仍拒绝未验证 index为 `library_fts_invalid`。同步 persistence design。
+
+Evidence: 新增 `snapshot_budget_diagnosis_is_nonfixable`，保留 `fts_diagnostic_snapshot_budget_rejects_oversized_or_overflowing_generations`；remediation commit待创建，core 179 tests与全 workspace fmt/clippy/test/build gates通过。
+
+GitHub outcome: open；inline thread尚未回复或 resolve。
+
+### PRRT_kwDOT7YN2s6bXEBE - migration backup 复制前执行大小上限
+
+Source: PRRT_kwDOT7YN2s6bXEBE / PRRC_kwDOT7YN2s7km4Fi（https://github.com/bootids/skilload/pull/5#discussion_r3835396450）
+
+Problem: migration可能复制并 hash超过 268,435,456-byte validated-backup ceiling的完整 v1 image，随后该刚发布的必需 recovery pair又被 `backup_pair_is_valid` 拒绝，既消耗无界资源也使后续 diagnostics遗漏本次 backup。
+
+Disposition: fixed
+
+Status: open
+
+Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 的 `publish_validated_backup` 与 `copy_bounded_backup` 在 staging前检查 source logical image、每个 512-page `Backup::step` 后检查 progress，并在 SHA-256 前检查 staging descriptor length；超过 268,435,456 bytes返回 `migration_backup_too_large`，不发布 pair或升级 schema。
+
+Evidence: 新增 `migration_backup_budget_matches_validated_backup_ceiling` 覆盖 exact boundary、overflow与负值；remediation commit待创建，core 179 tests与全 workspace fmt/clippy/test/build gates通过。
+
+GitHub outcome: open；inline thread尚未回复或 resolve。
+
+### PRRT_kwDOT7YN2s6bXEBF - migration 前拒绝非 Library schema objects
+
+Source: PRRT_kwDOT7YN2s6bXEBF / PRRC_kwDOT7YN2s7km4Fj（https://github.com/bootids/skilload/pull/5#discussion_r3835396451）
+
+Problem: v1 base validation只检查四个 expected tables、foreign keys与 triggers；额外 table/index的损坏不会被 restricted integrity pass捕获，migration可能备份并升级一个整库 `PRAGMA integrity_check` 已失败的 generation。
+
+Disposition: fixed
+
+Status: open
+
+Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 的 `validate_base_database` 接入 `validate_library_schema_inventory`：fixed base tables、schema v2 owned FTS names与 SQLite internal objects是唯一允许对象；extra table/index/view/trigger在 live baseline与 standalone backup validation中均返回 `database_corrupt`。
+
+Evidence: 新增 `migration_rejects_unexpected_schema_objects_before_backup`，用 `sqliteforeign` table/index证明不会发布 backup或写 version；remediation commit待创建，core 179 tests与全 workspace fmt/clippy/test/build gates通过。
+
+GitHub outcome: open；inline thread尚未回复或 resolve。
+
+### PRRT_kwDOT7YN2s6bXEBG - backup candidate I/O failure 必须传播
+
+Source: PRRT_kwDOT7YN2s6bXEBG / PRRC_kwDOT7YN2s7km4Fl（https://github.com/bootids/skilload/pull/5#discussion_r3835396453）
+
+Problem: manifest candidate被枚举后，`backup_pair_is_valid` 将 no-follow open、metadata、read、SQLite validation、hash与final identity errors全部压成 `false`；corruption diagnostic因此可能成功返回不完整 backup inventory，而不是报告实际环境 I/O failure。
+
+Disposition: fixed
+
+Status: open
+
+Resolution: 已将 `crates/skilload-core/src/adapters/sqlite_library.rs` 的 candidate validation改为 `Result<bool, AppError>`；确定无效/缺失内容仍为 false，held descriptor open/metadata/read、SQLite snapshot、hash、sidecar与final identity operational failure向 `known_validated_backups` 和 corruption diagnostic传播。
+
+Evidence: 新增 `backup_candidate_io_failure_is_propagated`（unreadable manifest返回 typed `XDG_DATA_HOME` error）；remediation commit待创建，core 179 tests与全 workspace fmt/clippy/test/build gates通过。
+
+GitHub outcome: open；inline thread尚未回复或 resolve。
+
 ## Context and Orientation
 
 
@@ -1506,7 +1599,7 @@ SQLite私有helper至少形成一条共享projection路径：base row与sorted t
 
 Backup manifest是private versioned serde record，不进入API-v2或portable export。Digest用`sha2::Sha256`分块读取同一个 no-follow opened backup descriptor；大小、regular-file type和identity也来自该 descriptor，并在 held backup-directory descriptor的相对 directory entry上重验。Manifest枚举、validation与live migration只使用validated directory handles、`openat(..., O_NOFOLLOW)`和single-component relative names，复用现有native identity规则；本交付不执行无法以 inode 绑定的 backup pruning，也不创建general filesystem abstraction。
 
-`known_validated_backups` 是 recovery diagnostic 的保守 inventory，而非 filename scan：每个 pair 的 held manifest 限制为 4 KiB，必须同时符合 current manifest format、source schema 1、target schema 2、complete marker、size/digest 和 directory-entry identity；held backup descriptor 还必须证明 DELETE-journal SQLite header、schema v1 与完整 base rows。任何不兼容或无界 candidate 都不进入 `DatabaseCorrupt.backups`。`doctor --fix` 的 v1 diagnosis 在取得 lock 后若已被另一 contender 完成，则重新报告 healthy `unchanged`；derived repair 也必须先分离 orphaned FTS shadow schema 才可重建。
+`known_validated_backups` 是 recovery diagnostic 的保守 inventory，而非 filename scan：每个 pair 的 held manifest 限制为 4 KiB，必须同时符合 current manifest format、source schema 1、target schema 2、complete marker、size/digest 和 directory-entry identity；held backup descriptor 还必须证明 DELETE-journal SQLite header、schema v1、exact non-FTS object inventory与完整 base rows。确定无效或无界 candidate 不进入 `DatabaseCorrupt.backups`；no-follow open、metadata/read、SQLite snapshot/hash或final entry-revalidation operational failure以 typed `XDG_DATA_HOME` error传播而不是静默省略。`doctor --fix` 的 v1 diagnosis 在取得 lock 后若已被另一 contender 完成，则重新报告 healthy `unchanged`；derived repair 也必须先分离 orphaned FTS shadow schema 才可重建。
 
 ## Plan Revision Note
 

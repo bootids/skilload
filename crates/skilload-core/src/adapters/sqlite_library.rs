@@ -23,7 +23,8 @@ use crate::ports::doctor::DatabaseMaintenance;
 use crate::ports::library::LibraryRepository;
 use rusqlite::{
     Connection, Error as SqlError, ErrorCode, OpenFlags, OptionalExtension, Transaction,
-    backup::Backup, ffi, params,
+    backup::{Backup, StepResult},
+    ffi, params,
 };
 use rustix::fs::{AtFlags, Dir, FileType, Mode, OFlags, fstat, linkat, openat, statat, unlinkat};
 use serde::{Deserialize, Serialize};
@@ -60,6 +61,12 @@ const BACKUP_MANIFEST_FORMAT_VERSION: u64 = 1;
 const MAX_BACKUP_MANIFEST_BYTES: usize = 4 * 1024;
 const MAX_VALIDATED_BACKUP_DATABASE_BYTES: u64 = MAX_PORTABLE_LIBRARY_DOCUMENT_BYTES * 4;
 const MAX_FTS_DIAGNOSTIC_SNAPSHOT_BYTES: u64 = MAX_PORTABLE_LIBRARY_DOCUMENT_BYTES * 8;
+const BASE_SCHEMA_TABLES: [&str; 4] = [
+    "schema_info",
+    "state_revision",
+    "library_entries",
+    "library_tags",
+];
 const BASE_INTEGRITY_TABLES: [&str; 5] = [
     "sqlite_master",
     "schema_info",
@@ -1038,7 +1045,7 @@ impl SqliteLibraryRepository {
         stems.sort();
         let mut validated = Vec::new();
         for stem in stems {
-            if backup_pair_is_valid(&directory, &stem) {
+            if backup_pair_is_valid(&directory, &stem)? {
                 validated.push(NativePath::new(directory.path.join(format!("{stem}.db"))));
             }
         }
@@ -1101,7 +1108,10 @@ impl SqliteLibraryRepository {
                     });
                 }
                 (ReadFilter::FtsMatch(expression), SchemaGeneration::V2) => {
-                    if !self.derived_index_is_consistent(transaction, database)? {
+                    if !matches!(
+                        self.derived_index_consistency(transaction, database)?,
+                        DerivedIndexConsistency::Consistent
+                    ) {
                         return Err(fts_index_invalid());
                     }
                     count_fts_matches(transaction, database, expression)?
@@ -1169,25 +1179,10 @@ impl SqliteLibraryRepository {
                         false,
                     )),
                 ),
-                SchemaGeneration::V2 => {
-                    let derived_consistent =
-                        self.derived_index_is_consistent(transaction, &database)?;
-                    if derived_consistent {
-                        (Diagnosis::Healthy, None)
-                    } else {
-                        (
-                            Diagnosis::FtsInvalid,
-                            Some(DoctorFinding::database(
-                                DoctorSeverity::Warning,
-                                "library_fts_invalid",
-                                "Library full-text index is missing or inconsistent with base rows.",
-                                Some(NativePath::new(database.clone())),
-                                true,
-                                false,
-                            )),
-                        )
-                    }
-                }
+                SchemaGeneration::V2 => diagnosis_for_derived_index(
+                    self.derived_index_consistency(transaction, &database)?,
+                    &database,
+                ),
             };
             Ok(match finding {
                 Some(finding) => (classification, vec![finding]),
@@ -1199,14 +1194,16 @@ impl SqliteLibraryRepository {
     /// Compare derived index content against base rows and, within the
     /// bounded diagnostic budget, run the FTS5 special `integrity-check` on
     /// an in-memory backup so the live filesystem stays untouched.
-    fn derived_index_is_consistent(
+    fn derived_index_consistency(
         &self,
         connection: &Connection,
         database: &Path,
-    ) -> Result<bool, AppError> {
+    ) -> Result<DerivedIndexConsistency, AppError> {
         match validate_derived_database(connection, database) {
             Ok(()) => {}
-            Err(AppError::DatabaseCorrupt { .. }) => return Ok(false),
+            Err(AppError::DatabaseCorrupt { .. }) => {
+                return Ok(DerivedIndexConsistency::Inconsistent);
+            }
             Err(error) => return Err(error),
         }
         let page_count: i64 = connection
@@ -1216,7 +1213,7 @@ impl SqliteLibraryRepository {
             .query_row("PRAGMA page_size", [], |row| row.get(0))
             .map_err(|error| database_error(database, error))?;
         if !fts_diagnostic_snapshot_is_bounded(page_count, page_size) {
-            return Ok(false);
+            return Ok(DerivedIndexConsistency::SnapshotBudgetExceeded);
         }
         let mut copy =
             Connection::open_in_memory().map_err(|error| database_error(database, error))?;
@@ -1233,9 +1230,9 @@ impl SqliteLibraryRepository {
             "INSERT INTO library_fts(library_fts) VALUES('integrity-check')",
             [],
         ) {
-            Ok(_) => Ok(true),
+            Ok(_) => Ok(DerivedIndexConsistency::Consistent),
             Err(error) => match database_error(database, error) {
-                AppError::DatabaseCorrupt { .. } => Ok(false),
+                AppError::DatabaseCorrupt { .. } => Ok(DerivedIndexConsistency::Inconsistent),
                 error => Err(error),
             },
         }
@@ -1523,6 +1520,11 @@ impl SqliteLibraryRepository {
         source_identity: (u64, u64),
         state_revision_baseline: i64,
     ) -> Result<(), AppError> {
+        let page_count = singleton_i64(source, "PRAGMA page_count", database)?;
+        let page_size = singleton_i64(source, "PRAGMA page_size", database)?;
+        if !migration_backup_is_bounded(page_count, page_size) {
+            return Err(migration_backup_too_large());
+        }
         let backups_root = roots.data.effective.join("backups");
         let created_directories = ensure_restrictive_directory(&backups_root, "XDG_DATA_HOME")?;
         let backups_directory = ValidatedDataDirectory::open(&backups_root)?;
@@ -1561,11 +1563,7 @@ impl SqliteLibraryRepository {
             )
             .map_err(|error| database_error(&staging_db_path, error))?;
             configure_connection(&destination, &staging_db_path)?;
-            let backup = Backup::new(source, &mut destination)
-                .map_err(|error| database_error(&staging_db_path, error))?;
-            backup
-                .run_to_completion(512, Duration::ZERO, None)
-                .map_err(|error| database_error(&staging_db_path, error))?;
+            copy_bounded_backup(source, &mut destination, database)?;
         }
         self.hooks.after_backup_copy(&staging_db_path)?;
         staging_db
@@ -1579,6 +1577,9 @@ impl SqliteLibraryRepository {
             .metadata()
             .map_err(|error| database_sync_error(database, "inspect staging backup", error))?
             .len();
+        if database_bytes > MAX_VALIDATED_BACKUP_DATABASE_BYTES {
+            return Err(migration_backup_too_large());
+        }
         let digest = sha256_of_file(staging_db.as_file())
             .map_err(|error| database_sync_error(database, "hash staging backup", error))?;
         self.hooks.after_backup_hash(&staging_db_path)?;
@@ -1603,7 +1604,7 @@ impl SqliteLibraryRepository {
                 .transaction()
                 .map_err(|error| database_error(&staging_db_path, error))?;
             let generation = read_schema_generation(&transaction, &staging_db_path)?;
-            validate_base_database(&transaction, &staging_db_path)?;
+            validate_base_database(&transaction, &staging_db_path, generation)?;
             if generation != SchemaGeneration::V1 {
                 return Err(AppError::invalid_state(
                     "library_database",
@@ -1782,35 +1783,92 @@ fn backup_manifest_stems(directory: &ValidatedDataDirectory) -> Result<Vec<Strin
     Ok(stems)
 }
 
+fn backup_has_database_sidecar(
+    directory: &ValidatedDataDirectory,
+    database_name: &OsStr,
+) -> Result<bool, AppError> {
+    for suffix in DATABASE_SIDECAR_SUFFIXES {
+        let sidecar_name = database_sidecar_name(database_name, suffix);
+        match statat(&directory.handle, &sidecar_name, AtFlags::SYMLINK_NOFOLLOW) {
+            Ok(_) => return Ok(true),
+            Err(error) if error == rustix::io::Errno::NOENT => {}
+            Err(error) => {
+                return Err(environment_io(
+                    "XDG_DATA_HOME",
+                    &directory.path.join(sidecar_name),
+                    "inspect database backup companion",
+                    io::Error::from(error),
+                ));
+            }
+        }
+    }
+    Ok(false)
+}
+
 fn open_regular_file_at(
     directory: &ValidatedDataDirectory,
     name: &std::ffi::OsStr,
-) -> Option<File> {
-    let file = File::from(
-        openat(
-            &directory.handle,
-            name,
-            OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK,
-            Mode::empty(),
-        )
-        .ok()?,
-    );
-    if file.metadata().ok()?.file_type().is_file() {
-        Some(file)
-    } else {
-        None
-    }
+) -> Result<Option<File>, AppError> {
+    let path = directory.path.join(name);
+    let file = match openat(
+        &directory.handle,
+        name,
+        OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK,
+        Mode::empty(),
+    ) {
+        Ok(file) => File::from(file),
+        Err(rustix::io::Errno::NOENT | rustix::io::Errno::LOOP) => {
+            return Ok(None);
+        }
+        Err(error) => {
+            return Err(environment_io(
+                "XDG_DATA_HOME",
+                &path,
+                "open database backup",
+                io::Error::from(error),
+            ));
+        }
+    };
+    let metadata = file.metadata().map_err(|error| {
+        environment_io("XDG_DATA_HOME", &path, "inspect database backup", error)
+    })?;
+    Ok(metadata.file_type().is_file().then_some(file))
 }
 
 fn directory_entry_matches_file(
     directory: &ValidatedDataDirectory,
     name: &std::ffi::OsStr,
     file: &File,
-) -> bool {
-    fstat(file)
-        .ok()
-        .zip(statat(&directory.handle, name, AtFlags::SYMLINK_NOFOLLOW).ok())
-        .is_some_and(|(held, entry)| held.st_dev == entry.st_dev && held.st_ino == entry.st_ino)
+) -> Result<bool, AppError> {
+    let held = fstat(file).map_err(|error| {
+        environment_io(
+            "XDG_DATA_HOME",
+            &directory.path.join(name),
+            "inspect held database backup",
+            io::Error::from(error),
+        )
+    })?;
+    let entry = match statat(&directory.handle, name, AtFlags::SYMLINK_NOFOLLOW) {
+        Ok(entry) => entry,
+        Err(error) if error == rustix::io::Errno::NOENT => return Ok(false),
+        Err(error) => {
+            return Err(environment_io(
+                "XDG_DATA_HOME",
+                &directory.path.join(name),
+                "revalidate database backup entry",
+                io::Error::from(error),
+            ));
+        }
+    };
+    Ok(held.st_dev == entry.st_dev && held.st_ino == entry.st_ino)
+}
+
+fn backup_content_or_error<T>(result: Result<T, AppError>) -> Result<Option<T>, AppError> {
+    match result {
+        Ok(value) => Ok(Some(value)),
+        Err(AppError::DatabaseCorrupt { .. }) => Ok(None),
+        Err(error) => Err(error),
+    }
 }
 
 /// Run an operation only while a held standalone v1 backup remains inside a
@@ -1821,51 +1879,92 @@ fn with_validated_standalone_backup_snapshot<T>(
     database_name: &OsStr,
     database: &mut File,
     path: &Path,
-    operation: impl FnOnce(&mut File) -> Option<T>,
-) -> Option<T> {
+    operation: impl FnOnce(&mut File) -> io::Result<T>,
+) -> Result<Option<T>, AppError> {
     let mut header = [0u8; 100];
-    if database.seek(SeekFrom::Start(0)).is_err()
-        || database.read_exact(&mut header).is_err()
-        || !header.starts_with(SQLITE_HEADER_MAGIC)
-        || header[18] != 1
-        || header[19] != 1
-        || database.seek(SeekFrom::Start(0)).is_err()
-    {
-        return None;
+    database.seek(SeekFrom::Start(0)).map_err(|error| {
+        environment_io("XDG_DATA_HOME", path, "seek database backup header", error)
+    })?;
+    match database.read_exact(&mut header) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => return Ok(None),
+        Err(error) => {
+            return Err(environment_io(
+                "XDG_DATA_HOME",
+                path,
+                "read database backup header",
+                error,
+            ));
+        }
     }
-    let validation = (|| {
+    if !header.starts_with(SQLITE_HEADER_MAGIC) || header[18] != 1 || header[19] != 1 {
+        return Ok(None);
+    }
+    database
+        .seek(SeekFrom::Start(0))
+        .map_err(|error| environment_io("XDG_DATA_HOME", path, "rewind database backup", error))?;
+    let validation: Result<Option<T>, AppError> = (|| {
         let held_path = PathBuf::from(format!("/dev/fd/{}", database.as_raw_fd()));
-        let Ok(mut connection) =
+        let connection = match backup_content_or_error(
             Connection::open_with_flags(&held_path, OpenFlags::SQLITE_OPEN_READ_ONLY)
-        else {
-            return None;
+                .map_err(|error| database_error(path, error)),
+        )? {
+            Some(connection) => connection,
+            None => return Ok(None),
         };
-        if configure_connection(&connection, path).is_err() {
-            return None;
-        }
-        let Ok(transaction) = connection.transaction() else {
-            return None;
+        configure_connection(&connection, path)?;
+        let transaction = match backup_content_or_error(
+            connection
+                .unchecked_transaction()
+                .map_err(|error| database_error(path, error)),
+        )? {
+            Some(transaction) => transaction,
+            None => return Ok(None),
         };
-        if transaction
-            .query_row("PRAGMA schema_version", [], |row| row.get::<_, i64>(0))
-            .is_err()
-            || has_database_sidecar(directory, database_name)
+        if backup_content_or_error(
+            transaction
+                .query_row("PRAGMA schema_version", [], |row| row.get::<_, i64>(0))
+                .map_err(|error| database_error(path, error)),
+        )?
+        .is_none()
+            || backup_has_database_sidecar(directory, database_name)?
             || !matches!(
-                read_schema_generation(&transaction, path),
-                Ok(SchemaGeneration::V1)
+                backup_content_or_error(read_schema_generation(&transaction, path))?,
+                Some(SchemaGeneration::V1)
             )
-            || validate_base_database(&transaction, path).is_err()
-            || has_database_sidecar(directory, database_name)
+            || backup_content_or_error(validate_base_database(
+                &transaction,
+                path,
+                SchemaGeneration::V1,
+            ))?
+            .is_none()
+            || backup_has_database_sidecar(directory, database_name)?
         {
-            return None;
+            return Ok(None);
         }
-        let value = operation(database)?;
-        if has_database_sidecar(directory, database_name) || transaction.commit().is_err() {
-            return None;
+        let value = operation(database).map_err(|error| {
+            environment_io(
+                "XDG_DATA_HOME",
+                path,
+                "read validated database backup",
+                error,
+            )
+        })?;
+        if backup_has_database_sidecar(directory, database_name)?
+            || backup_content_or_error(
+                transaction
+                    .commit()
+                    .map_err(|error| database_error(path, error)),
+            )?
+            .is_none()
+        {
+            return Ok(None);
         }
-        Some(value)
+        Ok(Some(value))
     })();
-    database.seek(SeekFrom::Start(0)).ok()?;
+    database
+        .seek(SeekFrom::Start(0))
+        .map_err(|error| environment_io("XDG_DATA_HOME", path, "rewind database backup", error))?;
     validation
 }
 
@@ -1878,64 +1977,84 @@ fn standalone_backup_is_valid(
     database: &mut File,
     path: &Path,
     expected_sha256: &str,
-) -> bool {
-    with_validated_standalone_backup_snapshot(
+) -> Result<bool, AppError> {
+    Ok(with_validated_standalone_backup_snapshot(
         directory,
         database_name,
         database,
         path,
         |database| {
-            database.seek(SeekFrom::Start(0)).ok()?;
-            let digest = sha256_of_file(database).ok()?;
-            (format!("sha256:{digest}") == expected_sha256).then_some(())
+            database.seek(SeekFrom::Start(0))?;
+            sha256_of_file(database)
         },
-    )
-    .is_some()
+    )?
+    .is_some_and(|digest| format!("sha256:{digest}") == expected_sha256))
 }
 
 /// A backup pair counts as validated only when both files are opened through
 /// the held directory with no-follow descriptors, remain linked under their
 /// advertised names, have no SQLite sidecars, have a compatible manifest,
 /// and contain the verified standalone v1 database it describes.
-fn backup_pair_is_valid(directory: &ValidatedDataDirectory, stem: &str) -> bool {
+fn backup_pair_is_valid(directory: &ValidatedDataDirectory, stem: &str) -> Result<bool, AppError> {
     let database_name = OsString::from(format!("{stem}.db"));
     let manifest_name = OsString::from(format!("{stem}.manifest.json"));
-    if has_database_sidecar(directory, &database_name) {
-        return false;
+    if backup_has_database_sidecar(directory, &database_name)? {
+        return Ok(false);
     }
-    let Some(mut manifest) = open_regular_file_at(directory, &manifest_name) else {
-        return false;
+    let Some(mut manifest) = open_regular_file_at(directory, &manifest_name)? else {
+        return Ok(false);
     };
-    if manifest.metadata().map_or(true, |metadata| {
-        metadata.len() > MAX_BACKUP_MANIFEST_BYTES as u64
-    }) {
-        return false;
+    if manifest
+        .metadata()
+        .map_err(|error| {
+            environment_io(
+                "XDG_DATA_HOME",
+                &directory.path.join(&manifest_name),
+                "inspect database backup manifest",
+                error,
+            )
+        })?
+        .len()
+        > MAX_BACKUP_MANIFEST_BYTES as u64
+    {
+        return Ok(false);
     }
     let mut record_bytes = Vec::with_capacity(MAX_BACKUP_MANIFEST_BYTES + 1);
-    if Read::by_ref(&mut manifest)
+    Read::by_ref(&mut manifest)
         .take((MAX_BACKUP_MANIFEST_BYTES + 1) as u64)
         .read_to_end(&mut record_bytes)
-        .is_err()
-        || record_bytes.len() > MAX_BACKUP_MANIFEST_BYTES
-    {
-        return false;
+        .map_err(|error| {
+            environment_io(
+                "XDG_DATA_HOME",
+                &directory.path.join(&manifest_name),
+                "read database backup manifest",
+                error,
+            )
+        })?;
+    if record_bytes.len() > MAX_BACKUP_MANIFEST_BYTES {
+        return Ok(false);
     }
     let Ok(record) = serde_json::from_slice::<BackupManifestRecord>(&record_bytes) else {
-        return false;
+        return Ok(false);
     };
     if !record.complete
         || record.format_version != BACKUP_MANIFEST_FORMAT_VERSION
         || record.source_schema != 1
         || record.target_schema != SCHEMA_VERSION
     {
-        return false;
+        return Ok(false);
     }
-    let Some(mut database) = open_regular_file_at(directory, &database_name) else {
-        return false;
+    let Some(mut database) = open_regular_file_at(directory, &database_name)? else {
+        return Ok(false);
     };
-    let Ok(metadata) = database.metadata() else {
-        return false;
-    };
+    let metadata = database.metadata().map_err(|error| {
+        environment_io(
+            "XDG_DATA_HOME",
+            &directory.path.join(&database_name),
+            "inspect database backup",
+            error,
+        )
+    })?;
     if metadata.len() > MAX_VALIDATED_BACKUP_DATABASE_BYTES
         || record.database_bytes != metadata.len()
         || !standalone_backup_is_valid(
@@ -1944,13 +2063,17 @@ fn backup_pair_is_valid(directory: &ValidatedDataDirectory, stem: &str) -> bool 
             &mut database,
             &directory.path.join(&database_name),
             &record.sha256,
-        )
+        )?
     {
-        return false;
+        return Ok(false);
     }
-    !has_database_sidecar(directory, &database_name)
-        && directory_entry_matches_file(directory, &manifest_name, &manifest)
-        && directory_entry_matches_file(directory, &database_name, &database)
+    if backup_has_database_sidecar(directory, &database_name)? {
+        return Ok(false);
+    }
+    Ok(
+        directory_entry_matches_file(directory, &manifest_name, &manifest)?
+            && directory_entry_matches_file(directory, &database_name, &database)?,
+    )
 }
 
 impl Default for SqliteLibraryRepository {
@@ -2073,6 +2196,45 @@ enum Diagnosis {
     RequiresMigration,
     SchemaNewer,
     FtsInvalid,
+    FtsDiagnosticSnapshotTooLarge,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DerivedIndexConsistency {
+    Consistent,
+    Inconsistent,
+    SnapshotBudgetExceeded,
+}
+
+fn diagnosis_for_derived_index(
+    consistency: DerivedIndexConsistency,
+    database: &Path,
+) -> (Diagnosis, Option<DoctorFinding>) {
+    match consistency {
+        DerivedIndexConsistency::Consistent => (Diagnosis::Healthy, None),
+        DerivedIndexConsistency::Inconsistent => (
+            Diagnosis::FtsInvalid,
+            Some(DoctorFinding::database(
+                DoctorSeverity::Warning,
+                "library_fts_invalid",
+                "Library full-text index is missing or inconsistent with base rows.",
+                Some(NativePath::new(database.to_path_buf())),
+                true,
+                false,
+            )),
+        ),
+        DerivedIndexConsistency::SnapshotBudgetExceeded => (
+            Diagnosis::FtsDiagnosticSnapshotTooLarge,
+            Some(DoctorFinding::database(
+                DoctorSeverity::Error,
+                "library_fts_diagnostic_snapshot_too_large",
+                "Library database exceeds the bounded full-text diagnostic snapshot budget.",
+                Some(NativePath::new(database.to_path_buf())),
+                false,
+                false,
+            )),
+        ),
+    }
 }
 
 impl DatabaseMaintenance for SqliteLibraryRepository {
@@ -2091,7 +2253,10 @@ impl DatabaseMaintenance for SqliteLibraryRepository {
         let roots = self.resolve_roots()?;
         let (classification, mut findings) = self.diagnosis_classification(&roots)?;
         let action = match classification {
-            Diagnosis::Absent | Diagnosis::Healthy | Diagnosis::SchemaNewer => None,
+            Diagnosis::Absent
+            | Diagnosis::Healthy
+            | Diagnosis::SchemaNewer
+            | Diagnosis::FtsDiagnosticSnapshotTooLarge => None,
             Diagnosis::RequiresMigration => self.migrate_v1(&roots)?,
             Diagnosis::FtsInvalid => self.repair_fts(&roots)?,
         };
@@ -2796,13 +2961,18 @@ fn validate_foreign_keys(connection: &Connection, path: &Path) -> Result<(), App
     Ok(())
 }
 
-fn validate_base_database(connection: &Connection, path: &Path) -> Result<(), AppError> {
+fn validate_base_database(
+    connection: &Connection,
+    path: &Path,
+    generation: SchemaGeneration,
+) -> Result<(), AppError> {
     let state_revision = singleton_i64(connection, "SELECT revision FROM state_revision", path)?;
     if state_revision < 0 {
         return Err(AppError::database_corrupt(NativePath::new(
             path.to_path_buf(),
         )));
     }
+    validate_library_schema_inventory(connection, path, generation)?;
     validate_library_tags_schema(connection, path)?;
     validate_table_integrity(connection, path, &BASE_INTEGRITY_TABLES)?;
     validate_trigger_free_schema(connection, path)?;
@@ -2828,6 +2998,38 @@ fn validate_trigger_free_schema(connection: &Connection, path: &Path) -> Result<
     Ok(())
 }
 
+fn validate_library_schema_inventory(
+    connection: &Connection,
+    path: &Path,
+    generation: SchemaGeneration,
+) -> Result<(), AppError> {
+    let mut statement = connection
+        .prepare(
+            "SELECT type, name
+             FROM sqlite_master
+             WHERE name NOT GLOB 'sqlite_*'
+             ORDER BY type, name",
+        )
+        .map_err(|error| database_error(path, error))?;
+    let objects = statement
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(|error| database_error(path, error))?;
+    for object in objects {
+        let (object_type, name) = object.map_err(|error| database_error(path, error))?;
+        let base_table = BASE_SCHEMA_TABLES.contains(&name.as_str());
+        let derived_table = matches!(generation, SchemaGeneration::V2)
+            && (name == "library_fts" || LIBRARY_FTS_SHADOW_TABLES.contains(&name.as_str()));
+        if object_type != "table" || !(base_table || derived_table) {
+            return Err(AppError::database_corrupt(NativePath::new(
+                path.to_path_buf(),
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// Unknown newer generations must be classified before this binary assumes
 /// any current base-table shape. Supported v1/v2 generations still require
 /// complete base validation before they can be read or written.
@@ -2837,7 +3039,7 @@ fn validate_base_for_generation(
 ) -> Result<SchemaGeneration, AppError> {
     let generation = read_schema_generation(connection, path)?;
     if !matches!(generation, SchemaGeneration::Newer(_)) {
-        validate_base_database(connection, path)?;
+        validate_base_database(connection, path, generation)?;
     }
     Ok(generation)
 }
@@ -2972,14 +3174,59 @@ fn validate_fts_integrity(connection: &Connection, path: &Path) -> Result<(), Ap
         .map_err(|error| map_derived_validation_error(database_error(path, error)))
 }
 
-fn fts_diagnostic_snapshot_is_bounded(page_count: i64, page_size: i64) -> bool {
+fn sqlite_image_is_bounded(page_count: i64, page_size: i64, limit_bytes: u64) -> bool {
     let (Ok(page_count), Ok(page_size)) = (u64::try_from(page_count), u64::try_from(page_size))
     else {
         return false;
     };
     page_count
         .checked_mul(page_size)
-        .is_some_and(|bytes| bytes <= MAX_FTS_DIAGNOSTIC_SNAPSHOT_BYTES)
+        .is_some_and(|bytes| bytes <= limit_bytes)
+}
+
+fn fts_diagnostic_snapshot_is_bounded(page_count: i64, page_size: i64) -> bool {
+    sqlite_image_is_bounded(page_count, page_size, MAX_FTS_DIAGNOSTIC_SNAPSHOT_BYTES)
+}
+
+fn migration_backup_is_bounded(page_count: i64, page_size: i64) -> bool {
+    sqlite_image_is_bounded(page_count, page_size, MAX_VALIDATED_BACKUP_DATABASE_BYTES)
+}
+
+fn migration_backup_too_large() -> AppError {
+    AppError::invalid_state(
+        "library_database",
+        "migration_backup_too_large",
+        [format!(
+            "a standalone migration backup no larger than {MAX_VALIDATED_BACKUP_DATABASE_BYTES} bytes"
+        )],
+    )
+}
+
+fn copy_bounded_backup(
+    source: &Connection,
+    destination: &mut Connection,
+    database: &Path,
+) -> Result<(), AppError> {
+    let page_size = singleton_i64(source, "PRAGMA page_size", database)?;
+    let page_count = singleton_i64(source, "PRAGMA page_count", database)?;
+    if !migration_backup_is_bounded(page_count, page_size) {
+        return Err(migration_backup_too_large());
+    }
+    let backup =
+        Backup::new(source, destination).map_err(|error| database_error(database, error))?;
+    loop {
+        let result = backup
+            .step(512)
+            .map_err(|error| database_error(database, error))?;
+        if !migration_backup_is_bounded(i64::from(backup.progress().pagecount), page_size) {
+            return Err(migration_backup_too_large());
+        }
+        match result {
+            StepResult::Done => return Ok(()),
+            StepResult::More | StepResult::Busy | StepResult::Locked => {}
+            _ => continue,
+        }
+    }
 }
 
 fn derived_index_is_consistent_while_writable(
@@ -5600,7 +5847,7 @@ mod tests {
         writer.execute_batch("BEGIN EXCLUSIVE").unwrap();
 
         let error = repository
-            .derived_index_is_consistent(&reader, &database)
+            .derived_index_consistency(&reader, &database)
             .unwrap_err();
 
         assert!(matches!(
@@ -5623,6 +5870,31 @@ mod tests {
         ));
         assert!(!fts_diagnostic_snapshot_is_bounded(i64::MAX, 65_536));
         assert!(!fts_diagnostic_snapshot_is_bounded(-1, 4_096));
+    }
+
+    #[test]
+    fn snapshot_budget_diagnosis_is_nonfixable() {
+        let (classification, finding) = diagnosis_for_derived_index(
+            DerivedIndexConsistency::SnapshotBudgetExceeded,
+            Path::new("/tmp/skilload.db"),
+        );
+
+        assert!(matches!(
+            classification,
+            Diagnosis::FtsDiagnosticSnapshotTooLarge
+        ));
+        let finding = finding.unwrap();
+        assert_eq!(finding.code, "library_fts_diagnostic_snapshot_too_large");
+        assert!(!finding.fixable_offline);
+    }
+
+    #[test]
+    fn migration_backup_budget_matches_validated_backup_ceiling() {
+        let permitted_pages = (MAX_VALIDATED_BACKUP_DATABASE_BYTES / 4_096) as i64;
+        assert!(migration_backup_is_bounded(permitted_pages, 4_096));
+        assert!(!migration_backup_is_bounded(permitted_pages + 1, 4_096));
+        assert!(!migration_backup_is_bounded(i64::MAX, 65_536));
+        assert!(!migration_backup_is_bounded(-1, 4_096));
     }
 
     #[test]
@@ -6650,6 +6922,29 @@ mod tests {
     }
 
     #[test]
+    fn migration_rejects_unexpected_schema_objects_before_backup() {
+        let temporary = tempdir().unwrap();
+        let database = initialize_v1_database(&temporary);
+        Connection::open(&database)
+            .unwrap()
+            .execute_batch(
+                "CREATE TABLE sqliteforeign (value TEXT NOT NULL);
+                 CREATE INDEX sqliteforeign_value ON sqliteforeign(value);",
+            )
+            .unwrap();
+        let repository = SqliteLibraryRepository::with_environment(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(XdgRootResolver),
+        );
+
+        let error = repository.fix().unwrap_err();
+
+        assert!(matches!(error, AppError::DatabaseCorrupt { .. }));
+        assert_eq!(read_schema_version(&database), 1);
+        assert!(!temporary.path().join("data/skilload/backups").exists());
+    }
+
+    #[test]
     fn fts_drift_is_doctor_fixable_without_touching_base_rows() {
         let temporary = tempdir().unwrap();
         let database = temporary.path().join("data/skilload/skilload.db");
@@ -7466,6 +7761,45 @@ mod tests {
     }
 
     #[test]
+    fn backup_candidate_io_failure_is_propagated() {
+        let temporary = tempdir().unwrap();
+        let database = initialize_v1_database(&temporary);
+        let repository = SqliteLibraryRepository::with_environment(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(XdgRootResolver),
+        );
+        repository.fix().unwrap();
+        let backups_root = temporary.path().join("data/skilload/backups");
+        let manifest = fs::read_dir(&backups_root)
+            .unwrap()
+            .flatten()
+            .find(|entry| {
+                entry
+                    .path()
+                    .extension()
+                    .is_some_and(|extension| extension == "json")
+            })
+            .unwrap()
+            .path();
+        let original_permissions = fs::metadata(&manifest).unwrap().permissions();
+        fs::set_permissions(&manifest, fs::Permissions::from_mode(0o000)).unwrap();
+        let mut bytes = fs::read(&database).unwrap();
+        bytes[100..132].fill(0xa5);
+        fs::write(&database, &bytes).unwrap();
+        let result = repository.inspect();
+        fs::set_permissions(&manifest, original_permissions).unwrap();
+
+        assert!(matches!(
+            result.unwrap_err(),
+            AppError::InvalidEnvironment {
+                variable,
+                reason,
+                ..
+            } if variable == "XDG_DATA_HOME" && reason.contains("open database backup")
+        ));
+    }
+
+    #[test]
     fn standalone_backup_snapshot_rejects_a_writer_before_hash() {
         let temporary = tempdir().unwrap();
         let source = initialize_v1_database(&temporary);
@@ -7475,7 +7809,9 @@ mod tests {
         fs::copy(source, &backup).unwrap();
         let directory = ValidatedDataDirectory::open(&backups_root).unwrap();
         let database_name = OsStr::new("snapshot.db");
-        let mut held_database = open_regular_file_at(&directory, database_name).unwrap();
+        let mut held_database = open_regular_file_at(&directory, database_name)
+            .unwrap()
+            .unwrap();
 
         let (start_writer, wait_for_snapshot) = std::sync::mpsc::channel();
         let (writer_ready, wait_for_writer) = std::sync::mpsc::channel();
@@ -7515,21 +7851,28 @@ mod tests {
             &mut held_database,
             &backup,
             |database| {
-                start_writer.send(()).ok()?;
-                wait_for_writer.recv_timeout(Duration::from_secs(2)).ok()?;
-                database.seek(SeekFrom::Start(0)).ok()?;
-                let digest = sha256_of_file(database).ok()?;
-                allow_commit.send(()).ok()?;
+                start_writer
+                    .send(())
+                    .map_err(|_| io::Error::other("start backup writer"))?;
+                wait_for_writer
+                    .recv_timeout(Duration::from_secs(2))
+                    .map_err(|_| io::Error::other("wait for backup writer"))?;
+                database.seek(SeekFrom::Start(0))?;
+                let digest = sha256_of_file(database)?;
+                allow_commit
+                    .send(())
+                    .map_err(|_| io::Error::other("allow backup writer commit"))?;
                 snapshot_observation
                     .send(
                         wait_for_writer_commit
                             .recv_timeout(Duration::from_millis(100))
                             .is_ok(),
                     )
-                    .ok()?;
-                Some(digest)
+                    .map_err(|_| io::Error::other("record backup snapshot observation"))?;
+                Ok(digest)
             },
-        );
+        )
+        .unwrap();
 
         writer.join().unwrap();
         assert!(

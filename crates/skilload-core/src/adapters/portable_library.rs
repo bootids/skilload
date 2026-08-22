@@ -737,6 +737,9 @@ where
             cleanup_staging_if_owned(staging, parent, &staging_name);
             return Err(error);
         }
+        if output_guard.matches(&publication_name) {
+            let _ = unlinkat(&parent.directory, &publication_name, AtFlags::empty());
+        }
     } else {
         if let Err(error) = after_publication_identity_check_before_exchange() {
             cleanup_staging_if_owned(staging, parent, &publication_name);
@@ -2237,6 +2240,33 @@ mod tests {
             })
             .unwrap();
         assert_eq!(fs::read(publication).unwrap(), b"replacement bytes");
+    }
+
+    #[test]
+    fn export_removes_displaced_output_after_successful_replacement() {
+        let temporary = tempdir().unwrap();
+        let output_parent = temporary.path().join("output");
+        let output = NativePath::new(output_parent.join("library.json"));
+        fs::create_dir(&output_parent).unwrap();
+        fs::write(output.as_path(), b"old output").unwrap();
+        let expected = document().serialize_for_transfer().unwrap();
+        let store = PortableLibraryTransferStore::with_environment(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(XdgRootResolver),
+        );
+
+        store.write_export(&output, &document()).unwrap();
+
+        assert_eq!(fs::read(output.as_path()).unwrap(), expected);
+        assert!(
+            fs::read_dir(&output_parent)
+                .unwrap()
+                .flatten()
+                .all(|entry| !entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".skilload-publish-"))
+        );
     }
 
     #[test]
