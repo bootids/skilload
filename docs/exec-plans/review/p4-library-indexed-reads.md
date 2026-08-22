@@ -99,6 +99,7 @@ DELETE-mode `-journal` 同样不能与 descriptor-bound open 分离：SQLite 官
 - [x] (2026-08-22) 第十五轮 final-review 的 review body 加四个 inline defect已由 `3f1e563d74aef7d0a83e1d65a23e8d7dd7a28bf4` 修复并推送：existing-output export现在清理仍匹配 captured identity的 displaced link；doctor区分 snapshot-budget resource finding；migration backup在 copy/hash 前及每个 online-backup chunk受 268,435,456-byte ceiling；base proof要求 exact schema inventory；backup candidate operational failure传播。全 workspace fmt/clippy/test（13+17+179）/all-features locked build通过；review body已获 reply，四个 inline threads均已回复并 resolved。
 - [x] (2026-08-22) finalized Review Conversation Log documentation commit `063ceb6fc3c484af6527a2e44119e888dd756ea1` 已推送；post-push `list --all` 再次确认 17 个 comments、69 个 reviews、54 个 threads，全部 source已记录、无 unresolved/blocked，PR head与本地同为该 commit，Plan保持 `review`、PR保持 ready/Open。
 - [x] (2026-08-22) 第十六轮 final-review 的五个 inline defect 已由 `eb7bf5dd140a6caf9df8af1d74e18b06193c2f58` 修复并推送：migration backup child与最终 pair绑定 held generation、online backup retry有界、diagnostic backup匹配 source identity、existing-output export cleanup failure可见。五个 focused regression及 `cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets --all-features -- -D warnings`、`cargo test --workspace --all-features --locked`（13+17+184）和 `cargo build --workspace --all-features --locked` 已通过；五个 GitHub replies均已写入、对应 threads均 resolved，final reconciliation 已记录，Plan保持 `review`、PR保持 ready/Open。
+- [ ] (2026-08-22) 第十七轮 final-review 已完成 source-complete 初始分类：三个未解决 inline defect 均在当前 Product Baseline 的 ordinary remediation 边界内；待实现 scoped SQLite internal-table integrity、FTS diagnostic budget 前置与 recoverable export 的完整 transfer-limit proof，随后运行验证、回复并关闭线程、完成最终 reconciliation。
 
 ## Surprises & Discoveries
 
@@ -169,6 +170,9 @@ DELETE-mode `-journal` 同样不能与 descriptor-bound open 分离：SQLite 官
   Evidence: `rusqlite-0.40.2/src/backup.rs` 将 progress定义为“last call to `step`”后的状态；adapter以 preflight、每个 512-page `step`后的 checked product与 hash 前 staging metadata三层限制 migration backup。
 - Observation: FTS scratch-copy预算耗尽不证明 derived index不一致；将它与实际 special-check/content failure共用 fixable `library_fts_invalid` 会让 locked writable health check返回 no action，再次诊断后永久重复 unchanged。
   Evidence: `snapshot_budget_diagnosis_is_nonfixable` 直接证明 new classification的 stable code、error severity与 `fixable_offline: false`；`fts_diagnostic_snapshot_budget_rejects_oversized_or_overflowing_generations` 保留 checked arithmetic boundary。
+
+- Observation: 删除 AUTOINCREMENT table 后 SQLite 仍保留 persistent `sqlite_sequence` b-tree；将全部 `sqlite_*` object跳过会使 scoped base proof漏掉该 page。FTS snapshot page budget若在 derived content compare之后检查，同样会先 materialize hostile FTS strings；recovery diagnostic只证明 entries/tags可 load 也不足以保证 `library.export` 实际可写。
+  Evidence: 2026-08-22 local SQLite probe观察 `CREATE TABLE sqlite_sequence(name,seq)` 留存且 scoped integrity 为 `ok`；新增 `migration_checks_retained_sqlite_sequence_integrity_before_backup`、`fts_diagnostic_budget_precedes_derived_content_validation` 与 `corruption_details_omit_transfer_oversized_library_export` 均在 focused `sqlite_library` suite通过。
 
 ## Decision Log
 
@@ -341,6 +345,14 @@ DELETE-mode `-journal` 同样不能与 descriptor-bound open 分离：SQLite 官
 
 - Decision: existing-output exchange 的 captured displaced link cleanup failure返回 export error。
   Rationale: 成功结果不得隐藏遗留的旧 portable document；已在 cleanup 前确认的 foreign replacement继续保留，只有 `unlinkat` 系统调用错误从成功路径升级为可见失败。
+  Date/Author: 2026-08-22 / Codex
+
+- Decision: exact schema inventory显式承认实际 retained `sqlite_sequence`，并把它加入 scoped integrity；仅允许无 SQL definition、owner 已允许的 SQLite autoindex，不再用整个 `sqlite_*` namespace filter。
+  Rationale: 自动 index是已拥有表的 SQLite layout companion并由该表 scoped check覆盖；而 `sqlite_sequence` 是有自己 b-tree的 persistent table，忽略它可把损坏 generation误当成可 backup/migrate。静态 object/owner proof保留对任何 user table/index/view/trigger的拒绝。
+  Date/Author: 2026-08-22 / Codex
+
+- Decision: 在 `derived_index_consistency` 读取或 materialize FTS rows之前检查 536,870,912-byte snapshot budget；在 corruption diagnostics广告 `library.export` 前以 no-capture deterministic encoder验证完整 portable transfer size。
+  Rationale: 前者把 hostile FTS content从诊断内存路径排除，后者使 `SKL-OPS-004` 所列 recovery identifier与 `SKL-LIB-009` 实际 10,000-entry/67,108,864-byte export契约一致；两者都不改变产品 behavior revision。
   Date/Author: 2026-08-22 / Codex
 
 ## Outcomes & Retrospective
@@ -1387,6 +1399,56 @@ Evidence: 五个 focused regression与 `cargo fmt --all -- --check`、`cargo cli
 GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/5#discussion_r3835664126；thread resolved: true。
 
 2026-08-22 第十六轮 final reconciliation：五个 remediation reply 后的 `list --all` 读取到 18 个 top-level comments、75 个 submitted reviews 与 59 个 review threads。59 个 root thread ID全部有本 Log `Source`，无 unresolved thread；本轮五个 reply URL均与各条目一致并报告 `thread resolved: true`。新增的五个 submitted review records是 inline reply container，不含独立问题；top-level trigger、automated wrapper与 empty review container同样不构成独立问题。无 pending、blocked、unlogged 或 unanswered non-blocked actual problem。
+
+2026-08-22 第十七轮 final-review 初始分类：`mise exec -- node .agents/skills/address-pr-threads/scripts/pr_threads.cjs list --all` 读取到 19 个 top-level comments、76 个 submitted reviews 与 62 个 review threads。此前 59 个 root thread 均已有本 Log heading；`PRRT_kwDOT7YN2s6bA7j-` 的尾部连字符是 Markdown heading 解析边界，不是新的问题。18 个 `@codex` top-level trigger 与一个既有 review-body reply、16 个 automated wrapper、59 个 empty review containers 均无独立问题；唯一非 wrapper review body `PRR_kwDOT7YN2s8AAAABKfvO-g` 已在第十五轮记录。以下三个未 resolved inline thread 是本轮全部实际问题，均在当前 Product Baseline 的 ordinary final-review remediation 边界内，尚未回复或关闭。
+
+### PRRT_kwDOT7YN2s6bX34u - 校验允许的 SQLite internal table
+
+Source: PRRT_kwDOT7YN2s6bX34u / PRRC_kwDOT7YN2s7koEIN（https://github.com/bootids/skilload/pull/5#discussion_r3835707917；`chatgpt-codex-connector`；current `isResolved: false`）
+
+Problem: `validate_library_schema_inventory` 以 `name NOT GLOB 'sqlite_*'` 跳过整个 SQLite-owned namespace。外部 v1 generation 在删除 AUTOINCREMENT table 后保留的 `sqlite_sequence` 因而既未进入 exact inventory，也未运行 table-scoped `integrity_check`；其 b-tree 损坏可让 migration 发布/广告 backup、升级 live schema并报告成功，尽管整库 integrity 失败。
+
+Disposition: fixed
+
+Status: open
+
+Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 以 exact SQLite-owned object recognition替代宽泛 namespace 排除：允许 retained `sqlite_sequence` 并将实际存在的 table加入 scoped integrity；只保留无 SQL definition且 owner 已允许的 SQLite autoindex，其他 object仍返回 `database_corrupt`。新增 `migration_checks_retained_sqlite_sequence_integrity_before_backup`：损坏 retained `sqlite_sequence` 后 `doctor --fix` 在发布 backup/升级前拒绝。
+
+Evidence: 2026-08-22 本地 SQLite probe观察 `CREATE TABLE sqlite_sequence(name,seq)` 留存且 `PRAGMA integrity_check('sqlite_sequence')` 返回 `ok`；focused `sqlite_library` suite 106 passed，新增 regression通过；workspace fmt check、clippy -D warnings、all-features locked test（core 187、CLI 13+17）与 locked build已通过。实现/文档/本 preliminary log 将由待生成 remediation commit 推送。
+
+GitHub outcome: pending；inline thread 维持 open，待推送实现证据后回复并 resolve。
+
+### PRRT_kwDOT7YN2s6bX34w - 在读取 FTS content 前施加 diagnostic budget
+
+Source: PRRT_kwDOT7YN2s6bX34w / PRRC_kwDOT7YN2s7koEIQ（https://github.com/bootids/skilload/pull/5#discussion_r3835707920；`chatgpt-codex-connector`；current `isResolved: false`）
+
+Problem: `derived_index_consistency` 先调用 `validate_derived_database`，后检查 `page_count × page_size` 的 536,870,912-byte FTS snapshot budget。损坏 generation 的 `library_fts_content` 可在 budget verdict 前被 materialize 为 strings，使 default doctor/search 在判断不可安全诊断前执行无界内容分配。
+
+Disposition: fixed
+
+Status: open
+
+Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 的 `derived_index_consistency` 将 `page_count × page_size` preflight移至任何 derived FTS row validation/materialization前；超限直接返回既有 non-fixable `SnapshotBudgetExceeded`，预算内才做 content comparison和 in-memory special integrity check。新增 `fts_diagnostic_budget_precedes_derived_content_validation`，以 sparse oversized image和已删除 FTS content证明顺序。
+
+Evidence: `SKL-OPS-004` Revision 1、Product Baseline 与 `docs/design-docs/application-and-persistence.md` 均固定 536,870,912-byte diagnostic boundary；focused `sqlite_library` suite 106 passed，新增 regression通过；workspace fmt check、clippy -D warnings、all-features locked test（core 187、CLI 13+17）与 locked build已通过。实现/文档/本 preliminary log 将由待生成 remediation commit 推送。
+
+GitHub outcome: pending；inline thread 维持 open，待推送实现证据后回复并 resolve。
+
+### PRRT_kwDOT7YN2s6bX34z - 广告 recoverable export 前验证完整传输文档
+
+Source: PRRT_kwDOT7YN2s6bX34z / PRRC_kwDOT7YN2s7koEIT（https://github.com/bootids/skilload/pull/5#discussion_r3835707923；`chatgpt-codex-connector`；current `isResolved: false`）
+
+Problem: operational metadata 损坏且 entries/tags projection 完整时，`recoverable_library_exports` 只证明 rows 可 load；若确定性 `LibraryExportData` 超过 67,108,864-byte portable-document ceiling，diagnostic 仍广告 `library.export`，实际 export 之后以 `library_portable_document_bytes` 失败，违反 `SKL-OPS-004` 仅列出仍可读 recovery export 的契约。
+
+Disposition: fixed
+
+Status: open
+
+Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 的 recovery probe 将 loaded entries组装为 `PortableLibraryDocument`，并调用不捕获 bytes 的 deterministic `into_transfer_size`；只有 entries/tags proof和完整 transfer document都通过才广告 `library.export`。新增 `corruption_details_omit_transfer_oversized_library_export`，构造 4,097 个有效 entries但超过 67,108,864 bytes，断言实际 transfer encoder失败且 corruption details不列 identifier。
+
+Evidence: `SKL-OPS-004` Revision 1 要求只列出仍可读 export，`SKL-LIB-009` Revision 5 固定同一 portable document的 10,000-entry/67,108,864-byte limits；focused `sqlite_library` suite 106 passed，新增 regression通过；workspace fmt check、clippy -D warnings、all-features locked test（core 187、CLI 13+17）与 locked build已通过。实现/文档/本 preliminary log 将由待生成 remediation commit 推送。
+
+GitHub outcome: pending；inline thread 维持 open，待推送实现证据后回复并 resolve。
 
 ## Context and Orientation
 

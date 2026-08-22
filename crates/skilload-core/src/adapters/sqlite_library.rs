@@ -69,6 +69,7 @@ const BASE_SCHEMA_TABLES: [&str; 4] = [
     "library_entries",
     "library_tags",
 ];
+const SQLITE_INTERNAL_TABLES: [&str; 1] = ["sqlite_sequence"];
 const BASE_INTEGRITY_TABLES: [&str; 5] = [
     "sqlite_master",
     "schema_info",
@@ -999,9 +1000,15 @@ impl SqliteLibraryRepository {
         path: &Path,
         identity: (u64, u64),
     ) -> Result<Vec<String>, AppError> {
-        Self::revalidate_database_generation(directory, path, identity)?;
         let readable = self
             .read_exportable_entries_for_recovery(directory, path)
+            .and_then(|entries| {
+                PortableLibraryDocument {
+                    format_version: LIBRARY_FORMAT_VERSION,
+                    entries,
+                }
+                .into_transfer_size()
+            })
             .is_ok();
         Self::revalidate_database_generation(directory, path, identity)?;
         Ok(readable
@@ -1208,13 +1215,6 @@ impl SqliteLibraryRepository {
         connection: &Connection,
         database: &Path,
     ) -> Result<DerivedIndexConsistency, AppError> {
-        match validate_derived_database(connection, database) {
-            Ok(()) => {}
-            Err(AppError::DatabaseCorrupt { .. }) => {
-                return Ok(DerivedIndexConsistency::Inconsistent);
-            }
-            Err(error) => return Err(error),
-        }
         let page_count: i64 = connection
             .query_row("PRAGMA page_count", [], |row| row.get(0))
             .map_err(|error| database_error(database, error))?;
@@ -1223,6 +1223,13 @@ impl SqliteLibraryRepository {
             .map_err(|error| database_error(database, error))?;
         if !fts_diagnostic_snapshot_is_bounded(page_count, page_size) {
             return Ok(DerivedIndexConsistency::SnapshotBudgetExceeded);
+        }
+        match validate_derived_database(connection, database) {
+            Ok(()) => {}
+            Err(AppError::DatabaseCorrupt { .. }) => {
+                return Ok(DerivedIndexConsistency::Inconsistent);
+            }
+            Err(error) => return Err(error),
         }
         let mut copy =
             Connection::open_in_memory().map_err(|error| database_error(database, error))?;
@@ -2965,9 +2972,10 @@ fn read_schema_generation(
 /// Base validation covers the v1 Library tables, foreign keys, and domain
 /// rows. It applies identically to every generation so v1 databases stay
 /// readable for `library list`, `library get`, and portable export. The
-/// integrity pass checks the schema table and the four base tables
-/// individually: FTS5 shadow-table damage must stay in the derived layer,
-/// where it is a doctor-fixable finding instead of base corruption.
+/// integrity pass checks the schema table, the four base tables, and every
+/// permitted persistent SQLite internal table individually: FTS5 shadow-table
+/// damage must stay in the derived layer, where it is a doctor-fixable finding
+/// instead of base corruption.
 fn enable_writable_schema(connection: &Connection, path: &Path) -> Result<(), AppError> {
     // This is connection-local and permits inspection of intact base tables
     // when only the derived FTS schema text is malformed.
@@ -3027,9 +3035,11 @@ fn validate_base_database(
             path.to_path_buf(),
         )));
     }
-    validate_library_schema_inventory(connection, path, generation)?;
+    let sqlite_internal_tables = validate_library_schema_inventory(connection, path, generation)?;
     validate_library_tags_schema(connection, path)?;
-    validate_table_integrity(connection, path, &BASE_INTEGRITY_TABLES)?;
+    let mut integrity_tables = BASE_INTEGRITY_TABLES.to_vec();
+    integrity_tables.extend(sqlite_internal_tables);
+    validate_table_integrity(connection, path, &integrity_tables)?;
     validate_trigger_free_schema(connection, path)?;
     validate_foreign_keys(connection, path)?;
     load_validated_entries(connection, path)?;
@@ -3057,32 +3067,56 @@ fn validate_library_schema_inventory(
     connection: &Connection,
     path: &Path,
     generation: SchemaGeneration,
-) -> Result<(), AppError> {
+) -> Result<Vec<&'static str>, AppError> {
     let mut statement = connection
         .prepare(
-            "SELECT type, name
+            "SELECT type, name, tbl_name, sql
              FROM sqlite_master
-             WHERE name NOT GLOB 'sqlite_*'
              ORDER BY type, name",
         )
         .map_err(|error| database_error(path, error))?;
     let objects = statement
         .query_map([], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, Option<String>>(3)?,
+            ))
         })
         .map_err(|error| database_error(path, error))?;
+    let mut sqlite_internal_tables = Vec::new();
     for object in objects {
-        let (object_type, name) = object.map_err(|error| database_error(path, error))?;
+        let (object_type, name, table_name, sql) =
+            object.map_err(|error| database_error(path, error))?;
         let base_table = BASE_SCHEMA_TABLES.contains(&name.as_str());
         let derived_table = matches!(generation, SchemaGeneration::V2)
             && (name == "library_fts" || LIBRARY_FTS_SHADOW_TABLES.contains(&name.as_str()));
-        if object_type != "table" || !(base_table || derived_table) {
+        let sqlite_internal_table = SQLITE_INTERNAL_TABLES
+            .iter()
+            .copied()
+            .find(|table| *table == name.as_str());
+        let allowed_table = object_type == "table"
+            && (base_table || derived_table || sqlite_internal_table.is_some());
+        let owner_is_base_table = BASE_SCHEMA_TABLES.contains(&table_name.as_str());
+        let owner_is_derived_table = matches!(generation, SchemaGeneration::V2)
+            && (table_name == "library_fts"
+                || LIBRARY_FTS_SHADOW_TABLES.contains(&table_name.as_str()));
+        let owner_is_sqlite_internal_table = SQLITE_INTERNAL_TABLES.contains(&table_name.as_str());
+        let allowed_autoindex = object_type == "index"
+            && name.starts_with("sqlite_autoindex_")
+            && sql.is_none()
+            && (owner_is_base_table || owner_is_derived_table || owner_is_sqlite_internal_table);
+        if !(allowed_table || allowed_autoindex) {
             return Err(AppError::database_corrupt(NativePath::new(
                 path.to_path_buf(),
             )));
         }
+        if allowed_table && let Some(table) = sqlite_internal_table {
+            sqlite_internal_tables.push(table);
+        }
     }
-    Ok(())
+    Ok(sqlite_internal_tables)
 }
 
 /// Unknown newer generations must be classified before this binary assumes
@@ -5951,6 +5985,48 @@ mod tests {
     }
 
     #[test]
+    fn fts_diagnostic_budget_precedes_derived_content_validation() {
+        let temporary = tempdir().unwrap();
+        let database = temporary.path().join("data/skilload/skilload.db");
+        let repository = imported_repository(&temporary, vec![entry("skills/review", None)]);
+        let page_size: i64 = Connection::open(&database)
+            .unwrap()
+            .query_row("PRAGMA page_size", [], |row| row.get(0))
+            .unwrap();
+        let page_size_bytes = u64::try_from(page_size).unwrap();
+        Connection::open(&database)
+            .unwrap()
+            .execute("DELETE FROM library_fts", [])
+            .unwrap();
+        let oversized_pages = MAX_FTS_DIAGNOSTIC_SNAPSHOT_BYTES / page_size_bytes + 1;
+        let mut database_file = OpenOptions::new().write(true).open(&database).unwrap();
+        database_file
+            .set_len(oversized_pages.checked_mul(page_size_bytes).unwrap())
+            .unwrap();
+        database_file.seek(SeekFrom::Start(28)).unwrap();
+        database_file
+            .write_all(&u32::try_from(oversized_pages).unwrap().to_be_bytes())
+            .unwrap();
+        database_file.sync_all().unwrap();
+        drop(database_file);
+
+        let connection = Connection::open(&database).unwrap();
+        let reported_pages: i64 = connection
+            .query_row("PRAGMA page_count", [], |row| row.get(0))
+            .unwrap();
+        assert!(!fts_diagnostic_snapshot_is_bounded(
+            reported_pages,
+            page_size
+        ));
+        assert_eq!(
+            repository
+                .derived_index_consistency(&connection, &database)
+                .unwrap(),
+            DerivedIndexConsistency::SnapshotBudgetExceeded
+        );
+    }
+
+    #[test]
     fn snapshot_budget_diagnosis_is_nonfixable() {
         let (classification, finding) = diagnosis_for_derived_index(
             DerivedIndexConsistency::SnapshotBudgetExceeded,
@@ -6147,6 +6223,86 @@ mod tests {
                 recoverable_exports,
                 ..
             } if recoverable_exports == ["library.export"]
+        ));
+    }
+
+    #[test]
+    fn corruption_details_omit_transfer_oversized_library_export() {
+        const ENTRY_COUNT: usize = 4_097;
+
+        let temporary = tempdir().unwrap();
+        let data = temporary.path().join("data/skilload");
+        fs::create_dir_all(&data).unwrap();
+        let database = data.join("skilload.db");
+        let mut connection = Connection::open(&database).unwrap();
+        initialize_schema(&connection, &database).unwrap();
+        let note = "\u{10000}".repeat(4_096);
+        assert_eq!(note.len(), 16_384);
+        assert!(ENTRY_COUNT as u64 * note.len() as u64 > MAX_PORTABLE_LIBRARY_DOCUMENT_BYTES);
+        {
+            let transaction = connection.transaction().unwrap();
+            let mut insert = transaction
+                .prepare(
+                    "INSERT INTO library_entries (
+                        canonical_source, owner, repository, repository_display, skill_path, ref_kind,
+                        ref_value, repository_id, commit_sha, integrity, name, description, entry_count,
+                        byte_count, alias, category, note
+                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+                )
+                .unwrap();
+            for index in 0..ENTRY_COUNT {
+                let skill_path = format!("skills/{index}/review");
+                let canonical_source =
+                    format!("github:owner/repository#{skill_path}@refs/heads/main");
+                insert
+                    .execute(params![
+                        canonical_source,
+                        "owner",
+                        "repository",
+                        "Repository",
+                        skill_path,
+                        "branch",
+                        "refs/heads/main",
+                        "42",
+                        "0123456789012345678901234567890123456789",
+                        "sha256:0123456789012345678901234567890123456789012345678901234567890123",
+                        "review",
+                        "Description",
+                        "1",
+                        "10",
+                        Option::<String>::None,
+                        Option::<String>::None,
+                        &note,
+                    ])
+                    .unwrap();
+            }
+            drop(insert);
+            transaction
+                .execute_batch(
+                    "PRAGMA ignore_check_constraints = ON;
+                     UPDATE state_revision SET revision = -1;
+                     PRAGMA ignore_check_constraints = OFF;",
+                )
+                .unwrap();
+            transaction.commit().unwrap();
+        }
+        drop(connection);
+
+        let repository = SqliteLibraryRepository::with_environment(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(XdgRootResolver),
+        );
+        assert!(matches!(
+            repository.export().unwrap().into_transfer_size(),
+            Err(AppError::Validation { constraint, .. })
+                if constraint == "library_portable_document_bytes"
+        ));
+        assert!(matches!(
+            repository.inspect(),
+            Err(AppError::DatabaseCorrupt {
+                recoverable_exports,
+                ..
+            }) if recoverable_exports.is_empty()
         ));
     }
 
@@ -7031,6 +7187,59 @@ mod tests {
         let error = repository.fix().unwrap_err();
 
         assert!(matches!(error, AppError::DatabaseCorrupt { .. }));
+        assert_eq!(read_schema_version(&database), 1);
+        assert!(!temporary.path().join("data/skilload/backups").exists());
+    }
+
+    #[test]
+    fn migration_checks_retained_sqlite_sequence_integrity_before_backup() {
+        let temporary = tempdir().unwrap();
+        let database = initialize_v1_database(&temporary);
+        let connection = Connection::open(&database).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE retired_sequence_owner (
+                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                     value TEXT
+                 );
+                 INSERT INTO retired_sequence_owner (value) VALUES ('retired');
+                 DROP TABLE retired_sequence_owner;",
+            )
+            .unwrap();
+        let page_size: i64 = connection
+            .query_row("PRAGMA page_size", [], |row| row.get(0))
+            .unwrap();
+        let sequence_page: i64 = connection
+            .query_row(
+                "SELECT rootpage FROM sqlite_master WHERE name = 'sqlite_sequence'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        drop(connection);
+        let mut bytes = fs::read(&database).unwrap();
+        let page_start = ((sequence_page - 1) * page_size) as usize;
+        let page_header = if sequence_page == 1 { 100 } else { 0 };
+        bytes[page_start + page_header] ^= 0xff;
+        fs::write(&database, &bytes).unwrap();
+        let sequence_integrity = Connection::open(&database).unwrap().query_row(
+            "PRAGMA integrity_check('sqlite_sequence')",
+            [],
+            |row| row.get::<_, String>(0),
+        );
+        assert!(!matches!(
+            &sequence_integrity,
+            Ok(integrity) if integrity == "ok"
+        ));
+
+        let repository = SqliteLibraryRepository::with_environment(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(XdgRootResolver),
+        );
+        assert!(matches!(
+            repository.fix(),
+            Err(AppError::DatabaseCorrupt { .. })
+        ));
         assert_eq!(read_schema_version(&database), 1);
         assert!(!temporary.path().join("data/skilload/backups").exists());
     }
