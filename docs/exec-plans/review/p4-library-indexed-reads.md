@@ -93,7 +93,7 @@ DELETE-mode `-journal` 同样不能与 descriptor-bound open 分离：SQLite 官
 - [x] (2026-08-21) 第九轮 final-review 的三个 inline 问题已由 `a140aad0f9fa85c0a9cb74f433793e4644bd2ce4` 修复并推送：三个新 regression 已由 red→green 证明，workspace fmt/clippy/test/build 全部通过；三个 GitHub reply 已写入、对应 thread 均 resolved，最终 complete conversation reconciliation 无未记录或 blocked actual problem。
 - [x] (2026-08-21) 第十轮 final-review 的两个 inline defect 已由 `9dc0fd058d54cf67f4d9e3edea5e9d7cdabc34f0` 推送：共享 FTS projection 为 non-NFC free-text 保留 raw 加 NFC alternative，read snapshot 在 callback 返回 error 前重验 generation；两项新增 adapter regression red→green，workspace fmt/clippy/test/locked build 均通过。两个 GitHub reply 已成功写入且 threads 均 resolved；最终 reconciliation 无未记录、未回答或 blocked source，final Review Conversation Log documentation commit 已推送。
 - [x] (2026-08-22) 第十一轮 final-review 的三个 inline defect 已在现有 Product Baseline 内完成 remediation：portable export 对不可完整枚举的 migration backup inventory fail closed、writable SQLite connection 在最终 generation revalidation 后再次执行 `SQLITE_FCNTL_HAS_MOVED`、FTS reference 记录 detach commit → `VACUUM` → fresh rebuild transaction。两项新增 regression、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace`（13+17+164）与 `cargo build --workspace --locked` 已通过；预备 remediation commit `f032f9c1f087fa72b7ca55666e8b5d92e3149f27`、preliminary evidence `b6c0410` 已推送，三个 GitHub reply 已写入且 inline threads 均 resolved，Plan 保持 `review`、PR 保持 ready。
-- [x] (2026-08-22) 第十二轮 final-review 的三个 inline defect 已在本地完成 remediation：existing `data/skilload` 的 absence/sidecar probe 现在使用 held descriptor，portable published-backup protection 使用 root-bound held `backups` descriptor 与 entry identity，corruption backup manifest enumeration 错误不再伪装为空 inventory。三项新 deterministic regression 通过；`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace`（13+17+167）与 `cargo build --workspace --locked` 均通过。剩余：inspect diff、提交并推送 preliminary evidence，随后回复/resolve 三个 thread。
+- [x] (2026-08-22) 第十二轮 final-review 的三个 inline defect 已由 `e496ead4e6021bfa20b11a36809ecf95b707b33c` 修复并推送：existing `data/skilload` 的 absence/sidecar probe 现在使用 held descriptor，portable published-backup protection 使用 root-bound held `backups` descriptor 与 entry identity，corruption backup manifest enumeration 错误不再伪装为空 inventory。三项新 deterministic regression 通过；`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace`（13+17+167）、`cargo build --workspace --locked` 与 `git diff --check` 均通过；GitHub PR head 已验证为同一 SHA。剩余：推送本 preliminary evidence 更新，随后回复/resolve 三个 thread。
 
 ## Surprises & Discoveries
 
@@ -1002,9 +1002,9 @@ Disposition: fixed
 
 Status: open
 
-Resolution: 将 `crates/skilload-core/src/adapters/sqlite_library.rs` 的现有 data-directory held descriptor 扩展到 existing `data/skilload` 的 database-absence 与 orphan-sidecar probe；探测、sidecar census 和结果返回前后均以 descriptor-relative `statat(..., SYMLINK_NOFOLLOW)`、directory identity 与 root binding 复核，避免 pathname ABA 采纳临时空 generation。新增确定性回归覆盖。
+Resolution: `e496ead4e6021bfa20b11a36809ecf95b707b33c` 将 `crates/skilload-core/src/adapters/sqlite_library.rs` 的 existing `data/skilload` database-absence 与 orphan-sidecar probe 绑定到 held descriptor；探测、sidecar census 和结果返回前后均以 descriptor-relative `statat(..., SYMLINK_NOFOLLOW)`、directory identity 与 root binding 复核，避免 pathname ABA 采纳临时空 generation；新增确定性 regression。
 
-Evidence: pre-commit worktree 已通过 `database_existence_probe_uses_the_held_data_directory_after_an_aba_swap`、`backup_manifest_enumeration_failure_is_propagated`、`published_backup_inventory_uses_the_held_directory_after_an_aba_swap`；`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace`（13+17+167）和 `cargo build --workspace --locked` 均通过。待 `git diff --check`、commit/push 后记录 SHA。
+Evidence: 修复 commit `e496ead4e6021bfa20b11a36809ecf95b707b33c` 已推送，PR head 已验证相同；`database_existence_probe_uses_the_held_data_directory_after_an_aba_swap`、`backup_manifest_enumeration_failure_is_propagated`、`published_backup_inventory_uses_the_held_directory_after_an_aba_swap` 及 `cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace`（13+17+167）、`cargo build --workspace --locked`、`git diff --check` 均通过。
 
 GitHub outcome: 未回复；thread resolved: false。
 
@@ -1018,9 +1018,9 @@ Disposition: fixed
 
 Status: open
 
-Resolution: 将 `crates/skilload-core/src/adapters/portable_library.rs` 的 backup inventory 改为在 root-revalidated `data/skilload` 与 `backups` held no-follow directory descriptors 上相对枚举，并在返回前复核两个 directory identity；将 published pair 的 held regular-file identity 保留到 direct-path 与 same-inode alias protection，任何 child/open/enumeration/revalidation drift 都 fail closed。新增临时替换 `backups` 的 deterministic regression。
+Resolution: `e496ead4e6021bfa20b11a36809ecf95b707b33c` 将 `crates/skilload-core/src/adapters/portable_library.rs` 的 backup inventory 改为在 root-revalidated `data/skilload` 与 `backups` held no-follow directory descriptors 上相对枚举，并在返回前复核两个 directory identity；published pair 的 held regular-file identity 保留到 direct-path 与 same-inode alias protection，任何 child/open/enumeration/revalidation drift 都 fail closed；新增临时替换 `backups` 的 deterministic regression。
 
-Evidence: pre-commit worktree 已通过 `published_backup_inventory_uses_the_held_directory_after_an_aba_swap`；`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace`（13+17+167）和 `cargo build --workspace --locked` 均通过。待 `git diff --check`、commit/push 后记录 SHA。
+Evidence: 修复 commit `e496ead4e6021bfa20b11a36809ecf95b707b33c` 已推送，PR head 已验证相同；`published_backup_inventory_uses_the_held_directory_after_an_aba_swap` 及 `cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace`（13+17+167）、`cargo build --workspace --locked`、`git diff --check` 均通过。
 
 GitHub outcome: 未回复；thread resolved: false。
 
@@ -1034,9 +1034,9 @@ Disposition: fixed
 
 Status: open
 
-Resolution: 将 `crates/skilload-core/src/adapters/sqlite_library.rs` 的 held backup-directory manifest enumeration 改为返回并向 `known_validated_backups` 传播具体 environment I/O error；仅 genuinely absent `backups` child 仍表示空 inventory。新增 descriptor/enumeration failure regression。
+Resolution: `e496ead4e6021bfa20b11a36809ecf95b707b33c` 将 `crates/skilload-core/src/adapters/sqlite_library.rs` 的 held backup-directory manifest enumeration 改为向 `known_validated_backups` 传播具体 environment I/O error；仅 genuinely absent `backups` child 仍表示空 inventory；新增 descriptor/enumeration failure regression。
 
-Evidence: pre-commit worktree 已通过 `backup_manifest_enumeration_failure_is_propagated`；`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace`（13+17+167）和 `cargo build --workspace --locked` 均通过。待 `git diff --check`、commit/push 后记录 SHA。
+Evidence: 修复 commit `e496ead4e6021bfa20b11a36809ecf95b707b33c` 已推送，PR head 已验证相同；`backup_manifest_enumeration_failure_is_propagated` 及 `cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace`（13+17+167）、`cargo build --workspace --locked`、`git diff --check` 均通过。
 
 GitHub outcome: 未回复；thread resolved: false。
 
@@ -1402,3 +1402,5 @@ Backup manifest是private versioned serde record，不进入API-v2或portable ex
 2026-08-22：第十一轮 final-review preliminary remediation。完整会话读取确认新 top-level trigger `IC_kwDOT7YN2s8AAAABQDWwtw` 与 automated wrapper `PRR_kwDOT7YN2s8AAAABKbzRzA` 无独立问题；三个 inline defects PRRT_kwDOT7YN2s6bN3dy、PRRT_kwDOT7YN2s6bN3d2、PRRT_kwDOT7YN2s6bN3d7 均在 Product Baseline 内。`f032f9c1f087fa72b7ca55666e8b5d92e3149f27` 已推送 fail-closed backup inventory、writable connection post-revalidation identity check、FTS detach/VACUUM reference 与本初步 Review Conversation Log；focused regressions与 workspace fmt/clippy/test/locked build 全部通过。下一步回复/resolve threads 并写入最终 SHA/URLs。
 
 2026-08-22：第十一轮 final-review reconciliation。`f032f9c1f087fa72b7ca55666e8b5d92e3149f27` 的三项 remediation、`b6c0410` 的 preliminary evidence、三个 GitHub reply URL 和 `thread resolved: true` 已写入 Review Conversation Log。最新完整会话读取确认 12 个 top-level comments、51 个 reviews、40 个 threads；新 trigger/wrapper 与三个 empty reply containers 无独立问题，全部 thread resolved，Plan 继续保持 `review`、PR 保持 ready。
+
+2026-08-22：第十二轮 final-review preliminary remediation。完整会话读取确认 13 个 top-level comments、52 个 reviews 与 43 个 threads；四个新 `@codex` trigger、四个 automated wrapper 与 24 个 empty review container 无独立问题。PRRT_kwDOT7YN2s6bVO6b、PRRT_kwDOT7YN2s6bVO6e、PRRT_kwDOT7YN2s6bVO6g 均在 Product Baseline 内，`e496ead4e6021bfa20b11a36809ecf95b707b33c` 已推送 descriptor-bound absence probe、descriptor-bound backup protection 与 propagated backup enumeration error；focused regressions、workspace fmt/clippy/test/locked build 和 `git diff --check` 已通过，PR head 已验证相同。下一步推送本 evidence 更新、回复并 resolve 三个 inline thread，再完成最终 reconciliation。
