@@ -104,7 +104,7 @@ DELETE-mode `-journal` 同样不能与 descriptor-bound open 分离：SQLite 官
 - [x] (2026-08-22) 第十八轮 final-review remediation 已由 `f7a9b476e151c1d071573a2655d9ccd33efd3b91` 推送、preliminary evidence 已由 `87801e5` 推送：base validation现在验证完整 fixed foreign-key inventory；recovery export probe区分 content failure与 operational error；snapshot-budget doctor finding不再伪报 database 不可写。新增三个 deterministic adapter regression；focused `sqlite_library` 109 tests与 workspace fmt/clippy/test（13+17+190）/locked build均通过。三个 GitHub replies 已写入且 threads均 resolved；完整 reconciliation确认 20 个 comments、83 个 reviews、65 个 actual threads均 source-complete，Plan保持 `review`、PR保持 ready/Open。
 - [x] (2026-08-22) 第十九轮 final-review 的四个 inline defect 已在当前 Product Baseline 内完成并 reconcile：base autoindex inventory改为 exact、migration backup保持 validated SHARED snapshot并在最终 transaction比较完整 entries、online backup的 `More` 立即前进、free-text FTS projection追加 full-folded NFC spelling。新增四项 deterministic adapter regression；focused `sqlite_library` 113 tests、fmt、all-features clippy、workspace locked tests（core 194、CLI 13+17）和 locked build均通过。remediation commit `f84bfdc2b8d88c5511ce71bcb04e8439707d7557` 与 preliminary evidence `9c39e6493ef6a8bb6e6c04ec123696ae22bac34a` 已推送；四个 GitHub replies均成功写入、对应 threads均 resolved，最终 Plan reconciliation documentation commit将发布本记录，Plan保持 `review`、PR保持 ready/Open。
 
-- [ ] (2026-08-23) 第二十轮 final-review 的六个 inline defect已在当前 Product Baseline 内完成 code、规格/设计澄清与验证：staging backup digest/cleanup、header operational I/O、fixed base-schema collation、backup contention deadline与 manifest-candidate ceiling。focused `sqlite_library` 119 tests、workspace fmt、all-features clippy、locked workspace tests（core 200、CLI 13+17）和 locked build均通过；待将 preliminary evidence推送、回复并 resolve 六个 thread，再完成最终 reconciliation。
+- [ ] (2026-08-23) 第二十轮 final-review 的六个 inline defect已在当前 Product Baseline 内完成 code、规格/设计澄清与验证：staging backup digest/cleanup、header operational I/O、fixed base-schema collation、backup contention deadline与 manifest-candidate ceiling。focused `sqlite_library` 119 tests、workspace fmt、all-features clippy、locked workspace tests（core 200、CLI 13+17）和 locked build均通过；preliminary remediation commit `69afa98c1c0c3bd4d15a99c1ca74f9bf48a8dd0f` 已推送且与 PR head一致，待回复并 resolve 六个 thread，再完成最终 reconciliation。
 
 ## Surprises & Discoveries
 
@@ -1643,7 +1643,7 @@ Status: open
 
 Resolution: `crates/skilload-core/src/adapters/sqlite_library.rs` 的 `publish_validated_backup` 现在在 SHA-256 前打开并验证 `validation_snapshot`，将该 SHARED snapshot显式保持到 final DB/manifest pair publication、sync和 revalidation后才 drop；digest与 manifest因而始终描述同一已验证 image。新增 `MigrationBackupDigestSnapshotWriter` 与 `migration_backup_digest_stays_with_the_validated_staging_snapshot`，在 `after_backup_hash` 尝试改写 staging entry并证明 commit被阻塞。
 
-Evidence: focused `sqlite_library` 119 tests通过（含新增 snapshot/digest regression）；`mise exec -- cargo fmt --all -- --check`、`mise exec -- cargo clippy --workspace --all-targets --all-features -- -D warnings`、`mise exec -- cargo test --workspace --all-features --locked`（core 200、CLI 13+17）和 `mise exec -- cargo build --workspace --all-features --locked`均通过。此 preliminary remediation commit待创建并推送。
+Evidence: focused `sqlite_library` 119 tests通过（含新增 snapshot/digest regression）；`mise exec -- cargo fmt --all -- --check`、`mise exec -- cargo clippy --workspace --all-targets --all-features -- -D warnings`、`mise exec -- cargo test --workspace --all-features --locked`（core 200、CLI 13+17）和 `mise exec -- cargo build --workspace --all-features --locked`均通过。preliminary remediation commit `69afa98c1c0c3bd4d15a99c1ca74f9bf48a8dd0f` 已推送。
 
 GitHub outcome: 尚未回复；thread unresolved。
 
@@ -1659,7 +1659,7 @@ Status: open
 
 Resolution: `remove_held_backup_staging_entry` 只对仍匹配 held inode的 staging name执行 descriptor-relative `unlinkat`，并将 inspect/unlink failure映射为 typed `library_database` error；publication后两个 `NamedTempFile` 都禁用 path-based cleanup，因此 foreign replacement不被删除。新增 `before_backup_staging_cleanup` test hook与 `migration_propagates_backup_staging_cleanup_failure`，在 pair发布后去除 directory write permission并断言 migration不成功。
 
-Evidence: focused `sqlite_library` 119 tests通过（含 permission cleanup regression）；workspace fmt、all-features clippy、locked workspace tests（core 200、CLI 13+17）和 locked build均通过。此 preliminary remediation commit待创建并推送。
+Evidence: focused `sqlite_library` 119 tests通过（含 permission cleanup regression）；workspace fmt、all-features clippy、locked workspace tests（core 200、CLI 13+17）和 locked build均通过。preliminary remediation commit `69afa98c1c0c3bd4d15a99c1ca74f9bf48a8dd0f` 已推送。
 
 GitHub outcome: 尚未回复；thread unresolved。
 
@@ -1675,7 +1675,7 @@ Status: open
 
 Resolution: 共享 `sqlite_header_is_valid` 现在把 `UnexpectedEof`/invalid magic/journal bytes返回 content-invalid，而其他 read failure映射为 typed `XDG_DATA_HOME` error；`pre_open_generation_gate` 在传播后者前重验 held generation，standalone backup reader也复用同一分类。新增 `sqlite_header_reader_preserves_operational_errors` 覆盖 injected permission error与 short header。
 
-Evidence: focused `sqlite_library` 119 tests通过（含 header classification regression）；workspace fmt、all-features clippy、locked workspace tests（core 200、CLI 13+17）和 locked build均通过。此 preliminary remediation commit待创建并推送。
+Evidence: focused `sqlite_library` 119 tests通过（含 header classification regression）；workspace fmt、all-features clippy、locked workspace tests（core 200、CLI 13+17）和 locked build均通过。preliminary remediation commit `69afa98c1c0c3bd4d15a99c1ca74f9bf48a8dd0f` 已推送。
 
 GitHub outcome: 尚未回复；thread unresolved。
 
@@ -1691,7 +1691,7 @@ Status: open
 
 Resolution: shared base validation新增 `BASE_TABLE_COLUMNS`/`validate_base_table_definitions` 与 `BASE_AUTOINDEX_COLUMNS`/`validate_base_autoindex_collations`，用 `PRAGMA table_info`和`PRAGMA index_xinfo`证明 exact column shape、primary key sequence、ascending BINARY collations。`COLLATE NOCASE` reconstructed v1现在在任何 metadata write或 backup publication前返回 `database_corrupt`；`docs/product-specs/cache-and-operations.md` 与 `docs/design-docs/application-and-persistence.md` 已同步澄清既有 Revision 1 proof。
 
-Evidence: `migration_rejects_nocase_canonical_source_before_backup_or_write` 通过；focused `sqlite_library` 119 tests、workspace fmt、all-features clippy、locked workspace tests（core 200、CLI 13+17）和 locked build均通过。此 preliminary remediation commit待创建并推送。
+Evidence: `migration_rejects_nocase_canonical_source_before_backup_or_write` 通过；focused `sqlite_library` 119 tests、workspace fmt、all-features clippy、locked workspace tests（core 200、CLI 13+17）和 locked build均通过。preliminary remediation commit `69afa98c1c0c3bd4d15a99c1ca74f9bf48a8dd0f` 已推送。
 
 GitHub outcome: 尚未回复；thread unresolved。
 
@@ -1707,7 +1707,7 @@ Status: open
 
 Resolution: `copy_bounded_backup` 将 `retry_started` 改为 `Option<Instant>`；`More` 清除 deadline，首次及连续 `Busy`/`Locked` 通过 `backup_retry_started_after_step` 建立/保留 deadline。新增 `online_backup_retry_deadline_starts_at_contention_and_resets_after_progress`，直接覆盖 expired prior timer、first contention与进展后的 renewed contention。
 
-Evidence: focused `sqlite_library` 119 tests通过（含 contention regression）；workspace fmt、all-features clippy、locked workspace tests（core 200、CLI 13+17）和 locked build均通过。此 preliminary remediation commit待创建并推送。
+Evidence: focused `sqlite_library` 119 tests通过（含 contention regression）；workspace fmt、all-features clippy、locked workspace tests（core 200、CLI 13+17）和 locked build均通过。preliminary remediation commit `69afa98c1c0c3bd4d15a99c1ca74f9bf48a8dd0f` 已推送。
 
 GitHub outcome: 尚未回复；thread unresolved。
 
@@ -1723,7 +1723,7 @@ Status: open
 
 Resolution: `MAX_BACKUP_MANIFEST_CANDIDATES` 固定为 64；`backup_manifest_stems` 在 clone第 65 个 suffix-matching stem前返回带 held backup-directory path的 `library_database/backup_manifest_candidate_limit_exceeded` typed `invalid_state`，不会截断 inventory。新增 `backup_manifest_candidate_enumeration_is_bounded`；产品规格与持久化设计已记录同一有限 diagnostic boundary。
 
-Evidence: `backup_manifest_candidate_enumeration_is_bounded` 通过；focused `sqlite_library` 119 tests、workspace fmt、all-features clippy、locked workspace tests（core 200、CLI 13+17）和 locked build均通过。此 preliminary remediation commit待创建并推送。
+Evidence: `backup_manifest_candidate_enumeration_is_bounded` 通过；focused `sqlite_library` 119 tests、workspace fmt、all-features clippy、locked workspace tests（core 200、CLI 13+17）和 locked build均通过。preliminary remediation commit `69afa98c1c0c3bd4d15a99c1ca74f9bf48a8dd0f` 已推送。
 
 GitHub outcome: 尚未回复；thread unresolved。
 
