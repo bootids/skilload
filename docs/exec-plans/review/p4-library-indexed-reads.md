@@ -98,7 +98,7 @@ DELETE-mode `-journal` 同样不能与 descriptor-bound open 分离：SQLite 官
 - [x] (2026-08-22) 第十四轮 final-review 的四个 inline defect 已在现有 Product Baseline 内完成：FTS read diagnostic 使用 536,870,912-byte page budget、backup candidate 在 268,435,456 bytes 前拒绝、base schema 拒绝 user trigger、search 在 count/page 前运行 special integrity check。三条 new regression 已 red→green，另有 budget boundary regression；`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets --all-features -- -D warnings`、`cargo test --workspace --all-features --locked`（174 passed）、`cargo build --workspace --all-features --locked` 与 `git diff --check` 已通过。修复与 preliminary log 的 `d9791172fdfcdec82f0adbdb0d96505cffc87e65` 已推送并与 PR head 验证一致；四个 GitHub replies 已写入、对应 inline threads 均 resolved，final reconciliation 已记录在本 Log。
 - [x] (2026-08-22) 第十五轮 final-review 的 review body 加四个 inline defect已由 `3f1e563d74aef7d0a83e1d65a23e8d7dd7a28bf4` 修复并推送：existing-output export现在清理仍匹配 captured identity的 displaced link；doctor区分 snapshot-budget resource finding；migration backup在 copy/hash 前及每个 online-backup chunk受 268,435,456-byte ceiling；base proof要求 exact schema inventory；backup candidate operational failure传播。全 workspace fmt/clippy/test（13+17+179）/all-features locked build通过；review body已获 reply，四个 inline threads均已回复并 resolved。
 - [x] (2026-08-22) finalized Review Conversation Log documentation commit `063ceb6fc3c484af6527a2e44119e888dd756ea1` 已推送；post-push `list --all` 再次确认 17 个 comments、69 个 reviews、54 个 threads，全部 source已记录、无 unresolved/blocked，PR head与本地同为该 commit，Plan保持 `review`、PR保持 ready/Open。
-- [x] (2026-08-22) 第十六轮 final-review 的五个 inline defect 已在当前 Product Baseline 内完成本地 remediation：migration backup child与最终 pair绑定 held generation、online backup retry有界、diagnostic backup匹配 source identity、existing-output export cleanup failure可见。五个 focused regression及 `cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets --all-features -- -D warnings`、`cargo test --workspace --all-features --locked`（13+17+184）和 `cargo build --workspace --all-features --locked` 已通过；preliminary remediation commit、GitHub replies与thread resolution待完成。
+- [x] (2026-08-22) 第十六轮 final-review 的五个 inline defect 已在当前 Product Baseline 内完成本地 remediation：migration backup child与最终 pair绑定 held generation、online backup retry有界、diagnostic backup匹配 source identity、existing-output export cleanup failure可见。五个 focused regression及 `cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets --all-features -- -D warnings`、`cargo test --workspace --all-features --locked`（13+17+184）和 `cargo build --workspace --all-features --locked` 已通过；preliminary remediation commit `eb7bf5dd140a6caf9df8af1d74e18b06193c2f58` 已推送并与 PR head一致，GitHub replies与thread resolution待完成。
 
 ## Surprises & Discoveries
 
@@ -1314,9 +1314,9 @@ Disposition: fixed
 
 Status: open
 
-Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 将 held `data_directory` 传入 backup publication，并通过 `ValidatedDataDirectory::create_restrictive_child` descriptor-relative创建/打开 `backups`；final `linkat` publication仍使用该 child descriptor。新增 `backup_directory_creation_uses_the_held_data_generation`，证明 pathname replacement时 child进入 held generation；本轮 preliminary remediation commit待创建。
+Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 将 held `data_directory` 传入 backup publication，并通过 `ValidatedDataDirectory::create_restrictive_child` descriptor-relative创建/打开 `backups`；final `linkat` publication仍使用该 child descriptor。新增 `backup_directory_creation_uses_the_held_data_generation`，证明 pathname replacement时 child进入 held generation；remediation commit `eb7bf5dd140a6caf9df8af1d74e18b06193c2f58` 已推送。
 
-Evidence: 五个 focused regression与 `cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets --all-features -- -D warnings`、`cargo test --workspace --all-features --locked`（13+17+184）及 `cargo build --workspace --all-features --locked` 均通过；preliminary remediation commit待创建。
+Evidence: 五个 focused regression与 `cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets --all-features -- -D warnings`、`cargo test --workspace --all-features --locked`（13+17+184）及 `cargo build --workspace --all-features --locked` 均通过；PR head已验证为 remediation commit `eb7bf5dd140a6caf9df8af1d74e18b06193c2f58`。
 
 GitHub outcome: 尚未回复；thread resolved: false。
 
@@ -1330,9 +1330,9 @@ Disposition: fixed
 
 Status: open
 
-Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 于 final backup-directory sync和 `after_backup_publish` hook后重验 held directory及 database/manifest pair identity，再允许 migration transaction。新增 `migration_revalidates_the_published_backup_before_schema_write`，替换 published DB后断言 schema保持 v1；本轮 preliminary remediation commit待创建。
+Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 于 final backup-directory sync和 `after_backup_publish` hook后重验 held directory及 database/manifest pair identity，再允许 migration transaction。新增 `migration_revalidates_the_published_backup_before_schema_write`，替换 published DB后断言 schema保持 v1；remediation commit `eb7bf5dd140a6caf9df8af1d74e18b06193c2f58` 已推送。
 
-Evidence: 五个 focused regression与 `cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets --all-features -- -D warnings`、`cargo test --workspace --all-features --locked`（13+17+184）及 `cargo build --workspace --all-features --locked` 均通过；preliminary remediation commit待创建。
+Evidence: 五个 focused regression与 `cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets --all-features -- -D warnings`、`cargo test --workspace --all-features --locked`（13+17+184）及 `cargo build --workspace --all-features --locked` 均通过；PR head已验证为 remediation commit `eb7bf5dd140a6caf9df8af1d74e18b06193c2f58`。
 
 GitHub outcome: 尚未回复；thread resolved: false。
 
@@ -1346,9 +1346,9 @@ Disposition: fixed
 
 Status: open
 
-Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 以 `wait_for_backup_retry` 为每个 `More`/`Busy`/`Locked` step应用 `LOCK_RETRY` 与 `LOCK_WAIT` deadline，超时返回既有 typed database `busy`。新增 `online_backup_retry_window_returns_the_bounded_database_busy_error`；本轮 preliminary remediation commit待创建。
+Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 以 `wait_for_backup_retry` 为每个 `More`/`Busy`/`Locked` step应用 `LOCK_RETRY` 与 `LOCK_WAIT` deadline，超时返回既有 typed database `busy`。新增 `online_backup_retry_window_returns_the_bounded_database_busy_error`；remediation commit `eb7bf5dd140a6caf9df8af1d74e18b06193c2f58` 已推送。
 
-Evidence: 五个 focused regression与 `cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets --all-features -- -D warnings`、`cargo test --workspace --all-features --locked`（13+17+184）及 `cargo build --workspace --all-features --locked` 均通过；preliminary remediation commit待创建。
+Evidence: 五个 focused regression与 `cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets --all-features -- -D warnings`、`cargo test --workspace --all-features --locked`（13+17+184）及 `cargo build --workspace --all-features --locked` 均通过；PR head已验证为 remediation commit `eb7bf5dd140a6caf9df8af1d74e18b06193c2f58`。
 
 GitHub outcome: 尚未回复；thread resolved: false。
 
@@ -1362,9 +1362,9 @@ Disposition: fixed
 
 Status: open
 
-Resolution: 已在 `crates/skilload-core/src/adapters/portable_library.rs` 将 captured displaced entry的 `unlinkat` failure映射为 typed `library_export_io` validation error，同时保持 identity-mismatch的 foreign replacement保护。新增 `export_reports_a_displaced_output_cleanup_failure`，以 parent permission failure断言 command不报告 success；本轮 preliminary remediation commit待创建。
+Resolution: 已在 `crates/skilload-core/src/adapters/portable_library.rs` 将 captured displaced entry的 `unlinkat` failure映射为 typed `library_export_io` validation error，同时保持 identity-mismatch的 foreign replacement保护。新增 `export_reports_a_displaced_output_cleanup_failure`，以 parent permission failure断言 command不报告 success；remediation commit `eb7bf5dd140a6caf9df8af1d74e18b06193c2f58` 已推送。
 
-Evidence: 五个 focused regression与 `cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets --all-features -- -D warnings`、`cargo test --workspace --all-features --locked`（13+17+184）及 `cargo build --workspace --all-features --locked` 均通过；preliminary remediation commit待创建。
+Evidence: 五个 focused regression与 `cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets --all-features -- -D warnings`、`cargo test --workspace --all-features --locked`（13+17+184）及 `cargo build --workspace --all-features --locked` 均通过；PR head已验证为 remediation commit `eb7bf5dd140a6caf9df8af1d74e18b06193c2f58`。
 
 GitHub outcome: 尚未回复；thread resolved: false。
 
@@ -1378,9 +1378,9 @@ Disposition: fixed
 
 Status: open
 
-Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 将 diagnosed identity传给 `known_validated_backups`/`backup_pair_is_valid`，只接受 manifest source device/inode相同的 pair；orphan-sidecar path无 identity时返回 empty inventory。新增 `backup_manifest_must_match_the_diagnosed_database_generation`，篡改 manifest source inode后断言 `database_corrupt` 不广告 backup；本轮 preliminary remediation commit待创建。
+Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 将 diagnosed identity传给 `known_validated_backups`/`backup_pair_is_valid`，只接受 manifest source device/inode相同的 pair；orphan-sidecar path无 identity时返回 empty inventory。新增 `backup_manifest_must_match_the_diagnosed_database_generation`，篡改 manifest source inode后断言 `database_corrupt` 不广告 backup；remediation commit `eb7bf5dd140a6caf9df8af1d74e18b06193c2f58` 已推送。
 
-Evidence: 五个 focused regression与 `cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets --all-features -- -D warnings`、`cargo test --workspace --all-features --locked`（13+17+184）及 `cargo build --workspace --all-features --locked` 均通过；preliminary remediation commit待创建。
+Evidence: 五个 focused regression与 `cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets --all-features -- -D warnings`、`cargo test --workspace --all-features --locked`（13+17+184）及 `cargo build --workspace --all-features --locked` 均通过；PR head已验证为 remediation commit `eb7bf5dd140a6caf9df8af1d74e18b06193c2f58`。
 
 GitHub outcome: 尚未回复；thread resolved: false。
 
