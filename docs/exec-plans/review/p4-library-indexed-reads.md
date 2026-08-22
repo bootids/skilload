@@ -95,7 +95,7 @@ DELETE-mode `-journal` 同样不能与 descriptor-bound open 分离：SQLite 官
 - [x] (2026-08-22) 第十一轮 final-review 的三个 inline defect 已在现有 Product Baseline 内完成 remediation：portable export 对不可完整枚举的 migration backup inventory fail closed、writable SQLite connection 在最终 generation revalidation 后再次执行 `SQLITE_FCNTL_HAS_MOVED`、FTS reference 记录 detach commit → `VACUUM` → fresh rebuild transaction。两项新增 regression、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace`（13+17+164）与 `cargo build --workspace --locked` 已通过；预备 remediation commit `f032f9c1f087fa72b7ca55666e8b5d92e3149f27`、preliminary evidence `b6c0410` 已推送，三个 GitHub reply 已写入且 inline threads 均 resolved，Plan 保持 `review`、PR 保持 ready。
 - [x] (2026-08-22) 第十二轮 final-review 的三个 inline defect 已由 `e496ead4e6021bfa20b11a36809ecf95b707b33c` 修复并推送：existing `data/skilload` 的 absence/sidecar probe 现在使用 held descriptor，portable published-backup protection 使用 root-bound held `backups` descriptor 与 entry identity，corruption backup manifest enumeration 错误不再伪装为空 inventory。三项新 deterministic regression 通过；`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace`（13+17+167）、`cargo build --workspace --locked` 与 `git diff --check` 均通过；preliminary evidence `bcb1294`、final log `099a328323761504db4ad05dc51b4c01f6285e35` 已推送，三个 GitHub replies 已写入且 inline threads 均 resolved。post-push complete reconciliation 确认 13 个 comments、55 个 reviews、43 个 threads，全部 source 已记录或无独立问题，Plan 保持 `review`、PR 保持 ready。
 - [x] (2026-08-22) 第十三轮 final-review 的三个 inline defect 已由 `513799b4adc5a57cde34a1d1d977636293c93600` 修复并推送：`library_tags` schema 现在证明 composite primary key、backup SHA-256 在验证 SHARED snapshot 内计算、超过 10,000 条 base entries 在 materialize 前拒绝。三项新增 SQLite adapter regression 和既有 backup validation regression 通过；`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets --all-features -- -D warnings`、`cargo test --workspace --all-features --locked`（13+17+170）与 `cargo build --workspace --all-features --locked` 已通过。三个 GitHub replies 已写入且 inline threads 均 resolved；最终 Review Conversation Log reconciliation 见本轮条目，Plan 保持 `review`、PR 保持 ready。
-- [x] (2026-08-22) 第十四轮 final-review 的四个 inline defect 已在现有 Product Baseline 内实现：FTS read diagnostic 使用 536,870,912-byte page budget、backup candidate 在 268,435,456 bytes 前拒绝、base schema 拒绝 user trigger、search 在 count/page 前运行 special integrity check。三条 new regression 已 red→green，另有 budget boundary regression；`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets --all-features -- -D warnings`、`cargo test --workspace --all-features --locked`（174 passed）、`cargo build --workspace --all-features --locked` 与 `git diff --check` 已通过。remaining：将修复与 preliminary log 提交推送，再回复/resolve 四个 thread并完成 final reconciliation。
+- [x] (2026-08-22) 第十四轮 final-review 的四个 inline defect 已在现有 Product Baseline 内实现：FTS read diagnostic 使用 536,870,912-byte page budget、backup candidate 在 268,435,456 bytes 前拒绝、base schema 拒绝 user trigger、search 在 count/page 前运行 special integrity check。三条 new regression 已 red→green，另有 budget boundary regression；`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets --all-features -- -D warnings`、`cargo test --workspace --all-features --locked`（174 passed）、`cargo build --workspace --all-features --locked` 与 `git diff --check` 已通过。修复与 preliminary log 的 `d9791172fdfcdec82f0adbdb0d96505cffc87e65` 已推送，PR head 已验证一致；remaining：提交本 SHA evidence 更新，再回复/resolve 四个 thread并完成 final reconciliation。
 
 ## Surprises & Discoveries
 
@@ -1135,9 +1135,9 @@ Disposition: fixed
 
 Status: open
 
-Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 的 `derived_index_is_consistent` 读取 `PRAGMA page_count`/`page_size` 并以 checked 536,870,912-byte budget 拒绝内存 backup；`repair_fts_locked` 的 locked health re-diagnosis 改为直接运行 writable special check，避免再次复制。新增 `fts_diagnostic_snapshot_budget_rejects_oversized_or_overflowing_generations`。计划与本轮 remediation/preliminary-log commit 一起推送。
+Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 的 `derived_index_is_consistent` 读取 `PRAGMA page_count`/`page_size` 并以 checked 536,870,912-byte budget 拒绝内存 backup；`repair_fts_locked` 的 locked health re-diagnosis 改为直接运行 writable special check，避免再次复制。新增 `fts_diagnostic_snapshot_budget_rejects_oversized_or_overflowing_generations`。修复 commit `d9791172fdfcdec82f0adbdb0d96505cffc87e65` 已推送。
 
-Evidence: 该 boundary regression 通过；四条 focused regression 已通过，`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets --all-features -- -D warnings`、`cargo test --workspace --all-features --locked`（174 passed）、`cargo build --workspace --all-features --locked` 与 `git diff --check` 均通过。commit SHA 待创建。
+Evidence: 该 boundary regression 通过；四条 focused regression 已通过，`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets --all-features -- -D warnings`、`cargo test --workspace --all-features --locked`（174 passed）、`cargo build --workspace --all-features --locked` 与 `git diff --check` 均通过；PR head 已验证为 `d9791172fdfcdec82f0adbdb0d96505cffc87e65`。
 
 GitHub outcome: 尚未回复；thread resolved: false。
 
@@ -1151,9 +1151,9 @@ Disposition: fixed
 
 Status: open
 
-Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 的 `backup_pair_is_valid` 于 descriptor metadata 后、record size comparison 与 `standalone_backup_is_valid` 前拒绝大于 268,435,456 bytes 的 pair；SQLite open、snapshot validation 与 SHA-256 不会开始。新增 `oversized_backup_database_is_never_advertised`，以 digest/size 一致的 268,435,457-byte sparse pair 证明它不进入 details。计划与本轮 remediation/preliminary-log commit 一起推送。
+Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 的 `backup_pair_is_valid` 于 descriptor metadata 后、record size comparison 与 `standalone_backup_is_valid` 前拒绝大于 268,435,456 bytes 的 pair；SQLite open、snapshot validation 与 SHA-256 不会开始。新增 `oversized_backup_database_is_never_advertised`，以 digest/size 一致的 268,435,457-byte sparse pair 证明它不进入 details。修复 commit `d9791172fdfcdec82f0adbdb0d96505cffc87e65` 已推送。
 
-Evidence: 该 regression red run 曾让 candidate 出现在 `database_corrupt` details，green run通过；四条 focused regression 与完整 fmt/clippy/test/build/diff checks 均通过。commit SHA 待创建。
+Evidence: 该 regression red run 曾让 candidate 出现在 `database_corrupt` details，green run通过；四条 focused regression 与完整 fmt/clippy/test/build/diff checks 均通过；PR head 已验证为 `d9791172fdfcdec82f0adbdb0d96505cffc87e65`。
 
 GitHub outcome: 尚未回复；thread resolved: false。
 
@@ -1167,9 +1167,9 @@ Disposition: fixed
 
 Status: open
 
-Resolution: 已将 `validate_trigger_free_schema` 接到 `validate_base_database`；所有 current v1/v2 base proof（migration 首次 baseline、backup verification与最终 migration transaction）在 version update 前拒绝任何 user trigger。新增 `migration_rejects_schema_info_update_trigger_before_backup`，断言恶意 `AFTER UPDATE` trigger 下 schema 仍为 v1、entry 保留且没有 backup publication。计划与本轮 remediation/preliminary-log commit 一起推送。
+Resolution: 已将 `validate_trigger_free_schema` 接到 `validate_base_database`；所有 current v1/v2 base proof（migration 首次 baseline、backup verification与最终 migration transaction）在 version update 前拒绝任何 user trigger。新增 `migration_rejects_schema_info_update_trigger_before_backup`，断言恶意 `AFTER UPDATE` trigger 下 schema 仍为 v1、entry 保留且没有 backup publication。修复 commit `d9791172fdfcdec82f0adbdb0d96505cffc87e65` 已推送。
 
-Evidence: 该 regression red run 曾得到 `DoctorOperation::Changed`，green run返回 `database_corrupt`；四条 focused regression 与完整 fmt/clippy/test/build/diff checks 均通过。commit SHA 待创建。
+Evidence: 该 regression red run 曾得到 `DoctorOperation::Changed`，green run返回 `database_corrupt`；四条 focused regression 与完整 fmt/clippy/test/build/diff checks 均通过；PR head 已验证为 `d9791172fdfcdec82f0adbdb0d96505cffc87e65`。
 
 GitHub outcome: 尚未回复；thread resolved: false。
 
@@ -1183,9 +1183,9 @@ Disposition: fixed
 
 Status: open
 
-Resolution: 已在 `read_page` 的 v2 FTS branch 于 count/page 前调用 bounded `derived_index_is_consistent`；任何 content-valid 但 special-check-failed index 映射为既有 `library_fts_invalid`。新增 `search_rejects_a_zeroed_fts_block_before_returning_an_empty_page`，在 bundled FTS5 的 id 10 segment block置零后先证明 raw MATCH 为 zero，再断言 repository search拒绝。计划与本轮 remediation/preliminary-log commit 一起推送。
+Resolution: 已在 `read_page` 的 v2 FTS branch 于 count/page 前调用 bounded `derived_index_is_consistent`；任何 content-valid 但 special-check-failed index 映射为既有 `library_fts_invalid`。新增 `search_rejects_a_zeroed_fts_block_before_returning_an_empty_page`，在 bundled FTS5 的 id 10 segment block置零后先证明 raw MATCH 为 zero，再断言 repository search拒绝。修复 commit `d9791172fdfcdec82f0adbdb0d96505cffc87e65` 已推送。
 
-Evidence: 该 regression red run 曾返回 successful empty `LibrarySearchPage`，green run返回 typed invalid state；四条 focused regression 与完整 fmt/clippy/test/build/diff checks 均通过。commit SHA 待创建。
+Evidence: 该 regression red run 曾返回 successful empty `LibrarySearchPage`，green run返回 typed invalid state；四条 focused regression 与完整 fmt/clippy/test/build/diff checks 均通过；PR head 已验证为 `d9791172fdfcdec82f0adbdb0d96505cffc87e65`。
 
 GitHub outcome: 尚未回复；thread resolved: false。
 
