@@ -94,6 +94,7 @@ DELETE-mode `-journal` 同样不能与 descriptor-bound open 分离：SQLite 官
 - [x] (2026-08-21) 第十轮 final-review 的两个 inline defect 已由 `9dc0fd058d54cf67f4d9e3edea5e9d7cdabc34f0` 推送：共享 FTS projection 为 non-NFC free-text 保留 raw 加 NFC alternative，read snapshot 在 callback 返回 error 前重验 generation；两项新增 adapter regression red→green，workspace fmt/clippy/test/locked build 均通过。两个 GitHub reply 已成功写入且 threads 均 resolved；最终 reconciliation 无未记录、未回答或 blocked source，final Review Conversation Log documentation commit 已推送。
 - [x] (2026-08-22) 第十一轮 final-review 的三个 inline defect 已在现有 Product Baseline 内完成 remediation：portable export 对不可完整枚举的 migration backup inventory fail closed、writable SQLite connection 在最终 generation revalidation 后再次执行 `SQLITE_FCNTL_HAS_MOVED`、FTS reference 记录 detach commit → `VACUUM` → fresh rebuild transaction。两项新增 regression、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace`（13+17+164）与 `cargo build --workspace --locked` 已通过；预备 remediation commit `f032f9c1f087fa72b7ca55666e8b5d92e3149f27`、preliminary evidence `b6c0410` 已推送，三个 GitHub reply 已写入且 inline threads 均 resolved，Plan 保持 `review`、PR 保持 ready。
 - [x] (2026-08-22) 第十二轮 final-review 的三个 inline defect 已由 `e496ead4e6021bfa20b11a36809ecf95b707b33c` 修复并推送：existing `data/skilload` 的 absence/sidecar probe 现在使用 held descriptor，portable published-backup protection 使用 root-bound held `backups` descriptor 与 entry identity，corruption backup manifest enumeration 错误不再伪装为空 inventory。三项新 deterministic regression 通过；`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace`（13+17+167）、`cargo build --workspace --locked` 与 `git diff --check` 均通过；preliminary evidence `bcb1294`、final log `099a328323761504db4ad05dc51b4c01f6285e35` 已推送，三个 GitHub replies 已写入且 inline threads 均 resolved。post-push complete reconciliation 确认 13 个 comments、55 个 reviews、43 个 threads，全部 source 已记录或无独立问题，Plan 保持 `review`、PR 保持 ready。
+- [x] (2026-08-22) 第十三轮 final-review 的三个 inline defect 已在现有 Product Baseline 内完成 remediation：`library_tags` schema 现在证明 composite primary key、backup SHA-256 在验证 SHARED snapshot 内计算、超过 10,000 条 base entries 在 materialize 前拒绝。三项新增 SQLite adapter regression 和既有 backup validation regression 通过；`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets --all-features -- -D warnings`、`cargo test --workspace --all-features --locked`（13+17+170）与 `cargo build --workspace --all-features --locked` 已通过。预备 Review Conversation Log 保持 open，下一步提交、推送、回复并 resolve 三个 thread。
 
 ## Surprises & Discoveries
 
@@ -150,6 +151,12 @@ DELETE-mode `-journal` 同样不能与 descriptor-bound open 分离：SQLite 官
 
 - Observation: 缺失的 `data/backups` 目录代表尚未发布 recovery asset，可以视为空集合；已存在目录的打开或任一 iterator entry 失败则不能安全声称完整保护集合。另一个 writable SQLite pathname ABA gap 出现在首次 `SQLITE_FCNTL_HAS_MOVED` 与最终 held-root/main-entry revalidation 之间，必须在后者完成后再次验证 connection handle。
   Evidence: `output_rejects_an_unreadable_migration_backup_inventory_before_staging` 以不可读 backup directory 返回 `validation_failed`、保留 recovery file 且不创建 staging；`writable_open_rejects_an_aba_generation_restored_after_initial_handle_check` 在 replacement 被首次 handle check 后替换回原路径时返回 `database_identity_drift`，原路径与 displaced replacement inode 不同。
+
+- Observation: `library_tags` 的 foreign key 与可查询列不能证明 composite primary key；而在读取前仅靠 domain document validation会让损坏 schema的重复物理 tag row到达 joined reader。超过 portable 10,000-entry ceiling 的 table也必须在 row materialization与 per-entry tag query之前拒绝。
+  Evidence: `tags_schema_without_composite_primary_key_is_database_corrupt` 对缺失 key 的两个相同 rows覆盖 list/search/get/export/doctor/fix；`oversized_library_entries_are_rejected_before_materialization` 用 10,001 个 base rows直接断言 `validate_library_entry_count` 与所有读取/doctor path 返回 `database_corrupt`。
+
+- Observation: SQLite writer可在 reader SHARED snapshot 存续时取得 RESERVED lock并写入 rollback journal，但不能提交；若 SHA-256 在 snapshot release 后执行，manifest 可以认证未通过该 snapshot 的新 bytes。
+  Evidence: `standalone_backup_snapshot_rejects_a_writer_before_hash` 在 hash callback 内允许 writer 尝试 commit，断言 commit 仍被 SHARED snapshot 阻塞且 journal 使 pair validation拒绝。
 
 ## Decision Log
 
@@ -291,6 +298,14 @@ DELETE-mode `-journal` 同样不能与 descriptor-bound open 分离：SQLite 官
   Rationale: PRRT_kwDOT7YN2s6bVO6b 证明 root revalidation不能单独检测在 pathname probe 内完成的 empty-directory ABA；PRRT_kwDOT7YN2s6bVO6e 证明 pathname `read_dir` 会让 export 在已持有 output-parent descriptor时漏掉 published recovery pair；PRRT_kwDOT7YN2s6bVO6g 证明 held descriptor 的 enumeration error同样不能伪装 absence。descriptor-relative census + returned identity + fail-closed errors同时保持 `SKL-OPS-004` recovery evidence与 `SKL-LIB-009` Revision 5 recovery asset protection。
   Date/Author: 2026-08-22 / Codex
 
+- Decision: `library_tags` 的 `(canonical_source, comparison_key)` composite primary key 与 portable 10,000-entry ceiling均属于 base database proof。读取/doctor必须以 `PRAGMA table_info` 检查前者，并以最多探测第 10,001 行的 SQL guard 在后者 materialize 前拒绝。
+  Rationale: foreign key 和 domain coercion无法证明 physical tag row唯一性；后置 document ceiling会放大外部 oversized database为无界 memory/N+1 work。两个检查都位于现有 shared base validation，不新增路径或产品语义。
+  Date/Author: 2026-08-22 / Codex
+
+- Decision: recovery backup 的 SHA-256 必须在同一 descriptor-bound SQLite SHARED snapshot 内计算，并在 hash 后再次检查 companions后才提交。
+  Rationale: schema/base validation只证明 snapshot内的 bytes。将 digest comparison置于 `with_validated_standalone_backup_snapshot` 的 callback 内，把 hash、sidecar census与 validated generation绑定；writer journal会令 pair fail closed。
+  Date/Author: 2026-08-22 / Codex
+
 ## Outcomes & Retrospective
 
 
@@ -315,6 +330,8 @@ DELETE-mode `-journal` 同样不能与 descriptor-bound open 分离：SQLite 官
 
 
 2026-08-22 第十一轮 final-review remediation 已完成：`f032f9c1f087fa72b7ca55666e8b5d92e3149f27` 将 export recovery inventory 改为 fail closed、在 writable connection 最终 generation revalidation 后重新验证 SQLite handle，并将 physical FTS detach 的 commit → `VACUUM` → rebuild sequence 写回 reusable reference；`b6c0410` 已记录 preliminary evidence。两项新增 focused regressions及 workspace fmt/clippy/test（13+17+164）/locked build 全部通过。三个 GitHub reply URL 与 resolved state 已逐项记录；最终完整会话读取为 12 个 top-level comments、51 个 reviews 与 40 个 threads，全部 threads resolved、无 pending、blocked 或未记录 actual problem。Plan 保持 `review`、PR 保持 ready。
+
+2026-08-22 第十三轮 final-review remediation 已完成验证，待提交并推送：`validate_library_tags_schema` 新增 composite-key proof，`with_validated_standalone_backup_snapshot` 使 backup digest保持在已验证 SHARED snapshot 内，`validate_library_entry_count` 在 load 前最多检查第 10,001 个 row。新增 tests 覆盖 duplicated tags、snapshot-held writer 与 oversized base rows；focused tests及全 workspace fmt/clippy/test（13+17+170）/all-features locked build均通过。三个 thread 尚未回复或关闭，Plan 保持 `review`、PR 保持 ready。
 
 ## Review Conversation Log
 
@@ -1041,6 +1058,56 @@ Evidence: 修复 commit `e496ead4e6021bfa20b11a36809ecf95b707b33c` 已推送，P
 GitHub outcome: 已回复 https://github.com/bootids/skilload/pull/5#discussion_r3834781007；thread resolved: true。
 
 2026-08-22 第十二轮 final reconciliation：`099a328323761504db4ad05dc51b4c01f6285e35` 推送后重新运行完整 `list --all`，观察到 13 个 top-level comments、55 个 submitted reviews、43 个 review threads。全部 43 个 live thread ID 都在本 Log，`isResolved: true`；PRRT_kwDOT7YN2s6bVO6b、PRRT_kwDOT7YN2s6bVO6e、PRRT_kwDOT7YN2s6bVO6g 的三个 reply URL 均存在并与本 Log 相同。无 unlogged thread、无 unanswered non-blocked actual problem、无新的 substantive top-level/review source；新增 review container 均未提出独立问题。PR 继续为 ready/Open，head `099a328323761504db4ad05dc51b4c01f6285e35` 与本地及 remote branch 一致。
+
+2026-08-22 第十三轮 final-review 初始分类：完整 `list --all` 读取到 14 个 top-level comments、56 个 submitted reviews 与 46 个 review threads。此前 43 个 thread 均已在本 Log 记录且仍为 resolved；新 top-level `IC_kwDOT7YN2s8AAAABQIs1tQ` 仅为 `@codex` trigger，review body `PRR_kwDOT7YN2s8AAAABKfXRFw` 仅为自动化 wrapper，均无独立问题。以下三个未 resolved inline thread 是本轮全部实际问题，均在 Product Baseline 的 ordinary final-review remediation 边界内；尚未回复或关闭。
+
+### PRRT_kwDOT7YN2s6bWRkD - library_tags 必须证明 composite primary key
+
+Source: PRRT_kwDOT7YN2s6bWRkD / PRRC_kwDOT7YN2s7klrhL（https://github.com/bootids/skilload/pull/5#discussion_r3835082827）
+
+Problem: `validate_library_tags_schema` 只证明 `library_tags` 的列与 foreign key，未证明 `(canonical_source, comparison_key)` composite primary key。外部构造或损坏后若该约束缺失，相同 tag rows 会通过当前 base validation，并被 list/search/get 的 joined reader重复返回，而不是 `database_corrupt`。
+
+Disposition: fixed
+
+Status: open
+
+Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 的 `validate_library_tags_schema` 通过 `PRAGMA table_info(library_tags)` 验证 `(canonical_source, comparison_key)` 的顺序与完整性；同一 shared validator使 list/search/get/export/doctor/fix 在 joined reader 前拒绝错误 schema。新增 `tags_schema_without_composite_primary_key_is_database_corrupt`，构造缺失 key 的两条相同 tag rows并断言所有相关路径返回 `database_corrupt`。预定 remediation commit：待创建。
+
+Evidence: focused 新 regression通过；全 workspace `cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets --all-features -- -D warnings`、`cargo test --workspace --all-features --locked`（13+17+170）和 `cargo build --workspace --all-features --locked` 通过；commit SHA 待创建。
+
+GitHub outcome: pending；thread resolved: false。
+
+### PRRT_kwDOT7YN2s6bWRkG - backup digest 必须处于验证 snapshot 内
+
+Source: PRRT_kwDOT7YN2s6bWRkG / PRRC_kwDOT7YN2s7klrhQ（https://github.com/bootids/skilload/pull/5#discussion_r3835082832）
+
+Problem: `standalone_backup_is_valid` 在证明 schema/base rows后提交 SHARED transaction，`backup_pair_is_valid` 才从同一 descriptor计算 SHA-256。另一 SQLite writer可在 snapshot release 后提交；若 manifest描述新字节，digest 与 inode仍可匹配，但被宣布为 recovery asset 的 bytes不曾由原 snapshot 验证。
+
+Disposition: fixed
+
+Status: open
+
+Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 新增 `with_validated_standalone_backup_snapshot`；它在仍持有 standalone SQLite SHARED transaction时验证 header/schema/base rows、运行 hash callback、复核 companions，最后才 commit。`standalone_backup_is_valid` 在该 callback 中从 held descriptor计算并比较 SHA-256。新增 `standalone_backup_snapshot_rejects_a_writer_before_hash`，证明 writer 的 commit 在 hash 期间仍被 snapshot 阻塞，journal 随后使 pair fail closed。预定 remediation commit：待创建。
+
+Evidence: 新 regression与既有 `tampered_or_symlinked_backups_are_never_validated` 通过；全 workspace `cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets --all-features -- -D warnings`、`cargo test --workspace --all-features --locked`（13+17+170）和 `cargo build --workspace --all-features --locked` 通过；commit SHA 待创建。
+
+GitHub outcome: pending；thread resolved: false。
+
+### PRRT_kwDOT7YN2s6bWRkJ - base entry load 必须先受 10,000 上限约束
+
+Source: PRRT_kwDOT7YN2s6bWRkJ / PRRC_kwDOT7YN2s7klrhT（https://github.com/bootids/skilload/pull/5#discussion_r3835082835）
+
+Problem: `load_validated_entries` 先 materialize 全部 `library_entries` 并对每行单独读取 tags，随后才由 `PortableLibraryDocument::validate` 拒绝超过 10,000 entries 的 database。外部 oversized database会让 list/get/search/default doctor 在返回 typed corruption前执行无界内存分配与数据库工作。
+
+Disposition: fixed
+
+Status: open
+
+Resolution: 已在 `crates/skilload-core/src/adapters/sqlite_library.rs` 的 `load_validated_entries` 前调用 `validate_library_entry_count`，其 `LIMIT 1 OFFSET 10000` guard最多检查第 10,001 行；越界立即返回 `database_corrupt`，不 materialize rows或执行 N+1 tag reads。新增 `oversized_library_entries_are_rejected_before_materialization`。
+
+Evidence: focused 新 regression通过；全 workspace `cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets --all-features -- -D warnings`、`cargo test --workspace --all-features --locked`（13+17+170）和 `cargo build --workspace --all-features --locked` 通过；commit SHA 待创建。
+
+GitHub outcome: pending；thread resolved: false。
 
 ## Context and Orientation
 

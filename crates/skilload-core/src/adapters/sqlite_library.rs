@@ -12,7 +12,8 @@ use crate::domain::library::{
     LIBRARY_FORMAT_VERSION, LibraryEntriesPage, LibraryEntry, LibraryImportOperation,
     LibraryImportOutcome, LibraryImportResult, LibraryMetadataChange, LibraryMetadataMutation,
     LibraryMetadataStoreResult, LibraryMutationOutcome, LibraryPage, LibrarySearchPage,
-    LibrarySearchQuery, LibraryTrustState, PortableLibraryDocument, PortableLibraryEntry,
+    LibrarySearchQuery, LibraryTrustState, MAX_PORTABLE_LIBRARY_ENTRIES, PortableLibraryDocument,
+    PortableLibraryEntry,
 };
 use crate::domain::source::{RefKind, ResolvedSkill, SourceIdentity, parse_decimal_u64};
 use crate::domain::unicode_15_1::normalize_tag;
@@ -1800,15 +1801,16 @@ fn directory_entry_matches_file(
         .is_some_and(|(held, entry)| held.st_dev == entry.st_dev && held.st_ino == entry.st_ino)
 }
 
-/// Validate a held standalone v1 backup before it is shown in corruption
-/// diagnostics. Its header excludes WAL-mode opens, and the SQLite checks
-/// prove that the manifest's claimed source generation has intact base rows.
-fn standalone_backup_is_valid(
+/// Run an operation only while a held standalone v1 backup remains inside a
+/// validated SQLite SHARED snapshot. The operation must consume the same
+/// descriptor whose header, schema, base rows, and companions were checked.
+fn with_validated_standalone_backup_snapshot<T>(
     directory: &ValidatedDataDirectory,
     database_name: &OsStr,
     database: &mut File,
     path: &Path,
-) -> bool {
+    operation: impl FnOnce(&mut File) -> Option<T>,
+) -> Option<T> {
     let mut header = [0u8; 100];
     if database.seek(SeekFrom::Start(0)).is_err()
         || database.read_exact(&mut header).is_err()
@@ -1817,34 +1819,66 @@ fn standalone_backup_is_valid(
         || header[19] != 1
         || database.seek(SeekFrom::Start(0)).is_err()
     {
-        return false;
+        return None;
     }
     let validation = (|| {
         let held_path = PathBuf::from(format!("/dev/fd/{}", database.as_raw_fd()));
         let Ok(mut connection) =
             Connection::open_with_flags(&held_path, OpenFlags::SQLITE_OPEN_READ_ONLY)
         else {
-            return false;
+            return None;
         };
         if configure_connection(&connection, path).is_err() {
-            return false;
+            return None;
         }
         let Ok(transaction) = connection.transaction() else {
-            return false;
+            return None;
         };
-        transaction
+        if transaction
             .query_row("PRAGMA schema_version", [], |row| row.get::<_, i64>(0))
-            .is_ok()
-            && !has_database_sidecar(directory, database_name)
-            && matches!(
+            .is_err()
+            || has_database_sidecar(directory, database_name)
+            || !matches!(
                 read_schema_generation(&transaction, path),
                 Ok(SchemaGeneration::V1)
             )
-            && validate_base_database(&transaction, path).is_ok()
-            && !has_database_sidecar(directory, database_name)
-            && transaction.commit().is_ok()
+            || validate_base_database(&transaction, path).is_err()
+            || has_database_sidecar(directory, database_name)
+        {
+            return None;
+        }
+        let value = operation(database)?;
+        if has_database_sidecar(directory, database_name) || transaction.commit().is_err() {
+            return None;
+        }
+        Some(value)
     })();
-    database.seek(SeekFrom::Start(0)).is_ok() && validation
+    database.seek(SeekFrom::Start(0)).ok()?;
+    validation
+}
+
+/// Validate a held standalone v1 backup before it is shown in corruption
+/// diagnostics. Its SHA-256 comparison stays inside the same SHARED snapshot
+/// that proves its header, schema, base rows, and companion-free state.
+fn standalone_backup_is_valid(
+    directory: &ValidatedDataDirectory,
+    database_name: &OsStr,
+    database: &mut File,
+    path: &Path,
+    expected_sha256: &str,
+) -> bool {
+    with_validated_standalone_backup_snapshot(
+        directory,
+        database_name,
+        database,
+        path,
+        |database| {
+            database.seek(SeekFrom::Start(0)).ok()?;
+            let digest = sha256_of_file(database).ok()?;
+            (format!("sha256:{digest}") == expected_sha256).then_some(())
+        },
+    )
+    .is_some()
 }
 
 /// A backup pair counts as validated only when both files are opened through
@@ -1896,15 +1930,12 @@ fn backup_pair_is_valid(directory: &ValidatedDataDirectory, stem: &str) -> bool 
             &database_name,
             &mut database,
             &directory.path.join(&database_name),
+            &record.sha256,
         )
     {
         return false;
     }
-    let Ok(digest) = sha256_of_file(&database) else {
-        return false;
-    };
-    format!("sha256:{digest}") == record.sha256
-        && !has_database_sidecar(directory, &database_name)
+    !has_database_sidecar(directory, &database_name)
         && directory_entry_matches_file(directory, &manifest_name, &manifest)
         && directory_entry_matches_file(directory, &database_name, &database)
 }
@@ -2982,6 +3013,37 @@ fn validate_library_tags_schema(connection: &Connection, path: &Path) -> Result<
         .prepare("SELECT canonical_source, comparison_key, display FROM library_tags LIMIT 0")
         .map(|_| ())
         .map_err(|error| database_error(path, error))?;
+    let primary_key_columns = {
+        let mut statement = connection
+            .prepare("PRAGMA table_info(library_tags)")
+            .map_err(|error| database_error(path, error))?;
+        let columns = statement
+            .query_map([], |row| {
+                Ok((row.get::<_, i64>(5)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|error| database_error(path, error))?;
+        let mut primary_key_columns = Vec::new();
+        for column in columns {
+            let (position, name) = column.map_err(|error| database_error(path, error))?;
+            if position > 0 {
+                primary_key_columns.push((position, name));
+            }
+        }
+        primary_key_columns.sort_by_key(|(position, _)| *position);
+        primary_key_columns
+    };
+    let expected_primary_key = [(1, "canonical_source"), (2, "comparison_key")];
+    if primary_key_columns.len() != expected_primary_key.len()
+        || primary_key_columns.iter().zip(expected_primary_key).any(
+            |((position, name), (expected_position, expected_name))| {
+                *position != expected_position || name != expected_name
+            },
+        )
+    {
+        return Err(AppError::database_corrupt(NativePath::new(
+            path.to_path_buf(),
+        )));
+    }
     let mut statement = connection
         .prepare("PRAGMA foreign_key_list(library_tags)")
         .map_err(|error| database_error(path, error))?;
@@ -3095,10 +3157,27 @@ fn stored_to_entry(entry: StoredEntry, path: &Path) -> Result<PortableLibraryEnt
     })
 }
 
+fn validate_library_entry_count(connection: &Connection, path: &Path) -> Result<(), AppError> {
+    let exceeds_limit: i64 = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM library_entries LIMIT 1 OFFSET ?1)",
+            params![MAX_PORTABLE_LIBRARY_ENTRIES as i64],
+            |row| row.get(0),
+        )
+        .map_err(|error| database_error(path, error))?;
+    if exceeds_limit != 0 {
+        return Err(AppError::database_corrupt(NativePath::new(
+            path.to_path_buf(),
+        )));
+    }
+    Ok(())
+}
+
 fn load_validated_entries(
     connection: &Connection,
     path: &Path,
 ) -> Result<Vec<PortableLibraryEntry>, AppError> {
+    validate_library_entry_count(connection, path)?;
     PortableLibraryDocument {
         format_version: LIBRARY_FORMAT_VERSION,
         entries: load_entries(connection, path)?,
@@ -4385,6 +4464,56 @@ mod tests {
             .unwrap();
 
         assert_eq!(repository.export().unwrap_err().code(), "database_corrupt");
+    }
+
+    #[test]
+    fn tags_schema_without_composite_primary_key_is_database_corrupt() {
+        let temporary = tempdir().unwrap();
+        let repository = SqliteLibraryRepository::with_environment(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(XdgRootResolver),
+        );
+        let import = document(vec![entry("skills/review", None)]);
+        let source = import.entries[0].skill.source.canonical.clone();
+        repository.import(&import, false).unwrap();
+        let database = temporary.path().join("data/skilload/skilload.db");
+        let connection = Connection::open(&database).unwrap();
+        connection
+            .execute_batch(
+                "
+                PRAGMA foreign_keys = OFF;
+                DROP TABLE library_tags;
+                CREATE TABLE library_tags (
+                    canonical_source TEXT NOT NULL,
+                    comparison_key TEXT NOT NULL,
+                    display TEXT NOT NULL,
+                    FOREIGN KEY (canonical_source) REFERENCES library_entries(canonical_source) ON DELETE CASCADE
+                );
+                ",
+            )
+            .unwrap();
+        for _ in 0..2 {
+            connection
+                .execute(
+                    "INSERT INTO library_tags (canonical_source, comparison_key, display)
+                     VALUES (?1, 'review', 'Review')",
+                    params![&source],
+                )
+                .unwrap();
+        }
+        drop(connection);
+
+        let query = Query::new("review".to_owned()).unwrap();
+        for error in [
+            repository.list(&page(100, 0)).unwrap_err(),
+            repository.search(&query, &page(100, 0)).unwrap_err(),
+            repository.get(&source).unwrap_err(),
+            repository.export().unwrap_err(),
+            repository.inspect().unwrap_err(),
+            repository.fix().unwrap_err(),
+        ] {
+            assert_eq!(error.code(), "database_corrupt", "{error:?}");
+        }
     }
 
     #[test]
@@ -5800,6 +5929,77 @@ mod tests {
     }
 
     #[test]
+    fn oversized_library_entries_are_rejected_before_materialization() {
+        let temporary = tempdir().unwrap();
+        let repository = SqliteLibraryRepository::with_environment(
+            Arc::new(TestEnvironment::with_roots(temporary.path())),
+            Arc::new(XdgRootResolver),
+        );
+        let import = document(vec![entry("skills/review", None)]);
+        let source = import.entries[0].skill.source.canonical.clone();
+        repository.import(&import, false).unwrap();
+        let database = temporary.path().join("data/skilload/skilload.db");
+        let connection = Connection::open(&database).unwrap();
+        connection
+            .execute_batch(
+                "
+                WITH RECURSIVE extra(value) AS (
+                    SELECT 1
+                    UNION ALL
+                    SELECT value + 1 FROM extra WHERE value < 10000
+                )
+                INSERT INTO library_entries (
+                    canonical_source, owner, repository, repository_display, skill_path, ref_kind,
+                    ref_value, repository_id, commit_sha, integrity, name, description, entry_count,
+                    byte_count, alias, category, note
+                )
+                SELECT
+                    'corrupt-entry-' || value,
+                    'owner',
+                    'repository',
+                    'Repository',
+                    'skills/review',
+                    'branch',
+                    'refs/heads/main',
+                    '42',
+                    '0123456789012345678901234567890123456789',
+                    'sha256:0123456789012345678901234567890123456789012345678901234567890123',
+                    'review',
+                    'Description',
+                    '1',
+                    '10',
+                    NULL,
+                    NULL,
+                    NULL
+                FROM extra;
+                ",
+            )
+            .unwrap();
+        let count: i64 = connection
+            .query_row("SELECT count(*) FROM library_entries", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, MAX_PORTABLE_LIBRARY_ENTRIES as i64 + 1);
+        assert_eq!(
+            validate_library_entry_count(&connection, &database)
+                .unwrap_err()
+                .code(),
+            "database_corrupt"
+        );
+        drop(connection);
+
+        let query = Query::new("review".to_owned()).unwrap();
+        for error in [
+            repository.list(&page(100, 0)).unwrap_err(),
+            repository.search(&query, &page(100, 0)).unwrap_err(),
+            repository.get(&source).unwrap_err(),
+            repository.export().unwrap_err(),
+            repository.inspect().unwrap_err(),
+        ] {
+            assert_eq!(error.code(), "database_corrupt", "{error:?}");
+        }
+    }
+
+    #[test]
     fn metadata_mutation_uses_the_bounded_database_process_lock() {
         let temporary = tempdir().unwrap();
         let repository = SqliteLibraryRepository::with_environment(
@@ -7115,6 +7315,85 @@ mod tests {
             repository.inspect().unwrap_err(),
             AppError::DatabaseCorrupt { backups, .. } if backups.is_empty()
         ));
+    }
+
+    #[test]
+    fn standalone_backup_snapshot_rejects_a_writer_before_hash() {
+        let temporary = tempdir().unwrap();
+        let source = initialize_v1_database(&temporary);
+        let backups_root = temporary.path().join("backups");
+        fs::create_dir(&backups_root).unwrap();
+        let backup = backups_root.join("snapshot.db");
+        fs::copy(source, &backup).unwrap();
+        let directory = ValidatedDataDirectory::open(&backups_root).unwrap();
+        let database_name = OsStr::new("snapshot.db");
+        let mut held_database = open_regular_file_at(&directory, database_name).unwrap();
+
+        let (start_writer, wait_for_snapshot) = std::sync::mpsc::channel();
+        let (writer_ready, wait_for_writer) = std::sync::mpsc::channel();
+        let (allow_commit, wait_for_commit_permission) = std::sync::mpsc::channel();
+        let (writer_committed, wait_for_writer_commit) = std::sync::mpsc::channel();
+        let writer_backup = backup.clone();
+        let writer = std::thread::spawn(move || {
+            if wait_for_snapshot
+                .recv_timeout(Duration::from_secs(2))
+                .is_err()
+            {
+                return;
+            }
+            let connection = Connection::open(writer_backup).unwrap();
+            connection.busy_timeout(Duration::from_secs(2)).unwrap();
+            connection
+                .execute_batch(
+                    "BEGIN IMMEDIATE;
+                     UPDATE state_revision SET revision = revision + 1;",
+                )
+                .unwrap();
+            writer_ready.send(()).unwrap();
+            if wait_for_commit_permission
+                .recv_timeout(Duration::from_secs(2))
+                .is_err()
+            {
+                return;
+            }
+            connection.execute_batch("COMMIT").unwrap();
+            writer_committed.send(()).unwrap();
+        });
+        let (snapshot_observation, wait_for_snapshot_observation) = std::sync::mpsc::channel();
+
+        let result = with_validated_standalone_backup_snapshot(
+            &directory,
+            database_name,
+            &mut held_database,
+            &backup,
+            |database| {
+                start_writer.send(()).ok()?;
+                wait_for_writer.recv_timeout(Duration::from_secs(2)).ok()?;
+                database.seek(SeekFrom::Start(0)).ok()?;
+                let digest = sha256_of_file(database).ok()?;
+                allow_commit.send(()).ok()?;
+                snapshot_observation
+                    .send(
+                        wait_for_writer_commit
+                            .recv_timeout(Duration::from_millis(100))
+                            .is_ok(),
+                    )
+                    .ok()?;
+                Some(digest)
+            },
+        );
+
+        writer.join().unwrap();
+        assert!(
+            !wait_for_snapshot_observation
+                .recv_timeout(Duration::from_secs(2))
+                .unwrap(),
+            "the writer committed while the backup hash still needed the validation snapshot"
+        );
+        assert!(
+            result.is_none(),
+            "the writer's rollback journal must invalidate the backup before it is accepted"
+        );
     }
 
     #[test]
